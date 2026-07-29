@@ -1,0 +1,146 @@
+/* ==========================================================================
+   Token desain — satu-satunya tempat warna, jarak, dan radius didefinisikan.
+   Mode terang adalah nilai dasar; mode gelap menimpanya lewat prefers-color-scheme
+   (otomatis) dan lewat [data-theme] di <html> (pilihan manual di Pengaturan).
+   ========================================================================== */
+
+:root {
+  /* Warna dasar */
+  --bg: #f4f6fb;
+  --bg-2: #eaeef7;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --surface-3: #f1f5f9;
+  --line: #dfe6f0;
+  --line-kuat: #c7d2e0;
+
+  --text: #0f172a;
+  --text-2: #475569;
+  --text-3: #7c8ba1;
+
+  --brand: #0a58ca;
+  --brand-2: #2563eb;
+  --brand-lembut: #e8f0ff;
+  --brand-kontras: #ffffff;
+
+  --masuk: #15803d;
+  --masuk-lembut: #e7f7ed;
+  --keluar: #dc2626;
+  --keluar-lembut: #fdeaea;
+  --warning: #b45309;
+  --warning-lembut: #fef3c7;
+  --info: #0369a1;
+  --info-lembut: #e0f2fe;
+
+  /* Palet grafik — urutan dipakai untuk kategori */
+  --c1: #2563eb; --c2: #0d9488; --c3: #d97706; --c4: #db2777;
+  --c5: #7c3aed; --c6: #059669; --c7: #dc2626; --c8: #0891b2;
+  --c9: #ca8a04; --c10: #4f46e5; --c11: #be123c; --c12: #65a30d;
+
+  /* Bentuk */
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 18px;
+  --r-xl: 24px;
+  --r-bulat: 999px;
+
+  /* Jarak */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-7: 32px; --sp-8: 40px;
+
+  /* Bayangan */
+  --shadow-1: 0 1px 2px rgba(15, 23, 42, .06);
+  --shadow-2: 0 4px 16px rgba(15, 23, 42, .08);
+  --shadow-3: 0 16px 40px rgba(15, 23, 42, .14);
+
+  /* Ukuran layout */
+  --sidebar-w: 248px;
+  --rail-w: 76px;
+  --bottomnav-h: 62px;
+  --header-h: 56px;
+  --sentuh: 44px;          /* target sentuh minimum */
+
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-angka: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --transisi: 160ms cubic-bezier(.4, 0, .2, 1);
+  color-scheme: light;
+}
+
+/* Mode gelap otomatis mengikuti sistem, kecuali pengguna memaksa mode terang. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b1120;
+    --bg-2: #0f172a;
+    --surface: #151d2e;
+    --surface-2: #1b2436;
+    --surface-3: #212c42;
+    --line: #2a3550;
+    --line-kuat: #3a4767;
+
+    --text: #e8edf7;
+    --text-2: #a8b6cd;
+    --text-3: #7c8ba6;
+
+    --brand: #5b9bff;
+    --brand-2: #7fb0ff;
+    --brand-lembut: #16294a;
+    --brand-kontras: #071022;
+
+    --masuk: #4ade80;
+    --masuk-lembut: #10281a;
+    --keluar: #f87171;
+    --keluar-lembut: #2c1519;
+    --warning: #fbbf24;
+    --warning-lembut: #2c2210;
+    --info: #38bdf8;
+    --info-lembut: #0d2537;
+
+    --c1: #60a5fa; --c2: #2dd4bf; --c3: #fbbf24; --c4: #f472b6;
+    --c5: #a78bfa; --c6: #34d399; --c7: #f87171; --c8: #22d3ee;
+    --c9: #facc15; --c10: #818cf8; --c11: #fb7185; --c12: #a3e635;
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
+    --shadow-2: 0 4px 16px rgba(0, 0, 0, .45);
+    --shadow-3: 0 16px 40px rgba(0, 0, 0, .6);
+    color-scheme: dark;
+  }
+}
+
+/* Pilihan manual dari Pengaturan selalu menang atas preferensi sistem. */
+:root[data-theme="dark"] {
+  --bg: #0b1120;
+  --bg-2: #0f172a;
+  --surface: #151d2e;
+  --surface-2: #1b2436;
+  --surface-3: #212c42;
+  --line: #2a3550;
+  --line-kuat: #3a4767;
+
+  --text: #e8edf7;
+  --text-2: #a8b6cd;
+  --text-3: #7c8ba6;
+
+  --brand: #5b9bff;
+  --brand-2: #7fb0ff;
+  --brand-lembut: #16294a;
+  --brand-kontras: #071022;
+
+  --masuk: #4ade80;
+  --masuk-lembut: #10281a;
+  --keluar: #f87171;
+  --keluar-lembut: #2c1519;
+  --warning: #fbbf24;
+  --warning-lembut: #2c2210;
+  --info: #38bdf8;
+  --info-lembut: #0d2537;
+
+  --c1: #60a5fa; --c2: #2dd4bf; --c3: #fbbf24; --c4: #f472b6;
+  --c5: #a78bfa; --c6: #34d399; --c7: #f87171; --c8: #22d3ee;
+  --c9: #facc15; --c10: #818cf8; --c11: #fb7185; --c12: #a3e635;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow-2: 0 4px 16px rgba(0, 0, 0, .45);
+  --shadow-3: 0 16px 40px rgba(0, 0, 0, .6);
+  color-scheme: dark;
+}

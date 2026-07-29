@@ -1,0 +1,6 @@
+{
+  "name": "pembukuan-keuangan",
+  "private": true,
+  "type": "module",
+  "description": "Menandai src/ sebagai ES module untuk Node (dipakai saat menjalankan tes). Tidak dipakai oleh GitHub Pages."
+}

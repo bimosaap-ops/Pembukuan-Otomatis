@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a58ca" />
+  <meta name="description" content="Pembukuan dan dashboard keuangan dari e-statement bank. Data tersimpan di perangkat Anda sendiri." />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Pembukuan" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <link rel="icon" href="icon-192.png" />
+  <title>Pembukuan &amp; Dashboard Keuangan</title>
+
+  <link rel="stylesheet" href="css/tokens.css" />
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/layout.css" />
+  <link rel="stylesheet" href="css/components.css" />
+  <link rel="stylesheet" href="css/print.css" />
+
+  <script>
+    /* Tema diterapkan sebelum halaman digambar supaya tidak ada kedipan putih
+       ketika aplikasi dibuka dalam mode gelap. */
+    (function () {
+      try {
+        var t = localStorage.getItem('pembukuan_tema');
+        if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* mode penyamaran memblokir localStorage */ }
+    })();
+  </script>
+</head>
+<body>
+  <div class="app" id="app">
+    <main class="utama">
+      <div class="halaman">
+        <div class="kartu dv__kosong">
+          <strong>Memuat aplikasi…</strong>
+          <div class="redup-2">Kalau layar ini tidak berganti, aktifkan JavaScript di browser Anda.</div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <noscript>
+    <div class="kartu" style="margin:16px">
+      <strong>JavaScript dimatikan.</strong>
+      <p class="redup">Aplikasi ini memproses e-statement langsung di perangkat Anda, jadi memerlukan JavaScript.</p>
+    </div>
+  </noscript>
+
+  <script type="module" src="src/ui/app.js"></script>
+</body>
+</html>

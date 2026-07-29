@@ -1,0 +1,52 @@
+{
+  "name": "Pembukuan & Dashboard Keuangan",
+  "short_name": "Pembukuan",
+  "description": "Pembukuan dan dashboard keuangan dari e-statement bank. Data tersimpan di perangkat Anda sendiri.",
+  "start_url": "./",
+  "scope": "./",
+  "id": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f6fb",
+  "theme_color": "#0a58ca",
+  "lang": "id",
+  "dir": "ltr",
+  "categories": ["finance", "productivity", "business"],
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Upload e-Statement",
+      "short_name": "Upload",
+      "url": "./#/upload"
+    },
+    {
+      "name": "Transaksi",
+      "short_name": "Transaksi",
+      "url": "./#/transaksi"
+    },
+    {
+      "name": "Laporan",
+      "short_name": "Laporan",
+      "url": "./#/laporan"
+    }
+  ]
+}

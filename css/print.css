@@ -1,0 +1,56 @@
+/* ==========================================================================
+   Tampilan cetak. Dipakai tombol "Export PDF" pada Laporan:
+   window.print() lalu pilih "Simpan sebagai PDF" — cara paling andal di HP
+   maupun desktop tanpa pustaka tambahan.
+   ========================================================================== */
+
+@media print {
+  @page { size: A4; margin: 14mm 12mm; }
+
+  :root {
+    --bg: #fff; --surface: #fff; --surface-2: #fff; --surface-3: #fff;
+    --text: #000; --text-2: #333; --text-3: #555;
+    --line: #bbb; --line-kuat: #999;
+    --masuk: #04682f; --keluar: #a51111; --brand: #123f8c;
+    color-scheme: light;
+  }
+
+  body { background: #fff; color: #000; font-size: 10.5pt; }
+
+  /* Elemen antarmuka tidak ikut tercetak. */
+  .sidebar, .bottomnav, .header__aksi, .toast-wadah, .sheet-latar, .modal-latar,
+  .tanpa-cetak, .filter, .dropzone, .segment, .chip-baris { display: none !important; }
+
+  .app { display: block; }
+  .utama { padding: 0; }
+  .halaman { max-width: none; gap: 10pt; }
+  .kartu { border: 1px solid var(--line); box-shadow: none; break-inside: avoid; padding: 8pt; }
+
+  /* Di kertas selalu pakai tabel, bukan daftar kartu. */
+  .dv__kartu-list { display: none !important; }
+  .dv__gulir { display: block !important; overflow: visible !important; border: 0; }
+  .dv__tabel { font-size: 9pt; width: 100%; }
+  .dv__tabel thead { display: table-header-group; }
+  .dv__tabel thead th { background: #eee !important; border-bottom: 1px solid #999; padding: 4pt 5pt; }
+  .dv__tabel tbody td { padding: 3.5pt 5pt; border-bottom: 1px solid #ddd; }
+  .dv__tabel tbody tr { break-inside: avoid; }
+
+  .grid-kpi { display: grid !important; grid-template-columns: repeat(4, 1fr) !important; gap: 6pt; }
+  .kpi { padding: 6pt; box-shadow: none; }
+  .kpi__nilai { font-size: 12pt; }
+
+  .grafik svg { max-height: 60mm; }
+
+  a { color: #000; text-decoration: none; }
+
+  .cetak-saja { display: block !important; }
+  .cetak-kop {
+    margin-bottom: 10pt; padding-bottom: 6pt;
+    border-bottom: 1.5pt solid #000;
+  }
+  .cetak-kop h1 { font-size: 15pt; }
+  .cetak-kop .cetak-sub { font-size: 9pt; color: #444; margin-top: 2pt; }
+}
+
+/* Blok khusus cetak disembunyikan di layar. */
+.cetak-saja { display: none; }
