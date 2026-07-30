@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import { parseStatement } from '../src/parsers/registry.js';
+import { ekstrakPotongan } from '../src/parsers/pdf-loader.js';
 import { ADAPTER } from '../src/parsers/detect.js';
 import { validasiBaris, cocokkanRingkasan } from '../src/domain/validate.js';
 import { bubuhiBaseHash, tandaiDuplikat, ringkasDuplikat } from '../src/domain/dedupe.js';
@@ -44,8 +45,12 @@ function muatPdfJs() {
   return pdfjsLib;
 }
 
-/** Membuka PDF dan mengambil potongan teks — sepadan dengan `ekstrakPotongan` di browser. */
-async function potonganDariPdf(namaFile, password = '') {
+/**
+ * Membuka PDF lalu menjalankan `ekstrakPotongan` yang sama persis dengan yang
+ * dipakai di browser — termasuk pembacaan warna teks, yang menjadi satu-satunya
+ * penanda arah transaksi pada sebagian format statement.
+ */
+async function bacaPdfUji(namaFile, password = '') {
   const pdfjsLib = muatPdfJs();
   const data = new Uint8Array(readFileSync(join(FIXTURE, namaFile)));
 
@@ -56,20 +61,16 @@ async function potonganDariPdf(namaFile, password = '') {
     useSystemFonts: false,
   }).promise;
 
-  const halaman = [];
-  for (let i = 1; i <= dokumen.numPages; i += 1) {
-    const page = await dokumen.getPage(i);
-    const isi = await page.getTextContent();
-    halaman.push(isi.items.filter((it) => typeof it.str === 'string').map((it) => ({
-      str: it.str,
-      x: it.transform[4],
-      y: it.transform[5],
-      w: it.width || 0,
-      h: it.height || Math.abs(it.transform[3]) || 8,
-    })));
+  try {
+    return await ekstrakPotongan(dokumen);
+  } finally {
+    await dokumen.destroy();
   }
-  await dokumen.destroy();
-  return halaman;
+}
+
+/** Jalan pintas untuk berkas yang tidak bergantung warna. */
+async function potonganDariPdf(namaFile, password = '') {
+  return (await bacaPdfUji(namaFile, password)).halaman;
 }
 
 test('PDF BCA sungguhan terbaca lengkap dan totalnya cocok dengan ringkasan', opsi, async () => {
@@ -161,4 +162,57 @@ test('dua PDF berurutan terakumulasi tanpa menggandakan data', opsi, async () =>
   const hasilAgustus = tandaiDuplikat(barisAgustus, jumlah);
   assert.equal(ringkasDuplikat(hasilAgustus).baru, 3, 'tiga transaksi Agustus adalah data baru');
   assert.equal(simpanan.length + 3, 13, 'pembukuan terakumulasi menjadi 13 transaksi');
+});
+
+
+/* ==========================================================================
+   Permata "Mutasi Transaksi" — arah transaksi hanya dibedakan oleh warna
+   ========================================================================== */
+
+test('Permata Mutasi Transaksi terbaca lengkap dengan arah dari warna nominal', opsi, async () => {
+  const { halaman, warna } = await bacaPdfUji('permata-mutasi-januari-2026.pdf');
+  const hasil = parseStatement(halaman, { warna });
+
+  assert.equal(hasil.kodeAdapter, ADAPTER.PERMATA_MUTASI);
+  assert.equal(hasil.bank, 'Permata');
+  assert.equal(hasil.nomorRekening, '001238847210', 'nomor rekening tanpa label ikut terbaca');
+  assert.equal(hasil.transaksi.length, 4, 'kop dan kaki halaman tidak ikut terhitung');
+
+  // Sudah dibalik menjadi urut kronologis, walau statement mencetak terbaru dulu.
+  const tanggal = hasil.transaksi.map((t) => t.tanggal);
+  assert.deepEqual(tanggal, ['2026-01-01', '2026-01-06', '2026-01-23', '2026-01-23']);
+
+  const nominal = hasil.transaksi.map((t) => t.nominal);
+  assert.deepEqual(nominal, [-7500, -6000000, 12282427, -12000000],
+    'hijau berarti masuk, merah berarti keluar');
+
+  assert.ok(hasil.transaksi.every((t) => t.arahDariWarna), 'seluruh arah berasal dari warna, bukan tebakan');
+  assert.ok(hasil.transaksi[2].deskripsi.includes('Gaji Periode'), 'baris deskripsi kedua ikut tergabung');
+  assert.equal(hasil.catatan.length, 0, 'tidak perlu ada peringatan bila warna terbaca semua');
+
+  const { ringkas } = validasiBaris(hasil.transaksi);
+  assert.equal(ringkas.curiga, 0, 'urutan tanggal menaik tidak boleh ditandai mundur');
+  assert.equal(ringkas.adaKolomSaldo, false);
+});
+
+test('Mutasi Transaksi hitam-putih memakai kata kunci dan memberi peringatan', opsi, async () => {
+  const { halaman, warna } = await bacaPdfUji('permata-mutasi-hitam-putih.pdf');
+  const hasil = parseStatement(halaman, { warna });
+
+  assert.equal(hasil.transaksi.length, 4);
+  assert.ok(hasil.catatan.length > 0, 'pengguna harus diberi tahu bahwa arahnya hasil tebakan');
+  assert.ok(/warna/i.test(hasil.catatan.join(' ')));
+
+  // "PB DARI ... Gaji" tetap terbaca sebagai pemasukan lewat kata kunci.
+  const masuk = hasil.transaksi.filter((t) => t.nominal > 0);
+  assert.equal(masuk.length, 1);
+  assert.ok(masuk[0].deskripsi.includes('DARI'));
+});
+
+test('warna tidak mengubah hasil pada statement yang punya kolom debet/kredit', opsi, async () => {
+  const { halaman, warna } = await bacaPdfUji('permata-juli-2025.pdf');
+  const hasil = parseStatement(halaman, { warna });
+
+  assert.equal(hasil.kodeAdapter, ADAPTER.PERMATA, 'rekening koran tetap memakai adapter lamanya');
+  assert.equal(hasil.transaksi.length, 6);
 });

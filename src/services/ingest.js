@@ -92,7 +92,7 @@ export async function prosesFile(file, opsi = {}) {
     dokumen.destroy?.();
   }
 
-  const hasil = parseStatement(potongan.halaman, { paksaAdapter });
+  const hasil = parseStatement(potongan.halaman, { paksaAdapter, warna: potongan.warna });
   lapor('deteksi', 'selesai', hasil.bank ? `${hasil.bank}${hasil.nomorRekening ? ` · ${hasil.nomorRekening}` : ''}` : 'Bank tidak dikenali, memakai pembaca umum');
 
   if (!hasil.transaksi.length) {

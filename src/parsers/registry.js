@@ -7,12 +7,14 @@ import { susunBaris, buangBarisKosong, teksPenuh } from './layout.js';
 import { bacaKepala, ADAPTER } from './detect.js';
 import * as bca from './banks/bca.js';
 import * as permata from './banks/permata.js';
+import * as permataMutasi from './banks/permata-mutasi.js';
 import * as generik from './banks/generic.js';
 import { periodeDariBaris } from '../domain/validate.js';
 
 const ADAPTERS = {
   [ADAPTER.BCA]: bca,
   [ADAPTER.PERMATA]: permata,
+  [ADAPTER.PERMATA_MUTASI]: permataMutasi,
   [ADAPTER.GENERIK]: generik,
 };
 
@@ -24,6 +26,7 @@ export function daftarAdapter() {
   return [
     { kode: ADAPTER.BCA, ...bca.info },
     { kode: ADAPTER.PERMATA, ...permata.info },
+    { kode: ADAPTER.PERMATA_MUTASI, ...permataMutasi.info },
     { kode: ADAPTER.GENERIK, ...generik.info },
   ];
 }
@@ -32,7 +35,9 @@ export function daftarAdapter() {
  * Memproses potongan teks seluruh halaman menjadi daftar transaksi.
  *
  * @param {Array<Array>} halaman daftar per halaman berisi {str,x,y,w,h}
- * @param {{paksaAdapter?: string}} opsi
+ * @param {{paksaAdapter?: string, warna?: Array}} opsi
+ *        `warna` berisi warna tiap potongan teks per halaman; hanya dipakai oleh
+ *        adapter yang mengandalkan warna untuk menentukan arah transaksi.
  */
 export function parseStatement(halaman, opsi = {}) {
   // Baris disusun per halaman supaya koordinat y antar halaman tidak tercampur.
@@ -44,7 +49,8 @@ export function parseStatement(halaman, opsi = {}) {
   const kodeAdapter = opsi.paksaAdapter || kepala.adapter;
   const adapter = adapterUntuk(kodeAdapter);
 
-  const hasil = adapter.parse({ baris: semuaBaris, teks, kepala });
+  const warna = (opsi.warna || []).flat();
+  const hasil = adapter.parse({ baris: semuaBaris, teks, kepala, warna });
 
   const periode = periodeDariBaris(hasil.transaksi);
   const bank = kepala.bank || adapter.info.bank || '';

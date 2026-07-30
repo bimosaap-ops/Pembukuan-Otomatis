@@ -258,6 +258,86 @@ def buat_generik(nama="bank-lain-juli-2025.pdf"):
     return nama
 
 
+# ==========================================================================
+# Permata "Mutasi Transaksi" — unduhan dari aplikasi PermataMobile.
+# Tanpa judul kolom, tanpa kolom saldo, satu kolom nominal rata kanan,
+# dan arah transaksi hanya dibedakan oleh warna: merah keluar, hijau masuk.
+# ==========================================================================
+
+MUTASI_LEBAR, MUTASI_TINGGI = 840, 1242
+MERAH = (221 / 255, 12 / 255, 37 / 255)
+HIJAU = (0 / 255, 136 / 255, 115 / 255)
+TEPI_KANAN = 792
+
+# (tanggal, [(baris deskripsi...), nominal, masuk?])
+MUTASI_ISI = [
+    ("23 Januari 2026", [
+        (["TRF BIFAST KE BUDI SANTOSO 6090378994 BANK CENTRAL",
+          "ASIA Permata ME 12:20:44 - 000125563819"], "Rp 12,000,000.00", False),
+        (["PB DARI PT CONTOH PUTRA MANDIRI DCMS 07:39:55 BUDI",
+          "SANTOSO Gaji Periode Januari2026 0897020670900098"], "Rp 12,282,427.00", True),
+    ]),
+    ("06 Januari 2026", [
+        (["TRF BIFAST KE BUDI SANTOSO 6090378994 BANK CENTRAL",
+          "ASIA Permata ME 23:53:26 - 000043500619"], "Rp 6,000,000.00", False),
+    ]),
+    ("01 Januari 2026", [
+        (["Biaya adm. bulan JANUARI 2026"], "Rp 7,500.00", False),
+    ]),
+]
+
+
+def buat_permata_mutasi(nama="permata-mutasi-januari-2026.pdf", berwarna=True):
+    """`berwarna=False` meniru berkas hasil cetak hitam-putih, tempat arah
+    transaksi terpaksa ditebak dari kata kunci."""
+    c = canvas.Canvas(str(KELUARAN / nama), pagesize=(MUTASI_LEBAR, MUTASI_TINGGI))
+
+    c.setFont("Helvetica", 17)
+    c.drawString(616, 1166, "Mutasi Transaksi")
+    c.setFont("Helvetica", 11)
+    c.drawString(700, 1140, "Januari 2026")
+    c.setFont("Helvetica", 17)
+    c.drawString(139, 1074, "Payroll")
+    c.setFont("Helvetica", 10)
+    c.drawString(139, 1045, "0012-3884-7210")
+
+    y = 991
+    for tanggal, transaksi in MUTASI_ISI:
+        c.setFillColorRGB(0, 0, 0)
+        c.setFont("Helvetica", 9)
+        c.drawString(49, y, tanggal)
+        y -= 40
+
+        for baris_desk, nominal, masuk in transaksi:
+            # Nominal digambar di tengah blok deskripsi, persis seperti aslinya.
+            y_nominal = y - 10 if len(baris_desk) > 1 else y
+            for i, teks_desk in enumerate(baris_desk):
+                c.setFillColorRGB(0, 0, 0)
+                c.setFont("Helvetica", 11)
+                c.drawString(86, y - i * 19, teks_desk)
+
+            if berwarna:
+                c.setFillColorRGB(*(HIJAU if masuk else MERAH))
+            else:
+                c.setFillColorRGB(0, 0, 0)
+            c.setFont("Helvetica", 11)
+            c.drawRightString(TEPI_KANAN, y_nominal, nominal)
+
+            y -= len(baris_desk) * 19 + 22
+        y -= 20
+
+    c.setFillColorRGB(0, 0, 0)
+    c.setFont("Helvetica", 6)
+    c.drawString(407, 77, "PT Bank Permata, Tbk. berizin dan diawasi oleh Otoritas Jasa Keuangan dan Bank Indonesia")
+    c.drawString(407, 69, "serta merupakan peserta penjaminan Lembaga Penjamin Simpanan.")
+    c.drawString(45, 71, "PermataBank.com | Permata Tel 1500-111 atau 021-2985-0611")
+    c.setFont("Helvetica", 7)
+    c.drawString(682, 96, "Halaman/ Page 1 / 1")
+
+    c.save()
+    return nama
+
+
 if __name__ == "__main__":
     dibuat = [
         buat_bca(),
@@ -265,6 +345,8 @@ if __name__ == "__main__":
         buat_bca("bca-juli-2025-terkunci.pdf", password="rahasia123"),
         buat_permata(),
         buat_generik(),
+        buat_permata_mutasi(),
+        buat_permata_mutasi("permata-mutasi-hitam-putih.pdf", berwarna=False),
     ]
     for d in dibuat:
         print(f"  {KELUARAN / d}")

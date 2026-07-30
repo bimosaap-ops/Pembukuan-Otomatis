@@ -5,7 +5,12 @@
 
 import { bulanDariNama, parseTanggal } from '../core/dates.js';
 
-export const ADAPTER = { BCA: 'bca', PERMATA: 'permata', GENERIK: 'generik' };
+export const ADAPTER = {
+  BCA: 'bca',
+  PERMATA: 'permata',
+  PERMATA_MUTASI: 'permata-mutasi',
+  GENERIK: 'generik',
+};
 
 /**
  * Tanda pengenal tiap bank. `skor` menentukan pemenang bila beberapa pola cocok —
@@ -37,10 +42,27 @@ const TANDA_BANK = [
   { adapter: ADAPTER.GENERIK, bank: 'Jenius', pola: /JENIUS|BANK\s+BTPN/i, skor: 90 },
 ];
 
+/**
+ * Satu bank bisa menerbitkan beberapa bentuk berkas yang tata letaknya berbeda jauh.
+ * Permata punya rekening koran bulanan (berkolom Debet dan Kredit) sekaligus unduhan
+ * "Mutasi Transaksi" dari aplikasi yang sama sekali tidak berkolom. Pemeriksaan ini
+ * berjalan lebih dulu supaya berkas diarahkan ke pembaca yang tepat.
+ */
+const TANDA_LAYOUT = [
+  {
+    adapter: ADAPTER.PERMATA_MUTASI,
+    bank: 'Permata',
+    cocok: (isi) => /PERMATA/i.test(isi) && /MUTASI\s+TRANSAKSI/i.test(isi),
+  },
+];
+
 export function deteksiBank(teks) {
   const isi = String(teks || '');
-  let terbaik = null;
 
+  const layout = TANDA_LAYOUT.find((l) => l.cocok(isi));
+  if (layout) return { adapter: layout.adapter, bank: layout.bank, keyakinan: 100 };
+
+  let terbaik = null;
   TANDA_BANK.forEach((t) => {
     if (!t.pola.test(isi)) return;
     if (!terbaik || t.skor > terbaik.skor) terbaik = t;
@@ -59,6 +81,14 @@ const POLA_NOMOR = [
   /REKENING\s*[:\-]\s*([\d][\d\s.\-]{5,24}\d)/i,
 ];
 
+/**
+ * Sebagian berkas mencantumkan nomor rekening tanpa label apa pun, hanya sebagai
+ * angka berkelompok seperti "0012-3884-7210" pada unduhan aplikasi Permata.
+ * Pola berkelompok empat ini cukup khas dan tidak bentrok dengan nomor telepon
+ * layanan (mis. "021-2985-0611" yang kelompok pertamanya hanya tiga angka).
+ */
+const POLA_NOMOR_TANPA_LABEL = /\b(\d{4}-\d{4}-\d{4}(?:-\d{4})?)\b/;
+
 export function bacaNomorRekening(teks) {
   const isi = String(teks || '');
   for (const pola of POLA_NOMOR) {
@@ -68,6 +98,9 @@ export function bacaNomorRekening(teks) {
       if (nomor.length >= 6 && nomor.length <= 20) return nomor;
     }
   }
+
+  const tanpaLabel = isi.match(POLA_NOMOR_TANPA_LABEL);
+  if (tanpaLabel) return tanpaLabel[1].replace(/-/g, '');
   return '';
 }
 

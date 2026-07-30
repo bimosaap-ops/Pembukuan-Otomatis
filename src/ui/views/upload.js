@@ -360,7 +360,7 @@ function kolomReview(petaKategori, daftarKategori, onGantiKategori) {
       ]),
     },
     {
-      kunci: 'debit', judul: 'Debit', kanan: true, angka: true, lebar: '120px',
+      kunci: 'debit', judul: 'Debit', kanan: true, angka: true, lebar: '120px', kartu: false,
       render: (b) => (b.nominal < 0 ? h('span.keluar', { text: rupiah(-b.nominal) }) : ''),
     },
     {

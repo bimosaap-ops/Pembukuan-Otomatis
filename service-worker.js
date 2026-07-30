@@ -13,7 +13,7 @@
  * Naikkan CACHE_NAME setiap kali aset berubah agar versi lama dibersihkan.
  */
 
-const CACHE_NAME = 'pembukuan-v1';
+const CACHE_NAME = 'pembukuan-v2';
 
 const ASET = [
   './',
@@ -76,6 +76,7 @@ const ASET = [
   './src/parsers/util.js',
   './src/parsers/banks/bca.js',
   './src/parsers/banks/permata.js',
+  './src/parsers/banks/permata-mutasi.js',
   './src/parsers/banks/generic.js',
 
   './src/services/ingest.js',

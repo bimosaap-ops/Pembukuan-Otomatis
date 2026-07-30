@@ -85,8 +85,8 @@ export async function mount(wadah) {
       akun.length ? h('.info-kotak', null, [
         ikon('cek', 18),
         h('div', null, [
-          h('b', { text: 'Saldo diambil dari kolom saldo statement terakhir. ' }),
-          'Untuk akun kas yang tidak punya kolom saldo, saldo dihitung dari saldo awal ditambah seluruh mutasi.',
+          h('b', { text: 'Saldo diambil dari kolom saldo pada statement terakhir. ' }),
+          'Sebagian berkas — misalnya unduhan "Mutasi Transaksi" dari aplikasi bank — tidak memuat kolom saldo sama sekali. Untuk rekening seperti itu, saldo dihitung dari Saldo Awal ditambah seluruh mutasi, jadi isilah Saldo Awal agar angkanya sesuai kenyataan.',
         ]),
       ]) : null,
     ]);

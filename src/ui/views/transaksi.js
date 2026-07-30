@@ -225,7 +225,7 @@ function kolom(petaAkun, petaKategori, petaUpload, daftarKategori, render) {
       ]),
     },
     {
-      kunci: 'debit', judul: 'Debit', kanan: true, angka: true, lebar: '120px',
+      kunci: 'debit', judul: 'Debit', kanan: true, angka: true, lebar: '120px', kartu: false,
       render: (t) => (t.nominal < 0 ? h('span.keluar', { text: rupiah(-t.nominal) }) : ''),
     },
     {

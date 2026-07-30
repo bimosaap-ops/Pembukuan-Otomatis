@@ -113,7 +113,7 @@ function laporanBukuKas(transaksi, petaKategori, akun) {
       render: (r) => petaKategori.get(r.kategoriId)?.nama || '—',
     },
     {
-      kunci: 'debit', judul: 'Debit', kanan: true, angka: true, lebar: '130px',
+      kunci: 'debit', judul: 'Debit', kanan: true, angka: true, lebar: '130px', kartu: false,
       nilai: (r) => r.debit || '', render: (r) => (r.debit ? h('span.keluar', { text: rupiah(r.debit) }) : ''),
     },
     {

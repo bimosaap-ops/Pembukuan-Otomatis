@@ -74,7 +74,15 @@ function bentukTabel({ kolom, baris, kelasBaris, aksi, kunciBaris }) {
 function bentukKartu({ kolom, baris, kelasBaris, aksi, kunciBaris }) {
   const kolUtama = kolom.find((k) => k.kartu === 'utama') || kolom[0];
   const kolNilai = kolom.find((k) => k.kartu === 'nilai');
-  const kolMeta = kolom.filter((k) => k !== kolUtama && k !== kolNilai && k.kartu !== false);
+  // Kolom yang seluruh barisnya kosong tidak perlu muncul sebagai label tanpa isi
+  // di bentuk kartu — mis. kolom Saldo pada statement yang tidak memuat saldo.
+  const adaIsinya = (k) => baris.some((row) => {
+    const v = k.render ? k.render(row) : row[k.kunci];
+    if (v === null || v === undefined || v === '') return false;
+    if (v instanceof Node) return Boolean(v.textContent.trim());
+    return String(v).trim() !== '';
+  });
+  const kolMeta = kolom.filter((k) => k !== kolUtama && k !== kolNilai && k.kartu !== false && adaIsinya(k));
 
   return h('.dv__kartu-list', null, baris.map((row, i) => {
     const kelas = kelasBaris?.(row) || '';

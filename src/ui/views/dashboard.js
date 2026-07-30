@@ -60,6 +60,14 @@ export async function mount(wadah) {
     const bulanIni = kunciBulan(hariIni());
     const arusBulanIni = ringkasArus(semua.filter((t) => kunciBulan(t.tanggal) === bulanIni));
 
+    /* Sebagian statement (mis. unduhan "Mutasi Transaksi") tidak memuat kolom saldo.
+       Untuk rekening seperti itu, angka saldo sebenarnya hanya selisih mutasi yang
+       pernah di-upload — bukan saldo rekening. Perbedaan ini harus dinyatakan,
+       bukan dibiarkan terbaca sebagai posisi keuangan yang sesungguhnya. */
+    const adaSaldoResmi = semua.some((t) => t.saldo !== null && t.saldo !== undefined);
+    const adaSaldoAwal = akunTampil.some((a) => Number(a.saldoAwal) !== 0);
+    const saldoBelumBerpatokan = semua.length > 0 && !adaSaldoResmi && !adaSaldoAwal;
+
     ganti(isi, [
       h('.kartu.kartu--rapat', null, [
         filterPeriode(filter, (baru) => { filter = { ...filter, ...baru }; render(); }),
@@ -70,7 +78,9 @@ export async function mount(wadah) {
 
       h('.grid-kpi', null, [
         kartuKpi('Total Saldo', rupiah(totalSaldo(akunTampil)), 'netral', 'rekening',
-          `${akunTampil.length} rekening`),
+          saldoBelumBerpatokan
+            ? 'Baru selisih mutasi — isi Saldo Awal di menu Rekening'
+            : `${akunTampil.length} rekening`),
         kartuKpi('Total Pemasukan', rupiah(arus.masuk), 'masuk', 'transaksi',
           `Bulan ini ${rupiahRingkas(arusBulanIni.masuk)}`),
         kartuKpi('Total Pengeluaran', rupiah(arus.keluar), 'keluar', 'transaksi',
