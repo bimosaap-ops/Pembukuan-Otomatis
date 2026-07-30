@@ -90,31 +90,109 @@ export function statementBCAAkhirTahun() {
 }
 
 /* ==========================================================================
-   Permata — kolom Debet dan Kredit terpisah, tanggal lengkap
+   Permata Rekening Koran bulanan — meniru berkas sungguhan:
+   judul kolom dua bahasa yang berulang tiap halaman, dua kolom tanggal,
+   tanggal DD/MM tanpa tahun, SALDO AWAL, dan baris Total penutup.
+   Halaman sampul dan halaman disclaimer sengaja disertakan karena keduanya
+   tidak boleh ikut terbaca sebagai transaksi.
    ========================================================================== */
 
-export const PERMATA_KOLOM = { tanggal: 40, keterangan: 130, debet: 330, kredit: 420, saldo: 510 };
+export const PERMATA_KOLOM = {
+  tanggal: 90, valuta: 296, uraian: 431, debet: 1111, kredit: 1454, saldo: 1810,
+};
 
-export function statementPermata() {
-  const K = PERMATA_KOLOM;
-  return halaman([
-    [[200, 'PermataBank']],
-    [[200, 'PT Bank Permata Tbk']],
-    [[40, 'Nomor Rekening'], [160, ': 0987654321']],
-    [[40, 'Nama'], [160, ': SITI RAHAYU']],
-    [[40, 'Periode'], [160, ': 01/07/2025 s/d 31/07/2025']],
-    null,
-    [[K.tanggal, 'Tanggal'], [K.keterangan, 'Keterangan'], [K.debet, 'Debet'], [K.kredit, 'Kredit'], [K.saldo, 'Saldo']],
-    [[K.tanggal, '01/07/2025'], [K.keterangan, 'SALDO AWAL'], [K.saldo, '25.000.000,00']],
-    [[K.tanggal, '03/07/2025'], [K.keterangan, 'TRANSFER MASUK DARI PT ABC'], [K.kredit, '7.500.000,00'], [K.saldo, '32.500.000,00']],
-    [[K.tanggal, '08/07/2025'], [K.keterangan, 'PEMBAYARAN INDIHOME'], [K.debet, '450.000,00'], [K.saldo, '32.050.000,00']],
-    [[K.keterangan, 'NO PELANGGAN 1234567890']],
-    [[K.tanggal, '15/07/2025'], [K.keterangan, 'BIAYA ADMINISTRASI'], [K.debet, '11.000,00'], [K.saldo, '32.039.000,00']],
-    [[K.tanggal, '20/07/2025'], [K.keterangan, 'TOKOPEDIA MARKETPLACE'], [K.debet, '1.250.000,00'], [K.saldo, '30.789.000,00']],
-    [[K.tanggal, '31/07/2025'], [K.keterangan, 'BUNGA TABUNGAN'], [K.kredit, '12.500,00'], [K.saldo, '30.801.500,00']],
-    null,
-    [[K.keterangan, 'SALDO AKHIR'], [K.saldo, ': 30.801.500,00']],
+/** Tiga baris judul yang selalu muncul di atas tabel transaksi. */
+function judulPermata() {
+  return [
+    [[90, 'Tgl Trx.'], [260, 'Tgl Valuta'], [430, 'Uraian Trx.'], [1216, 'Debet'], [1550, 'Kredit'], [1916, 'Saldo']],
+    [[90, 'Trx. Date'], [270, 'Val. Date'], [430, 'Trx. Description'], [1229, 'Debit'], [1552, 'Credit'], [1883, 'Balance']],
+    [[90, '(dd/mm)'], [270, '(dd/mm)']],
+  ];
+}
+
+function kopPermata() {
+  return [
+    [[1601, 'Rekening Koran'], [1782, 'Account Statement']],
+    [[60, 'BIMO CONTOH'], [895, 'Periode Laporan'], [1245, '01 JULI 2025 - 31 JULI 2025']],
+    [[60, 'PT CONTOH HUTAMA LINTAS NUSANTARA'], [895, 'Statement Period']],
+    [[895, 'Tanggal Laporan'], [1245, '1 AGUSTUS 2025']],
+    [[895, 'No.CIF'], [1245, 'B0024WQ']],
+    [[60, 'No. Rekening'], [370, '1238847210']],
+    [[60, 'Account No.']],
+    [[60, 'Nama Produk'], [370, 'Permata Payroll']],
+    [[60, 'Mata Uang'], [370, 'IDR']],
+  ];
+}
+
+function kakiPermata() {
+  return [
+    [[1786, 'Halaman/'], [1905, 'Page'], [1971, '02/03']],
+    [[1045, 'PT Bank Permata, Tbk. berizin dan diawasi oleh Otoritas Jasa Keuangan dan Bank Indonesia']],
+    [[60, 'PermataBank.com | Permata Tel 1500-111 atau (021) 2985-0611']],
+  ];
+}
+
+const K = { tanggal: 91, valuta: 296, uraian: 431, debet: 1111, kredit: 1454, saldo: 1810 };
+
+/** [tanggal, uraian, [baris sambungan], debet, kredit, saldo] */
+const PERMATA_TRANSAKSI = [
+  ['02/07', 'PAY TOKOPEDIA 750888291177279 Perma', ['ta ME 00:36:08 750888291177279'], '189.500,00', '', '646.862,00'],
+  ['07/07', 'PB DARI PT CONTOH PUTRA MANDIRI D', ['CMS 10:15:08 BIMO CONTOH Bonus', 'Periode 2024 0897188808600101'], '', '18.360.430,00', '19.007.292,00'],
+  ['08/07', 'PB KE GIANI CONTOH 1238840550 Perm ata', ['ME 09:33:46 -'], '107.100,00', '', '18.900.192,00'],
+  ['13/07', 'TRF BIFAST KE BIMO CONTOH 60903789', ['94 BANK CENTRAL ASIA Permata ME', '03:44:46 - 000105945190'], '17.000.000,00', '', '1.900.192,00'],
+  ['31/07', 'PENDAPATAN BUNGA', [], '', '2.719,00', '1.902.911,00'],
+  ['31/07', 'PAJAK ATAS BUNGA', [], '544,00', '', '1.902.367,00'],
+];
+
+function halamanTransaksiPermata() {
+  const isi = [];
+  isi.push([[K.uraian, 'SALDO AWAL'], [K.saldo, '836.362,00']]);
+
+  PERMATA_TRANSAKSI.forEach(([tgl, uraian, sambungan, debet, kredit, saldo]) => {
+    const sel = [[K.tanggal, tgl], [K.valuta, tgl], [K.uraian, uraian]];
+    if (debet) sel.push([K.debet, debet]);
+    if (kredit) sel.push([K.kredit, kredit]);
+    if (saldo) sel.push([K.saldo, saldo]);
+    isi.push(sel);
+    sambungan.forEach((teks) => isi.push([[K.uraian, teks]]));
+  });
+
+  // Baris penutup: nominal total dulu, kata "Total" di baris berikutnya.
+  isi.push([[K.debet, '17.297.144,00'], [K.kredit, '18.363.149,00']]);
+  isi.push([[K.tanggal, 'Total']]);
+  return isi;
+}
+
+/**
+ * Statement tiga halaman: sampul, tabel transaksi, lalu disclaimer.
+ * Setiap halaman dikembalikan terpisah, seperti keluaran pdf.js.
+ */
+export function statementPermataRekeningKoran() {
+  const sampul = halaman([
+    ...kopPermata(),
+    [[60, 'Ringkasan Rekening'], [1281, 'Ekuivalen Saldo Rupiah – 31 Juli 2025']],
+    [[91, 'Rekening Simpanan'], [1324, 'Total'], [1767, '1.902.367,00']],
+    [[90, 'Nama Produk'], [603, 'Mata Uang'], [842, 'Jumlah Rekening'], [1451, 'Saldo'], [1803, 'Saldo Rupiah']],
+    [[91, 'Permata Payroll'], [668, 'IDR'], [972, '1'], [1358, '1.902.367,00'], [1823, '1.902.367,00']],
+    ...kakiPermata(),
   ]);
+
+  const tabel = halaman([
+    ...kopPermata(),
+    ...judulPermata(),
+    ...halamanTransaksiPermata(),
+    ...kakiPermata(),
+  ]);
+
+  const disclaimer = halaman([
+    ...kopPermata(),
+    [[60, 'Disclaimer :']],
+    [[60, '1.'], [120, 'Laporan transaksi ini sah dan tidak memerlukan tanda tangan pejabat dari PT Bank Permata, Tbk.']],
+    [[120, 'File eStatement yang di unduh melalui Permata ME / Permata Net sudah tidak menggunakan password.']],
+    ...kakiPermata(),
+  ]);
+
+  return [sampul, tabel, disclaimer];
 }
 
 /* ==========================================================================

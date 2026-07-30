@@ -13,7 +13,7 @@
  * Naikkan CACHE_NAME setiap kali aset berubah agar versi lama dibersihkan.
  */
 
-const CACHE_NAME = 'pembukuan-v2';
+const CACHE_NAME = 'pembukuan-v3';
 
 const ASET = [
   './',

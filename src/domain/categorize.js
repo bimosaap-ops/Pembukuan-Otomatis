@@ -30,7 +30,8 @@ export const KATEGORI_BAWAAN = [
   { id: 'kat_setoran', nama: 'Setoran Tunai', tipe: PEMASUKAN, ikon: '💵', warna: 'var(--c12)', prioritas: 68,
     polaKataKunci: ['SETORAN TUNAI', 'SETORAN', 'CASH DEPOSIT', 'STR TUNAI'] },
   { id: 'kat_transfer_masuk', nama: 'Transfer Masuk', tipe: PEMASUKAN, ikon: '⬇️', warna: 'var(--c1)', prioritas: 10,
-    polaKataKunci: ['TRSF E-BANKING CR', 'TRANSFER MASUK', 'INCOMING', 'KREDIT', 'BI-FAST CR', 'TRANSFER DARI'] },
+    polaKataKunci: ['TRSF E-BANKING CR', 'TRANSFER MASUK', 'INCOMING', 'KREDIT', 'BI-FAST CR', 'TRANSFER DARI',
+      'PB DARI', 'BIFAST DARI', 'TRF DARI'] },
   { id: KATEGORI_LAINNYA_MASUK, nama: 'Pemasukan Lain', tipe: PEMASUKAN, ikon: '➕', warna: 'var(--c10)', prioritas: 0,
     polaKataKunci: [] },
 
@@ -50,9 +51,17 @@ export const KATEGORI_BAWAAN = [
   { id: 'kat_tagihan', nama: 'Tagihan & Utilitas', tipe: PENGELUARAN, ikon: '💡', warna: 'var(--c9)', prioritas: 76,
     polaKataKunci: ['PLN', 'LISTRIK', 'PDAM', 'AETRA', 'PALYJA', 'TELKOM', 'INDIHOME', 'FIRST MEDIA',
       'BIZNET', 'MYREPUBLIC', 'MNC PLAY', 'GAS NEGARA', 'PGN', 'IPL', 'IURAN', 'SERVICE CHARGE'] },
+  /* Catatan: "TRI" (operator seluler) dan "DANA" (dompet digital) sengaja tidak
+     dipakai sebagai kata kunci berdiri sendiri. Keduanya kata dan nama yang lazim
+     di Indonesia — "TRI Satyaningsih", "Dana Dimuka" — sehingga transfer ke
+     seseorang bisa salah masuk kategori. Kategori yang salah lebih merugikan
+     daripada kategori yang terlewat, karena diam-diam menggeser angka laporan
+     sementara pengguna tidak mungkin memeriksa tiap baris. Bentuk yang tidak
+     ambigu tetap dikenali, dan pengguna bisa menambahkan kata kuncinya sendiri
+     lewat menu Kategori bila memang perlu. */
   { id: 'kat_pulsa', nama: 'Pulsa & Internet', tipe: PENGELUARAN, ikon: '📱', warna: 'var(--c2)', prioritas: 74,
-    polaKataKunci: ['PULSA', 'TELKOMSEL', 'INDOSAT', 'IM3', 'XL AXIATA', 'AXIS', 'SMARTFREN', 'TRI ',
-      'BY.U', 'PAKET DATA', 'VOUCHER DATA'] },
+    polaKataKunci: ['PULSA', 'TELKOMSEL', 'INDOSAT', 'IM3', 'XL AXIATA', 'AXIS', 'SMARTFREN',
+      'TRI INDONESIA', 'BY.U', 'PAKET DATA', 'VOUCHER DATA'] },
   { id: 'kat_biaya_bank', nama: 'Biaya Bank & Admin', tipe: PENGELUARAN, ikon: '🏛', warna: 'var(--c11)', prioritas: 80,
     polaKataKunci: ['BIAYA ADM', 'BIAYA ADMIN', 'BY ADM', 'ADMINISTRASI', 'BIAYA TRANSFER', 'BIAYA TRF',
       'BIAYA RTGS', 'BIAYA SKN', 'BIAYA KARTU', 'MATERAI', 'ADM ATM', 'FEE'] },
@@ -61,7 +70,8 @@ export const KATEGORI_BAWAAN = [
   { id: 'kat_tarik_tunai', nama: 'Tarik Tunai', tipe: PENGELUARAN, ikon: '🏧', warna: 'var(--c10)', prioritas: 78,
     polaKataKunci: ['TARIKAN TUNAI', 'TARIK TUNAI', 'TARIKAN ATM', 'CASH WITHDRAWAL', 'ATM WITHDRAWAL', 'PENARIKAN'] },
   { id: 'kat_dompet_digital', nama: 'Dompet Digital & QRIS', tipe: PENGELUARAN, ikon: '📲', warna: 'var(--c1)', prioritas: 60,
-    polaKataKunci: ['QRIS', 'QR PAYMENT', 'GOPAY', 'OVO', 'DANA', 'SHOPEEPAY', 'LINKAJA', 'E-WALLET', 'ISI SALDO'] },
+    polaKataKunci: ['QRIS', 'QR PAYMENT', 'GOPAY', 'OVO', 'SHOPEEPAY', 'LINKAJA', 'E-WALLET', 'ISI SALDO',
+      'SALDO DANA', 'DANA WALLET'] },
   { id: 'kat_cicilan', nama: 'Cicilan & Pinjaman', tipe: PENGELUARAN, ikon: '📉', warna: 'var(--c5)', prioritas: 76,
     polaKataKunci: ['ANGSURAN', 'CICILAN', 'INSTALLMENT', 'KPR', 'LEASING', 'ADIRA', 'FIF', 'BAF', 'PINJAMAN', 'KARTU KREDIT'] },
   { id: 'kat_asuransi', nama: 'Asuransi & BPJS', tipe: PENGELUARAN, ikon: '🛡', warna: 'var(--c6)', prioritas: 76,
@@ -83,10 +93,34 @@ export const KATEGORI_BAWAAN = [
     polaKataKunci: ['ZAKAT', 'INFAQ', 'INFAK', 'SEDEKAH', 'DONASI', 'QURBAN', 'BAZNAS', 'DOMPET DHUAFA', 'KITABISA'] },
   { id: 'kat_transfer_keluar', nama: 'Transfer Keluar', tipe: PENGELUARAN, ikon: '⬆️', warna: 'var(--c1)', prioritas: 10,
     polaKataKunci: ['TRSF E-BANKING DB', 'TRANSFER KE', 'TRANSFER', 'BI-FAST', 'RTGS', 'SKN', 'OVERBOOKING',
-      'TRF', 'SWITCHING', 'KIRIM UANG'] },
+      'TRF', 'SWITCHING', 'KIRIM UANG', 'PB KE', 'BIFAST KE', 'TRF BIFAST KE'] },
   { id: KATEGORI_LAINNYA_KELUAR, nama: 'Pengeluaran Lain', tipe: PENGELUARAN, ikon: '➖', warna: 'var(--c11)', prioritas: 0,
     polaKataKunci: [] },
 ].map((k, i) => ({ ...k, bawaan: true, urutan: i }));
+
+const cacheKunci = new Map();
+
+/**
+ * Mencocokkan satu kata kunci ke deskripsi.
+ *
+ * Kata kunci satu kata dicocokkan dengan batas kata, bukan sebagai potongan teks
+ * bebas. Tanpa itu nama orang ikut tertangkap: "SAFITRI" memuat "TRI" (operator
+ * seluler) dan "DANAMON" memuat "DANA" (dompet digital), sehingga transfer ke
+ * seseorang bisa masuk kategori Pulsa & Internet.
+ *
+ * Kata kunci yang berupa frasa berspasi tetap dicocokkan sebagai potongan teks,
+ * karena justru urutan katanyalah yang menjadi cirinya (mis. "TRSF E-BANKING DB").
+ */
+function cocokKunci(teks, kunci) {
+  if (/\s/.test(kunci)) return teks.includes(kunci);
+
+  let re = cacheKunci.get(kunci);
+  if (!re) {
+    re = new RegExp(`\\b${kunci.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+    cacheKunci.set(kunci, re);
+  }
+  return re.test(teks);
+}
 
 /** Kategori penampung sesuai arah transaksi. */
 export function kategoriDefault(nominal) {
@@ -109,7 +143,7 @@ export function tentukanKategori(deskripsi, nominal, daftarKategori) {
     if (kat.tipe !== tipeDicari) continue;
     for (const pola of kat.polaKataKunci || []) {
       const kunci = normalisasiDeskripsi(pola);
-      if (!kunci || !teks.includes(kunci)) continue;
+      if (!kunci || !cocokKunci(teks, kunci)) continue;
       const skor = { prioritas: kat.prioritas ?? 50, panjang: kunci.length, urutan: kat.urutan ?? 999, id: kat.id };
       if (!terbaik
         || skor.prioritas > terbaik.prioritas

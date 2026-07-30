@@ -173,9 +173,10 @@ function draftKosong({ file, fileHash, hasil, pernahAda }) {
 
 async function cariAkunCocok(hasil) {
   const daftar = await akunRepo.daftar();
-  const nomor = String(hasil.nomorRekening || '').replace(/\D/g, '');
+  // Nomor diseragamkan dulu: berkas dari bank yang sama bisa menulisnya berbeda.
+  const nomor = akunRepo.normalkanNomor(hasil.nomorRekening);
   if (nomor) {
-    const cocok = daftar.find((a) => String(a.nomorRekening).replace(/\D/g, '') === nomor);
+    const cocok = daftar.find((a) => akunRepo.normalkanNomor(a.nomorRekening) === nomor);
     if (cocok) return cocok;
   }
   if (hasil.bank) {
@@ -232,7 +233,8 @@ export async function simpanDraft(draft, pilihan = {}) {
     catatan: (draft.catatan || []).join(' '),
   });
 
-  const transaksi = baris.map((b) => buatTransaksi({
+  const transaksi = baris.map((b, i) => buatTransaksi({
+    urutan: i,
     hash: b.hash,
     baseHash: b.baseHash,
     accountId: akun.id,

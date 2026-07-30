@@ -17,10 +17,12 @@ export const ADAPTER = {
  * nama badan hukum lebih dipercaya daripada singkatan yang bisa muncul kebetulan.
  */
 const TANDA_BANK = [
+  { adapter: ADAPTER.BCA, bank: 'BCA', pola: /HALO\s*BCA|WWW\.BCA\.CO\.ID/i, skor: 120 },
   { adapter: ADAPTER.BCA, bank: 'BCA', pola: /BANK\s+CENTRAL\s+ASIA/i, skor: 100 },
   { adapter: ADAPTER.BCA, bank: 'BCA', pola: /KLIKBCA|MYBCA|BCA\s+MOBILE/i, skor: 70 },
   { adapter: ADAPTER.BCA, bank: 'BCA', pola: /\bBCA\b/i, skor: 40 },
 
+  { adapter: ADAPTER.PERMATA, bank: 'Permata', pola: /PERMATABANK\.COM|PERMATA\s+TEL|NO\.\s*CIF/i, skor: 120 },
   { adapter: ADAPTER.PERMATA, bank: 'Permata', pola: /BANK\s+PERMATA/i, skor: 100 },
   { adapter: ADAPTER.PERMATA, bank: 'Permata', pola: /PERMATABANK|PERMATA\s*BANK/i, skor: 90 },
   { adapter: ADAPTER.PERMATA, bank: 'Permata', pola: /PERMATAMOBILE|PERMATANET/i, skor: 70 },
@@ -56,22 +58,38 @@ const TANDA_LAYOUT = [
   },
 ];
 
-export function deteksiBank(teks) {
-  const isi = String(teks || '');
+/**
+ * Mengenali bank penerbit statement.
+ *
+ * `teksKop` (kop halaman pertama) diperiksa lebih dulu dan itu penting: uraian
+ * transaksi penuh nama bank *lawan transaksi*. Pada rekening koran Permata,
+ * tulisan "BANK CENTRAL ASIA" muncul belasan kali sebagai bank tujuan transfer —
+ * kalau seluruh dokumen dinilai sekaligus, statement Permata bisa dikira BCA.
+ * Kop halaman hanya memuat identitas penerbitnya sendiri.
+ */
+export function deteksiBank(teks, teksKop = '') {
+  const isiPenuh = String(teks || '');
+  const kop = String(teksKop || '').trim();
 
-  const layout = TANDA_LAYOUT.find((l) => l.cocok(isi));
+  const layout = TANDA_LAYOUT.find((l) => l.cocok(kop || isiPenuh))
+    || TANDA_LAYOUT.find((l) => l.cocok(isiPenuh));
   if (layout) return { adapter: layout.adapter, bank: layout.bank, keyakinan: 100 };
 
+  // Kop lebih dipercaya; seluruh dokumen hanya dipakai bila kop tidak menjawab.
+  return nilaiTanda(kop) || nilaiTanda(isiPenuh)
+    || { adapter: ADAPTER.GENERIK, bank: '', keyakinan: 0 };
+}
+
+function nilaiTanda(isi) {
+  if (!isi) return null;
   let terbaik = null;
   TANDA_BANK.forEach((t) => {
     if (!t.pola.test(isi)) return;
     if (!terbaik || t.skor > terbaik.skor) terbaik = t;
   });
-
-  if (!terbaik) {
-    return { adapter: ADAPTER.GENERIK, bank: '', keyakinan: 0 };
-  }
-  return { adapter: terbaik.adapter, bank: terbaik.bank, keyakinan: terbaik.skor };
+  return terbaik
+    ? { adapter: terbaik.adapter, bank: terbaik.bank, keyakinan: terbaik.skor }
+    : null;
 }
 
 const POLA_NOMOR = [
@@ -144,6 +162,20 @@ export function bacaPeriode(teks) {
     }
   }
 
+  /* Rekening koran Permata menulis "Periode Laporan  01 JULI 2025 - 31 JULI 2025",
+     jadi rentangnya bisa memakai nama bulan, bukan hanya angka. Kata di antara
+     "Periode" dan tanggalnya ("Laporan") dilewati. */
+  const rentangNamaBulan = isi.match(
+    /PERIODE[^\n]{0,24}?(\d{1,2}\s+[A-Za-z]{3,12}\s+\d{4})\s*(?:S\/D|SD|-|–|—|SAMPAI|TO|HINGGA)\s*(\d{1,2}\s+[A-Za-z]{3,12}\s+\d{4})/i,
+  );
+  if (rentangNamaBulan) {
+    const awal = parseTanggal(rentangNamaBulan[1]);
+    const akhir = parseTanggal(rentangNamaBulan[2]);
+    if (awal && akhir) {
+      return { awal, akhir, tahun: Number(awal.slice(0, 4)), bulanIdx: Number(awal.slice(5, 7)) - 1 };
+    }
+  }
+
   const bulanTahun = isi.match(/PERIODE\s*[:\-]?\s*([A-Z]{3,12})\s+(\d{4})/i);
   if (bulanTahun) {
     const b = bulanDariNama(bulanTahun[1]);
@@ -175,8 +207,8 @@ export function bacaPeriode(teks) {
 }
 
 /** Semua informasi kepala berkas sekaligus. */
-export function bacaKepala(teks) {
-  const { adapter, bank, keyakinan } = deteksiBank(teks);
+export function bacaKepala(teks, teksKop = '') {
+  const { adapter, bank, keyakinan } = deteksiBank(teks, teksKop);
   return {
     adapter,
     bank,

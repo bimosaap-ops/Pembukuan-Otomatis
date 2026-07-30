@@ -30,12 +30,24 @@ export async function simpanAkun(data) {
  * Pencocokan memakai nomor rekening (yang paling khas); bila statement tidak
  * mencantumkannya, dipakai kombinasi bank + nama pemilik.
  */
+/**
+ * Menyeragamkan nomor rekening untuk keperluan pencocokan.
+ *
+ * Satu rekening bisa ditulis berbeda antar jenis berkas dari bank yang sama:
+ * rekening koran Permata menulis "1238847210", sedangkan unduhan Mutasi Transaksi
+ * menulis "0012-3884-7210". Tanpa penyeragaman, satu rekening akan terpecah
+ * menjadi dua di pembukuan dan saldonya jadi kacau.
+ */
+export function normalkanNomor(nomor) {
+  return String(nomor || '').replace(/\D/g, '').replace(/^0+/, '');
+}
+
 export async function cariAtauBuat({ bank, nomorRekening, namaPemilik }) {
   const rows = await daftar();
-  const nomorBersih = String(nomorRekening || '').replace(/\D/g, '');
+  const nomorBersih = normalkanNomor(nomorRekening);
 
   if (nomorBersih) {
-    const cocok = rows.find((a) => String(a.nomorRekening).replace(/\D/g, '') === nomorBersih);
+    const cocok = rows.find((a) => normalkanNomor(a.nomorRekening) === nomorBersih);
     if (cocok) return { akun: cocok, baru: false };
   } else if (bank) {
     const cocok = rows.find((a) => a.bank === bank
@@ -55,21 +67,33 @@ export async function cariAtauBuat({ bank, nomorRekening, namaPemilik }) {
 /**
  * Menghitung ulang saldo dan jumlah transaksi sebuah rekening.
  *
- * Saldo diambil dari kolom saldo transaksi terakhir bila statement mencantumkannya —
- * itu angka resmi dari bank. Kalau tidak ada (mis. rekening kas manual), saldo
- * dihitung dari saldo awal ditambah seluruh mutasi.
+ * Titik berpijaknya adalah baris bersaldo terakhir — itu angka resmi dari bank.
+ * Mutasi yang terjadi *sesudah* baris itu ditambahkan sendiri, karena satu rekening
+ * bisa memuat berkas dari dua jenis: rekening koran (bersaldo) untuk bulan lama dan
+ * unduhan Mutasi Transaksi (tanpa saldo) untuk bulan yang lebih baru. Tanpa
+ * penambahan ini, saldonya berhenti di bulan statement terakhir yang bersaldo.
+ *
+ * Bila tidak ada baris bersaldo sama sekali (mis. rekening kas manual), saldo
+ * dihitung dari Saldo Awal ditambah seluruh mutasi.
  */
 export async function hitungUlangSaldo(accountId) {
   const akun = await satu(accountId);
   if (!akun) return null;
 
   const rows = await trxRepo.perAkun(accountId);
-  const denganSaldo = rows.filter((r) => r.saldo !== null && r.saldo !== undefined);
-  const terakhir = denganSaldo[denganSaldo.length - 1];
+  const idxTerakhirBersaldo = rows.reduce(
+    (idx, r, i) => ((r.saldo !== null && r.saldo !== undefined) ? i : idx),
+    -1,
+  );
 
-  const saldo = terakhir
-    ? terakhir.saldo
-    : (akun.saldoAwal || 0) + rows.reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+  let saldo;
+  if (idxTerakhirBersaldo >= 0) {
+    const sesudahnya = rows.slice(idxTerakhirBersaldo + 1)
+      .reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+    saldo = rows[idxTerakhirBersaldo].saldo + sesudahnya;
+  } else {
+    saldo = (akun.saldoAwal || 0) + rows.reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+  }
 
   const perbarui = { ...akun, saldo, jumlahTransaksi: rows.length };
   await simpan(STORE.ACCOUNTS, perbarui);

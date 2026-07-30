@@ -153,3 +153,36 @@ test('koreksi manual menghasilkan kata kunci yang bisa dipakai ulang', () => {
   const lagi = tambahPola(kategori, pola.toLowerCase());
   assert.equal(lagi.polaKataKunci.length, kategori.polaKataKunci.length, 'kata kunci yang sama tidak ditambah dua kali');
 });
+
+
+/* ==========================================================================
+   Penyeragaman nomor rekening
+   ========================================================================== */
+
+test('nomor rekening yang ditulis berbeda tetap dianggap satu rekening', async () => {
+  const { normalkanNomor } = await import('../src/data/repo/accounts.js');
+
+  // Rekening koran menulis "1238847210", unduhan Mutasi Transaksi "0012-3884-7210".
+  assert.equal(normalkanNomor('1238847210'), normalkanNomor('0012-3884-7210'));
+  assert.equal(normalkanNomor('0012-3884-7210'), '1238847210');
+  assert.equal(normalkanNomor(' 1238847210 '), '1238847210');
+  assert.equal(normalkanNomor('001.238.847.210'), '1238847210');
+
+  // Rekening yang memang berbeda tidak boleh menyatu.
+  assert.notEqual(normalkanNomor('1238847210'), normalkanNomor('1238840550'));
+  assert.equal(normalkanNomor(''), '');
+  assert.equal(normalkanNomor(null), '');
+});
+
+test('kata kunci kategori tidak menangkap potongan nama orang', async () => {
+  const { tentukanKategori: tentukan, KATEGORI_BAWAAN: bawaan } = await import('../src/domain/categorize.js');
+
+  // "SAFITRI" memuat "TRI", "DANAMON" memuat "DANA" — keduanya nama, bukan merchant.
+  assert.equal(tentukan('PB KE GIANI SAFITRI 1238840550 Permata ME', -107100, bawaan), 'kat_transfer_keluar');
+  assert.equal(tentukan('TRF BIFAST KE TRI SATYANINGSIH 3430368264', -2950000, bawaan), 'kat_transfer_keluar');
+  assert.equal(tentukan('TRF DARI BESTINDO BANK DANAMON Dana Dimuka', 5730000, bawaan), 'kat_transfer_masuk');
+
+  // Bentuk yang tidak ambigu tetap harus kena.
+  assert.equal(tentukan('PULSA TELKOMSEL 0812', -50000, bawaan), 'kat_pulsa');
+  assert.equal(tentukan('ISI SALDO DANA 0812', -100000, bawaan), 'kat_dompet_digital');
+});

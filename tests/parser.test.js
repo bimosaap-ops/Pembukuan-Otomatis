@@ -9,7 +9,7 @@ import { parseTanggal } from '../src/core/dates.js';
 import { validasiBaris, cocokkanRingkasan } from '../src/domain/validate.js';
 import {
   statementBCA, statementBCAAgustus, statementBCAAkhirTahun,
-  statementPermata, statementGenerikTanpaHeader, baris,
+  statementPermataRekeningKoran, statementGenerikTanpaHeader, baris,
 } from './fixtures/statements.js';
 
 /* ==========================================================================
@@ -141,25 +141,56 @@ test('total hasil parsing BCA cocok dengan ringkasan di statement', () => {
    Adapter Permata
    ========================================================================== */
 
-test('adapter Permata membedakan kolom debet dan kredit dari posisinya', () => {
-  const hasil = parseStatement([statementPermata()]);
+test('adapter Permata membaca rekening koran: kolom debet/kredit, dua kolom tanggal, tanggal DD/MM', () => {
+  const hasil = parseStatement(statementPermataRekeningKoran());
 
   assert.equal(hasil.kodeAdapter, ADAPTER.PERMATA);
   assert.equal(hasil.bank, 'Permata');
-  assert.equal(hasil.nomorRekening, '0987654321');
-  assert.equal(hasil.namaPemilik, 'SITI RAHAYU');
-  assert.equal(hasil.transaksi.length, 5);
+  assert.equal(hasil.nomorRekening, '1238847210');
+  assert.equal(hasil.periodeAwal, '2025-07-01', 'periode diambil dari kop, bukan tanggal transaksi pertama');
+  assert.equal(hasil.periodeAkhir, '2025-07-31');
+  assert.equal(hasil.transaksi.length, 6,
+    'halaman sampul, disclaimer, SALDO AWAL, dan baris Total tidak ikut terhitung');
 
-  const [t1, t2, t3, t4, t5] = hasil.transaksi;
-  assert.equal(t1.tanggal, '2025-07-03');
-  assert.equal(t1.nominal, 7500000, 'angka di kolom Kredit berarti masuk');
-  assert.equal(t2.nominal, -450000, 'angka di kolom Debet berarti keluar');
-  assert.ok(t2.deskripsi.includes('NO PELANGGAN'), 'baris lanjutan digabung');
-  assert.equal(t3.nominal, -11000);
-  assert.equal(t4.nominal, -1250000);
-  assert.equal(t5.nominal, 12500);
-  assert.equal(t5.saldo, 30801500);
-  assert.equal(hasil.saldoAwal, 25000000);
+  const [t1, t2, t3, t4, t5, t6] = hasil.transaksi;
+
+  // Tahun tidak tertulis di baris transaksi; diambil dari "Periode Laporan".
+  assert.equal(t1.tanggal, '2025-07-02');
+  assert.equal(t1.nominal, -189500, 'angka di kolom Debet berarti keluar');
+  assert.ok(t1.deskripsi.startsWith('PAY TOKOPEDIA'));
+  assert.ok(!/189\.500|646\.862/.test(t1.deskripsi), 'nominal tidak boleh tercampur ke uraian');
+
+  assert.equal(t2.nominal, 18360430, 'angka di kolom Kredit berarti masuk');
+  assert.ok(t2.deskripsi.includes('Bonus'), 'uraian tiga baris tergabung utuh');
+  assert.ok(!/0897188808600101$/.test('') && t2.deskripsi.includes('0897188808600101'),
+    'nomor referensi panjang tetap bagian uraian, bukan dibaca sebagai uang');
+
+  assert.equal(t3.nominal, -107100);
+  assert.equal(t4.nominal, -17000000);
+  assert.equal(t5.nominal, 2719);
+  assert.equal(t6.nominal, -544);
+  assert.equal(t6.saldo, 1902367);
+  assert.equal(hasil.saldoAwal, 836362);
+});
+
+test('total debet dan kredit pada baris penutup dipakai memastikan tak ada baris terlewat', () => {
+  const hasil = parseStatement(statementPermataRekeningKoran());
+  const cek = cocokkanRingkasan(hasil.transaksi, hasil.ringkasan);
+
+  assert.ok(cek, 'baris Total harus terbaca sebagai ringkasan');
+  assert.ok(cek.semuaCocok, `ada total yang tidak cocok: ${JSON.stringify(cek.cek)}`);
+
+  const { ringkas } = validasiBaris(hasil.transaksi);
+  assert.equal(ringkas.curiga, 0, 'saldo berjalan harus nyambung di seluruh baris');
+  assert.equal(ringkas.adaKolomSaldo, true);
+});
+
+test('nama bank lain di uraian transaksi tidak mengalahkan penerbit statement', () => {
+  // Uraian memuat "BANK CENTRAL ASIA" sebagai bank tujuan transfer, sedangkan
+  // penerbitnya Permata. Dulu hal ini membuat statement Permata dikira BCA.
+  const hasil = parseStatement(statementPermataRekeningKoran());
+  assert.equal(hasil.bank, 'Permata');
+  assert.ok(hasil.teksMentah.includes('BANK CENTRAL ASIA'), 'uraian memang memuat nama bank lain');
 });
 
 /* ==========================================================================

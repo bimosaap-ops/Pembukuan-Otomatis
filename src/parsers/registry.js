@@ -45,15 +45,30 @@ export function parseStatement(halaman, opsi = {}) {
   const semuaBaris = barisPerHalaman.flat();
   const teks = barisPerHalaman.map((b) => teksPenuh(b)).join('\n');
 
-  const kepala = bacaKepala(teks);
+  /* Kop halaman pertama dipisahkan karena identitas penerbit hanya ada di situ,
+     sementara uraian transaksi penuh nama bank lawan transaksi. */
+  const teksKop = teksPenuh((barisPerHalaman[0] || []).slice(0, 25));
+
+  const kepala = bacaKepala(teks, teksKop);
   const kodeAdapter = opsi.paksaAdapter || kepala.adapter;
   const adapter = adapterUntuk(kodeAdapter);
 
   const warna = (opsi.warna || []).flat();
-  const hasil = adapter.parse({ baris: semuaBaris, teks, kepala, warna });
+  const hasil = adapter.parse({
+    baris: semuaBaris,
+    barisPerHalaman,
+    teks,
+    teksKop,
+    kepala,
+    warna,
+  });
 
   const periode = periodeDariBaris(hasil.transaksi);
   const bank = kepala.bank || adapter.info.bank || '';
+
+  /* Periode yang tercetak di kop lebih tepat menggambarkan cakupan berkas daripada
+     tanggal transaksi pertama dan terakhir — bulan bisa dimulai tanpa transaksi. */
+  const kopLengkap = Boolean(kepala.periode.awal && kepala.periode.akhir);
 
   return {
     ...hasil,
@@ -63,8 +78,8 @@ export function parseStatement(halaman, opsi = {}) {
     nomorRekening: kepala.nomorRekening,
     namaPemilik: kepala.namaPemilik,
     periodeKepala: kepala.periode,
-    periodeAwal: periode.periodeAwal || kepala.periode.awal || '',
-    periodeAkhir: periode.periodeAkhir || kepala.periode.akhir || '',
+    periodeAwal: (kopLengkap ? kepala.periode.awal : periode.periodeAwal) || periode.periodeAwal || '',
+    periodeAkhir: (kopLengkap ? kepala.periode.akhir : periode.periodeAkhir) || periode.periodeAkhir || '',
     teksMentah: teks,
     jumlahBaris: semuaBaris.length,
   };

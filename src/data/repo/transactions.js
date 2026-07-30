@@ -12,9 +12,19 @@ export async function semua() {
   return rows;
 }
 
-/** Urut menaik berdasarkan tanggal; dalam satu hari ikuti urutan statement. */
+/**
+ * Urut menaik berdasarkan tanggal; dalam satu hari ikuti urutan baris statement.
+ *
+ * `urutan` wajib ada di sini: IndexedDB mengembalikan record menurut kunci primer
+ * yang acak, sehingga transaksi bertanggal sama akan tersusun sembarang. Itu bukan
+ * sekadar soal tampilan — saldo rekening diambil dari baris bersaldo terakhir,
+ * jadi urutan yang salah membuat saldonya salah.
+ */
 function bandingkan(a, b) {
   if (a.tanggal !== b.tanggal) return a.tanggal < b.tanggal ? -1 : 1;
+  const ua = Number(a.urutan) || 0;
+  const ub = Number(b.urutan) || 0;
+  if (ua !== ub) return ua - ub;
   return String(a.dibuatPada).localeCompare(String(b.dibuatPada));
 }
 

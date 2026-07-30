@@ -6,6 +6,9 @@ import { idBaru } from '../core/hash.js';
 import { hariIni } from '../core/dates.js';
 
 export const JENIS_AKUN = { BANK: 'bank', KAS: 'kas' };
+
+/** Nomor urut untuk transaksi yang tidak berasal dari baris statement. */
+export const URUTAN_MANUAL = 1000000;
 export const SUMBER = { PDF: 'pdf', MANUAL: 'manual' };
 export const TIPE_KATEGORI = { PEMASUKAN: 'pemasukan', PENGELUARAN: 'pengeluaran' };
 export const STATUS_UPLOAD = { SUKSES: 'sukses', SEBAGIAN: 'sebagian', GAGAL: 'gagal' };
@@ -56,6 +59,12 @@ export function buatTransaksi(data = {}) {
     transferInternal: Boolean(data.transferInternal),
     sumber: data.sumber || SUMBER.MANUAL,
     uploadedFileId: data.uploadedFileId || '',
+    /* Posisi baris di dalam statement asalnya. IndexedDB mengembalikan record
+       menurut kunci primer yang acak, jadi tanpa nomor urut ini transaksi yang
+       bertanggal sama akan tersusun sembarang — dan saldo rekening bisa terambil
+       dari baris yang salah. Transaksi manual memakai nilai besar supaya jatuh
+       sesudah baris statement pada tanggal yang sama. */
+    urutan: Number.isFinite(Number(data.urutan)) ? Number(data.urutan) : URUTAN_MANUAL,
     catatan: data.catatan || '',
     dibuatPada: data.dibuatPada || new Date().toISOString(),
     diubahPada: data.diubahPada || '',

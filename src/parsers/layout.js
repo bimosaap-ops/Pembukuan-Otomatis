@@ -86,6 +86,12 @@ export function potongKolom(baris, xMin, xMaks) {
 /**
  * Mencari posisi x judul-judul kolom pada sebuah baris header.
  *
+ * Judul kolom di dunia nyata sering majemuk dan dua bahasa — "Tgl Trx.",
+ * "Uraian Trx.", "Trx. Description" — jadi pencocokan berjalan tiga tahap:
+ * seluruh potongan sama persis, lalu salah satu katanya cocok, lalu pola dicari
+ * pada teks baris yang sudah digabung. Tahap yang lebih ketat selalu didahulukan
+ * supaya kolom yang judulnya mirip tidak saling tertukar.
+ *
  * @param {object} baris baris hasil susunBaris
  * @param {Array<{nama:string, pola:RegExp}>} definisi
  * @returns {Map<string, {x:number, xAkhir:number}>|null}
@@ -94,14 +100,22 @@ export function posisiHeader(baris, definisi) {
   const hasil = new Map();
 
   definisi.forEach(({ nama, pola }) => {
-    // Judul kolom bisa terpecah jadi beberapa potongan ("TANG" + "GAL"),
-    // jadi pencocokan dilakukan pada teks gabungan lalu dipetakan balik ke x.
     for (const it of baris.items) {
       if (pola.test(it.str.trim())) {
         hasil.set(nama, { x: it.x, xAkhir: it.x + (it.w || 0) });
         return;
       }
     }
+
+    for (const it of baris.items) {
+      const kata = it.str.trim().split(/[\s.]+/).filter(Boolean);
+      if (kata.some((k) => pola.test(k))) {
+        hasil.set(nama, { x: it.x, xAkhir: it.x + (it.w || 0) });
+        return;
+      }
+    }
+
+    // Judul kolom juga bisa terpecah jadi beberapa potongan ("TANG" + "GAL").
     const gabung = baris.teks;
     const m = gabung.match(pola);
     if (!m) return;

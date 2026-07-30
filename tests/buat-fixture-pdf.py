@@ -160,73 +160,185 @@ def buat_bca_agustus(nama="bca-agustus-2025.pdf"):
 
 
 # ==========================================================================
-# Permata — kolom Debet dan Kredit terpisah, tanggal lengkap
+# Permata Rekening Koran bulanan (unduhan Permata ME / Permata Net).
+# Meniru berkas sungguhan: halaman lebar, judul kolom dua bahasa yang berulang,
+# dua kolom tanggal, tanggal DD/MM tanpa tahun, SALDO AWAL, dan baris Total.
+# Halaman sampul dan disclaimer disertakan karena keduanya tidak boleh
+# ikut terbaca sebagai transaksi.
 # ==========================================================================
 
-PERMATA_X = {"tanggal": 40, "keterangan": 120, "debet": 380, "kredit": 470, "saldo": 560}
+RK_LEBAR, RK_TINGGI = 2008, 1420
+RK_X = {"tanggal": 91, "valuta": 296, "uraian": 431}
+RK_KANAN = {"debet": 1240, "kredit": 1580, "saldo": 1940}
 
-PERMATA_BARIS = [
-    ("01/07/2025", "SALDO AWAL", "", "", "25.000.000,00"),
-    ("03/07/2025", "TRANSFER MASUK DARI PT ABC", "", "7.500.000,00", "32.500.000,00"),
-    ("08/07/2025", "PEMBAYARAN INDIHOME", "450.000,00", "", "32.050.000,00"),
-    ("", "NO PELANGGAN 1234567890", "", "", ""),
-    ("15/07/2025", "BIAYA ADMINISTRASI", "11.000,00", "", "32.039.000,00"),
-    ("20/07/2025", "TOKOPEDIA MARKETPLACE", "1.250.000,00", "", "30.789.000,00"),
-    ("22/07/2025", "SPBU PERTAMINA 34.123", "300.000,00", "", "30.489.000,00"),
-    ("31/07/2025", "BUNGA TABUNGAN", "", "12.500,00", "30.501.500,00"),
+# (tanggal, uraian, [baris sambungan], debet, kredit, saldo)
+RK_TRANSAKSI = [
+    ("02/07", "PAY TOKOPEDIA 750888291177279 Perma",
+     ["ta ME 00:36:08 750888291177279"], "189.500,00", "", "646.862,00"),
+    ("07/07", "PB DARI PT CONTOH PUTRA MANDIRI D",
+     ["CMS 10:15:08 BIMO CONTOH Bonus", "Periode 2024 0897188808600101"],
+     "", "18.360.430,00", "19.007.292,00"),
+    ("08/07", "PB KE GIANI CONTOH 1238840550 Perm ata",
+     ["ME 09:33:46 -"], "107.100,00", "", "18.900.192,00"),
+    ("13/07", "TRF BIFAST KE BIMO CONTOH 60903789",
+     ["94 BANK CENTRAL ASIA Permata ME", "03:44:46 - 000105945190"],
+     "17.000.000,00", "", "1.900.192,00"),
+    ("31/07", "PENDAPATAN BUNGA", [], "", "2.719,00", "1.902.911,00"),
+    ("31/07", "PAJAK ATAS BUNGA", [], "544,00", "", "1.902.367,00"),
 ]
 
 
-def buat_permata(nama="permata-juli-2025.pdf"):
-    c = canvas.Canvas(str(KELUARAN / nama), pagesize=A4)
+def _rk_kop(c, halaman_ke, dari):
+    """Kop dan kaki halaman, muncul sama di setiap halaman."""
+    c.setFont("Helvetica-Bold", 15)
+    c.drawString(1601, RK_TINGGI - 60, "Rekening Koran")
+    c.setFont("Helvetica", 10)
+    c.drawString(1782, RK_TINGGI - 78, "Account Statement")
 
-    y = TINGGI - 50
-    teks(c, 200, y, "PermataBank", 13, tebal=True)
-    y -= 14
-    teks(c, 200, y, "PT Bank Permata Tbk", 9)
-
-    y -= 30
-    for label, isi in [
-        ("Nomor Rekening", "0987654321"),
-        ("Nama", "SITI RAHAYU"),
-        ("Periode", "01/07/2025 s/d 31/07/2025"),
-        ("Mata Uang", "IDR"),
+    y = RK_TINGGI - 120
+    for kiri, label, nilai in [
+        ("BIMO CONTOH", "Periode Laporan", "01 JULI 2025 - 31 JULI 2025"),
+        ("PT CONTOH HUTAMA LINTAS NUSANTARA", "Statement Period", ""),
+        ("JL CONTOH SERIBU RUKO SEKTOR VII", "Tanggal Laporan", "1 AGUSTUS 2025"),
+        ("KOTA TANGERANG SELATAN 15322", "Statement Date", ""),
+        ("", "No.CIF", "B0024WQ"),
     ]:
-        teks(c, 40, y, label, 9)
-        teks(c, 160, y, f": {isi}", 9)
-        y -= 13
+        c.setFont("Helvetica", 10)
+        if kiri:
+            c.drawString(60, y, kiri)
+        if label:
+            c.drawString(895, y, label)
+        if nilai:
+            c.drawString(1245, y, nilai)
+        y -= 22
 
-    y -= 12
-    teks(c, PERMATA_X["tanggal"], y, "Tanggal", 8.5, tebal=True)
-    teks(c, PERMATA_X["keterangan"], y, "Keterangan", 8.5, tebal=True)
-    teks(c, PERMATA_X["debet"], y, "Debet", 8.5, tebal=True, rata="kanan")
-    teks(c, PERMATA_X["kredit"], y, "Kredit", 8.5, tebal=True, rata="kanan")
-    teks(c, PERMATA_X["saldo"], y, "Saldo", 8.5, tebal=True, rata="kanan")
-
-    y -= 6
-    c.line(35, y, 565, y)
     y -= 14
+    for label, sub, nilai in [
+        ("No. Rekening", "Account No.", "1238847210"),
+        ("Cabang", "Branch", "PermataBank KB.JERUK AKR"),
+        ("Nama Produk", "Product Name", "Permata Payroll"),
+        ("Mata Uang", "Currency", "IDR"),
+    ]:
+        c.setFont("Helvetica", 10)
+        c.drawString(60, y, label)
+        c.drawString(370, y, nilai)
+        y -= 16
+        c.setFont("Helvetica", 8)
+        c.drawString(60, y, sub)
+        y -= 20
 
-    for tanggal, ket, debet, kredit, saldo in PERMATA_BARIS:
-        if tanggal:
-            teks(c, PERMATA_X["tanggal"], y, tanggal)
-        teks(c, PERMATA_X["keterangan"], y, ket)
+    c.setFont("Helvetica", 8)
+    c.drawString(1786, 96, "Halaman/")
+    c.drawString(1905, 96, "Page")
+    c.drawString(1955, 96, "%02d/%02d" % (halaman_ke, dari))
+    c.setFont("Helvetica", 7)
+    c.drawString(1045, 77, "PT Bank Permata, Tbk. berizin dan diawasi oleh Otoritas Jasa Keuangan dan Bank Indonesia")
+    c.drawString(1045, 68, "serta merupakan peserta penjaminan Lembaga Penjamin Simpanan.")
+    c.drawString(60, 71, "PermataBank.com | Permata Tel 1500-111 atau (021) 2985-0611")
+    return y
+
+
+def _rk_judul(c, y):
+    """Tiga baris judul kolom, persis seperti aslinya."""
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(90, y, "Tgl Trx.")
+    c.drawString(260, y, "Tgl Valuta")
+    c.drawString(430, y, "Uraian Trx.")
+    c.drawString(1216, y, "Debet")
+    c.drawString(1550, y, "Kredit")
+    c.drawString(1916, y, "Saldo")
+    y -= 16
+    c.setFont("Helvetica", 8)
+    c.drawString(90, y, "Trx. Date")
+    c.drawString(270, y, "Val. Date")
+    c.drawString(430, y, "Trx. Description")
+    c.drawString(1229, y, "Debit")
+    c.drawString(1552, y, "Credit")
+    c.drawString(1883, y, "Balance")
+    y -= 14
+    c.drawString(90, y, "(dd/mm)")
+    c.drawString(270, y, "(dd/mm)")
+    return y - 26
+
+
+def buat_permata_rekening_koran(nama="permata-rekening-koran-juli-2025.pdf"):
+    c = canvas.Canvas(str(KELUARAN / nama), pagesize=(RK_LEBAR, RK_TINGGI))
+
+    # --- Halaman 1: sampul / ringkasan rekening, tanpa judul kolom ----------
+    y = _rk_kop(c, 1, 3)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(60, y, "Ringkasan Rekening")
+    c.drawString(1281, y, "Ekuivalen Saldo Rupiah - 31 Juli 2025")
+    y -= 30
+    c.setFont("Helvetica", 10)
+    c.drawString(91, y, "Rekening Simpanan")
+    c.drawString(1324, y, "Total")
+    c.drawRightString(RK_KANAN["saldo"], y, "1.902.367,00")
+    y -= 26
+    c.drawString(90, y, "Nama Produk")
+    c.drawString(603, y, "Mata Uang")
+    c.drawString(842, y, "Jumlah Rekening")
+    c.drawString(1451, y, "Saldo")
+    c.drawString(1803, y, "Saldo Rupiah")
+    y -= 22
+    c.drawString(91, y, "Permata Payroll")
+    c.drawString(668, y, "IDR")
+    c.drawString(972, y, "1")
+    c.drawRightString(1420, y, "1.902.367,00")
+    c.drawRightString(RK_KANAN["saldo"], y, "1.902.367,00")
+    c.showPage()
+
+    # --- Halaman 2: tabel transaksi ----------------------------------------
+    y = _rk_kop(c, 2, 3)
+    y = _rk_judul(c, y)
+
+    c.setFont("Helvetica", 10)
+    c.drawString(RK_X["uraian"], y, "SALDO AWAL")
+    c.drawRightString(RK_KANAN["saldo"], y, "836.362,00")
+    y -= 24
+
+    for tgl, uraian, sambungan, debet, kredit, saldo in RK_TRANSAKSI:
+        c.setFont("Helvetica", 10)
+        c.drawString(RK_X["tanggal"], y, tgl)
+        c.drawString(RK_X["valuta"], y, tgl)
+        c.drawString(RK_X["uraian"], y, uraian)
         if debet:
-            teks(c, PERMATA_X["debet"], y, debet, rata="kanan")
+            c.drawRightString(RK_KANAN["debet"], y, debet)
         if kredit:
-            teks(c, PERMATA_X["kredit"], y, kredit, rata="kanan")
+            c.drawRightString(RK_KANAN["kredit"], y, kredit)
         if saldo:
-            teks(c, PERMATA_X["saldo"], y, saldo, rata="kanan")
-        y -= 13
+            c.drawRightString(RK_KANAN["saldo"], y, saldo)
+        y -= 18
+        for teks in sambungan:
+            c.drawString(RK_X["uraian"], y, teks)
+            y -= 18
+        y -= 8
 
-    y -= 14
-    teks(c, PERMATA_X["keterangan"], y, "SALDO AKHIR", 8.5, tebal=True)
-    teks(c, PERMATA_X["saldo"], y, ": 30.501.500,00", 8.5, rata="kanan")
+    # Baris penutup: nominal total dulu, kata "Total" di baris berikutnya.
+    y -= 12
+    c.drawRightString(RK_KANAN["debet"], y, "17.297.144,00")
+    c.drawRightString(RK_KANAN["kredit"], y, "18.363.149,00")
+    y -= 20
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(91, y, "Total")
+    c.showPage()
 
+    # --- Halaman 3: disclaimer, tanpa judul kolom --------------------------
+    y = _rk_kop(c, 3, 3)
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(60, y, "Disclaimer :")
+    y -= 22
+    c.setFont("Helvetica", 9)
+    for i, teks in enumerate([
+        "Laporan transaksi ini sah dan tidak memerlukan tanda tangan pejabat dari PT Bank Permata, Tbk.",
+        "This statement is valid without authorized signature of PT Bank Permata, Tbk.",
+        "File eStatement yang di unduh melalui Permata ME / Permata Net sudah tidak menggunakan password.",
+    ]):
+        c.drawString(60, y, "%d." % (i + 1))
+        c.drawString(120, y, teks)
+        y -= 20
     c.save()
     return nama
-
-
 # ==========================================================================
 # Bank lain — tanpa judul kolom, hanya susunan angka
 # ==========================================================================
@@ -343,7 +455,7 @@ if __name__ == "__main__":
         buat_bca(),
         buat_bca_agustus(),
         buat_bca("bca-juli-2025-terkunci.pdf", password="rahasia123"),
-        buat_permata(),
+        buat_permata_rekening_koran(),
         buat_generik(),
         buat_permata_mutasi(),
         buat_permata_mutasi("permata-mutasi-hitam-putih.pdf", berwarna=False),

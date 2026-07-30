@@ -96,17 +96,29 @@ test('PDF BCA sungguhan terbaca lengkap dan totalnya cocok dengan ringkasan', op
   assert.equal(ringkas.curiga, 0, 'saldo berjalan harus konsisten dari awal sampai akhir');
 });
 
-test('PDF Permata sungguhan membedakan kolom debet dan kredit', opsi, async () => {
-  const hasil = parseStatement(await potonganDariPdf('permata-juli-2025.pdf'));
+test('PDF rekening koran Permata sungguhan terbaca utuh dari halaman bertabel saja', opsi, async () => {
+  const hasil = parseStatement(await potonganDariPdf('permata-rekening-koran-juli-2025.pdf'));
 
   assert.equal(hasil.kodeAdapter, ADAPTER.PERMATA);
-  assert.equal(hasil.nomorRekening, '0987654321');
-  assert.equal(hasil.namaPemilik, 'SITI RAHAYU');
-  assert.equal(hasil.transaksi.length, 6);
+  assert.equal(hasil.bank, 'Permata', 'nama bank lain di uraian tidak boleh menang');
+  assert.equal(hasil.nomorRekening, '1238847210');
+  assert.equal(hasil.periodeAwal, '2025-07-01');
+  assert.equal(hasil.periodeAkhir, '2025-07-31');
+  assert.equal(hasil.transaksi.length, 6,
+    'halaman sampul dan halaman disclaimer tidak menyumbang transaksi');
 
   const nominal = hasil.transaksi.map((t) => t.nominal);
-  assert.deepEqual(nominal, [7500000, -450000, -11000, -1250000, -300000, 12500]);
-  assert.ok(hasil.transaksi[1].deskripsi.includes('NO PELANGGAN'));
+  assert.deepEqual(nominal, [-189500, 18360430, -107100, -17000000, 2719, -544]);
+  assert.equal(hasil.saldoAwal, 836362);
+  assert.equal(hasil.transaksi[0].tanggal, '2025-07-02', 'tahun diambil dari periode di kop');
+  assert.ok(hasil.transaksi[1].deskripsi.includes('Bonus'), 'uraian tiga baris tergabung');
+  assert.ok(!/189\.500|646\.862/.test(hasil.transaksi[0].deskripsi),
+    'nominal tidak boleh tercampur ke uraian');
+  assert.ok(!/1238840550,|60903789,/.test(hasil.transaksi.map((t) => t.nominal).join(',')),
+    'nomor rekening di uraian tidak boleh terbaca sebagai nominal');
+
+  const cek = cocokkanRingkasan(hasil.transaksi, hasil.ringkasan);
+  assert.ok(cek?.semuaCocok, `total tidak cocok: ${JSON.stringify(cek?.cek)}`);
 
   const { ringkas } = validasiBaris(hasil.transaksi);
   assert.equal(ringkas.curiga, 0);
@@ -210,9 +222,9 @@ test('Mutasi Transaksi hitam-putih memakai kata kunci dan memberi peringatan', o
 });
 
 test('warna tidak mengubah hasil pada statement yang punya kolom debet/kredit', opsi, async () => {
-  const { halaman, warna } = await bacaPdfUji('permata-juli-2025.pdf');
+  const { halaman, warna } = await bacaPdfUji('permata-rekening-koran-juli-2025.pdf');
   const hasil = parseStatement(halaman, { warna });
 
-  assert.equal(hasil.kodeAdapter, ADAPTER.PERMATA, 'rekening koran tetap memakai adapter lamanya');
+  assert.equal(hasil.kodeAdapter, ADAPTER.PERMATA, 'rekening koran dibaca adapter rekening koran');
   assert.equal(hasil.transaksi.length, 6);
 });
