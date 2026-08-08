@@ -84,7 +84,7 @@ export async function mount(wadah) {
 
       kartuSaldo(akunTampil, saldoBelumBerpatokan),
 
-      h('.grid-3', null, [
+      h('.grid-stat', null, [
         statTenang('Pemasukan', rupiahRingkas(arus.masuk), 'masuk',
           `${bulanAktif(perBulan)} bulan tercakup`),
         statTenang('Pengeluaran', rupiahRingkas(arus.keluar), 'keluar',

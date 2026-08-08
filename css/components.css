@@ -463,3 +463,20 @@ tr.baris--duplikat td, .dv__kartu.baris--duplikat { opacity: .62; }
 /* Baris filter ringkas: hanya preset yang terlihat, rentang khusus dilipat. */
 .filter-ringkas { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
 .filter-ringkas .segment { flex: 1 1 auto; }
+
+/* Tiga angka pendukung Dashboard.
+   Di HP disusun dua kolom dengan Selisih melebar penuh di bawahnya — urutannya
+   jadi terbaca wajar: dua angka masukan, lalu hasilnya. Menumpuk tiga baris
+   memakan tinggi tanpa alasan, sedangkan tiga kolom di layar 390px membuat
+   keterangan di bawah angka pecah jadi empat baris. */
+.grid-stat {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+.grid-stat > :last-child { grid-column: 1 / -1; }
+
+@media (min-width: 768px) {
+  .grid-stat { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); }
+  .grid-stat > :last-child { grid-column: auto; }
+}
