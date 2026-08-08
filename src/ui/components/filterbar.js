@@ -89,3 +89,37 @@ export function periodeIkutData({ min, maks }, bulan = 12) {
   if (min && min < rentang.dari) return { preset: `${bulan}-bulan`, ...rentang };
   return { preset: 'semua', dari: '', sampai: '' };
 }
+
+/**
+ * Filter ringkas untuk Dashboard.
+ *
+ * Versi lengkap (`filterPeriode`) memakan hampir sepertiga layar pertama sebelum
+ * satu angka pun terlihat. Di sini hanya deretan preset yang tampil; rentang
+ * tanggal khusus dan pemilihan rekening dilipat, karena keduanya jarang dipakai
+ * dibanding sekadar berpindah periode.
+ */
+export function filterRingkas(nilai, akun, onUbah) {
+  const segment = h('.segment', { role: 'group', 'aria-label': 'Pilih periode' },
+    PRESET.map((p) => h('button.segment__btn', {
+      type: 'button',
+      'aria-pressed': p.id === nilai.preset ? 'true' : 'false',
+      onclick: () => onUbah({ preset: p.id, ...periodePreset(p.id, hariIni()) }),
+    }, p.label)));
+
+  const rincian = h('details.lipat.mt-3', null, [
+    h('summary', { text: 'Rentang tanggal & rekening' }),
+    h('.filter__baris.mt-3', null, [
+      h('div', null, [h('label', { text: 'Dari tanggal' }), h('input', {
+        type: 'date', value: nilai.dari || '',
+        onchange: (e) => onUbah({ preset: 'kustom', dari: e.target.value, sampai: nilai.sampai }),
+      })]),
+      h('div', null, [h('label', { text: 'Sampai tanggal' }), h('input', {
+        type: 'date', value: nilai.sampai || '',
+        onchange: (e) => onUbah({ preset: 'kustom', dari: nilai.dari, sampai: e.target.value }),
+      })]),
+      pilihRekening(akun, nilai.accountId, (id) => onUbah({ accountId: id })),
+    ]),
+  ]);
+
+  return h('div', null, [segment, akun.length ? rincian : null]);
+}

@@ -38,27 +38,42 @@ function gambar(data, seri, opsi, L, T) {
   const y0 = pad.atas;
   const y1 = T - pad.bawah;
 
-  // Nilai negatif (arus kas bersih) butuh ruang di bawah garis nol.
+  /* Nilai negatif (arus kas bersih) butuh ruang di bawah garis nol. Ruang itu
+     dibagi menurut besar data yang sebenarnya, bukan separuh-separuh: kalau
+     hanya satu bulan defisit dan nilainya kecil, membagi rata membuat separuh
+     grafik kosong dan batang positifnya jadi kerdil. Tetap disisakan sedikit
+     ruang minimum supaya batang negatif yang kecil tidak hilang sama sekali. */
   const maksPositif = Math.max(0, ...data.flatMap((d) => d.nilai));
   const maksNegatif = Math.max(0, ...data.flatMap((d) => d.nilai.map((v) => -v)));
   const adaNegatif = maksNegatif > 0;
 
-  const maks = batasRapi(Math.max(maksPositif, maksNegatif));
-  const yNol = adaNegatif ? (y0 + y1) / 2 : y1;
-  const skala = (adaNegatif ? (y1 - y0) / 2 : y1 - y0) / (maks || 1);
+  const batasPositif = batasRapi(maksPositif);
+  const batasNegatif = batasRapi(maksNegatif);
+  const jangkauan = batasPositif + batasNegatif;
+  const bagianNegatif = adaNegatif && jangkauan
+    ? Math.min(0.45, Math.max(0.12, batasNegatif / jangkauan))
+    : 0;
+
+  const tinggiPlot = y1 - y0;
+  const tinggiPositif = tinggiPlot * (1 - bagianNegatif);
+  const tinggiNegatif = tinggiPlot * bagianNegatif;
+  const yNol = y0 + tinggiPositif;
+  const skalaPositif = batasPositif ? tinggiPositif / batasPositif : 0;
+  const skalaNegatif = batasNegatif ? tinggiNegatif / batasNegatif : 0;
 
   const svg = kanvas(L, T);
 
   if (adaNegatif) {
-    for (let i = -2; i <= 2; i += 1) {
-      const y = yNol - (i / 2) * (y1 - y0) / 2;
+    const garis = (nilai) => {
+      const y = nilai >= 0 ? yNol - nilai * skalaPositif : yNol + -nilai * skalaNegatif;
       svg.appendChild(svgEl('line', { x1: x0, x2: x1, y1: y, y2: y, class: 'garis-kisi' }));
       svg.appendChild(svgEl('text', {
         x: x0 - 6, y: y + 3, 'text-anchor': 'end', class: 'sumbu-teks',
-      }, labelRingkas((i / 2) * maks)));
-    }
+      }, labelRingkas(nilai)));
+    };
+    [batasPositif, batasPositif / 2, 0, -batasNegatif].forEach(garis);
   } else {
-    svg.appendChild(kisiHorizontal({ x0, x1, y0, y1, maks }));
+    svg.appendChild(kisiHorizontal({ x0, x1, y0, y1, maks: batasPositif }));
   }
 
   const lebarKelompok = (x1 - x0) / data.length;
@@ -75,7 +90,7 @@ function gambar(data, seri, opsi, L, T) {
     const kiri = tengahKelompok - lebarIsi / 2;
 
     d.nilai.forEach((v, s) => {
-      const tinggi = Math.abs(v) * skala;
+      const tinggi = Math.abs(v) * (v >= 0 ? skalaPositif : skalaNegatif);
       const x = kiri + s * lebarBatang;
       const atas = v >= 0 ? yNol - tinggi : yNol;
       svg.appendChild(svgEl('rect', {

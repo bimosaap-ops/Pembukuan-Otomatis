@@ -418,3 +418,48 @@ tr.baris--duplikat td, .dv__kartu.baris--duplikat { opacity: .62; }
 .pengaturan-baris__teks { min-width: 0; }
 .pengaturan-baris__judul { font-weight: 650; font-size: .92rem; }
 .pengaturan-baris__ket { font-size: .8rem; color: var(--text-3); margin-top: 2px; }
+
+/* --- Blok saldo utama di Dashboard --------------------------------------
+   Satu angka dibuat jauh lebih besar dari yang lain karena pertanyaan pertama
+   pengguna selalu sama: "sekarang uang saya berapa?". Angka pendukung sengaja
+   dibuat lebih tenang supaya tidak ikut berebut perhatian. */
+
+.saldo-utama { padding: var(--sp-5) var(--sp-4); }
+.saldo-utama__label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: .84rem; font-weight: 650; color: var(--text-2);
+}
+.saldo-utama__nilai {
+  margin-top: 4px;
+  font-size: 2rem; font-weight: 800; letter-spacing: -.03em; line-height: 1.1;
+  font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+}
+.saldo-utama__ket { margin-top: 6px; font-size: .8rem; color: var(--text-3); }
+.saldo-utama__akun {
+  display: flex; flex-wrap: wrap; gap: var(--sp-3) var(--sp-6);
+  margin-top: var(--sp-4); padding-top: var(--sp-4);
+  border-top: 1px solid var(--line);
+}
+.saldo-akun__nama { font-size: .76rem; color: var(--text-3); }
+.saldo-akun__nilai { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+@media (min-width: 768px) { .saldo-utama__nilai { font-size: 2.4rem; } }
+
+/* Angka pendukung: sama informatifnya, jauh lebih tenang daripada kartu KPI. */
+.stat-tenang {
+  padding: var(--sp-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+.stat-tenang__label { font-size: .8rem; font-weight: 650; color: var(--text-2); }
+.stat-tenang__nilai {
+  margin-top: 4px;
+  font-size: 1.32rem; font-weight: 760; letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+}
+.stat-tenang__sub { margin-top: 3px; font-size: .76rem; color: var(--text-3); }
+
+/* Baris filter ringkas: hanya preset yang terlihat, rentang khusus dilipat. */
+.filter-ringkas { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.filter-ringkas .segment { flex: 1 1 auto; }
