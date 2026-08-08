@@ -5,8 +5,7 @@
  *
  *   1. "Sekarang uang saya berapa?"        -> satu angka besar, dengan rincian rekening
  *   2. "Bulan-bulan ini untung atau rugi?" -> arus kas bersih per bulan
- *   3. "Habisnya ke mana?"                 -> pengeluaran terbesar per kategori
- *   4. "Apa yang terakhir terjadi?"        -> transaksi terbaru
+ *   3. "Habisnya ke kategori apa saja?"    -> komposisi dan peringkat kategori
  *
  * Dua keputusan tampilan yang disengaja:
  *
@@ -21,16 +20,15 @@
 
 import { h, ikon, ganti } from '../../core/dom.js';
 import { rupiah, rupiahRingkas, maskRekening } from '../../core/format.js';
-import { tanggalTampil } from '../../core/dates.js';
 import { on, EVENT } from '../../core/events.js';
 import * as akunRepo from '../../data/repo/accounts.js';
 import * as trxRepo from '../../data/repo/transactions.js';
 import * as kategoriRepo from '../../data/repo/categories.js';
 import {
-  ringkasArus, arusPerBulan, perKategori, totalSaldo, terbaru,
-  rataRataBulanan, tanpaTransferInternal,
+  ringkasArus, arusPerBulan, perKategori, totalSaldo, rataRataBulanan,
 } from '../../domain/analytics.js';
 import { grafikBatang, grafikBatangHorizontal } from '../../charts/bar.js';
+import { grafikDonat } from '../../charts/donut.js';
 import { filterRingkas, periodeIkutData } from '../components/filterbar.js';
 import { pergiKe } from '../router.js';
 
@@ -97,10 +95,7 @@ export async function mount(wadah) {
 
       kartuArusKas(perBulan),
 
-      h('.grid-2', null, [
-        kartuPengeluaranTerbesar(kategoriKeluar, arus.keluar),
-        kartuTransaksiTerbaru(tanpaTransferInternal(periode), petaKategori),
-      ]),
+      kartuPengeluaranKategori(kategoriKeluar, arus.keluar),
     ]);
   }
 
@@ -168,29 +163,51 @@ function kartuArusKas(perBulan) {
   ]);
 }
 
-function kartuPengeluaranTerbesar(kategori, totalKeluar) {
+/**
+ * Pengeluaran per kategori, dibaca dua cara sekaligus.
+ *
+ * Donat menjawab "berapa bagiannya" — proporsi paling cepat ditangkap dari luas
+ * potongan. Peringkat batang menjawab "berapa nilainya dan mana yang terbesar" —
+ * panjang batang jauh lebih mudah dibandingkan daripada sudut. Keduanya dijadikan
+ * satu kartu, bukan dua, supaya terbaca sebagai satu gagasan.
+ */
+function kartuPengeluaranKategori(kategori, totalKeluar) {
+  /* Enam kategori: cukup untuk menangkap hampir seluruh pengeluaran, dan
+     tingginya seimbang dengan donat di sebelahnya sehingga tidak menyisakan
+     ruang kosong. Sisanya bisa dilihat di halaman Analitik. */
   const atas = kategori.slice(0, 6);
 
   return h('.kartu', null, [
     h('.kartu__kepala', null, [
       h('div', null, [
-        h('.kartu__judul', { text: 'Pengeluaran Terbesar' }),
-        h('.kartu__ket', { text: 'Ke mana uang paling banyak keluar' }),
+        h('.kartu__judul', { text: 'Pengeluaran per Kategori' }),
+        h('.kartu__ket', {
+          text: kategori.length
+            ? `Ke mana uang paling banyak keluar · ${kategori.length} kategori terpakai`
+            : 'Ke mana uang paling banyak keluar',
+        }),
       ]),
+      h('button.btn-halus.btn-kecil', { type: 'button', onclick: () => pergiKe('transaksi') }, 'Lihat transaksi'),
     ]),
+
     atas.length
-      ? grafikBatangHorizontal(
-        /* Semua batang satu warna: yang dibandingkan di sini adalah panjangnya.
-           Enam warna berbeda untuk sebuah peringkat justru menyibukkan mata
-           tanpa menambah satu pun informasi. */
-        atas.map((k) => ({
-          label: k.namaBersih,
-          nilai: k.total,
-          warna: 'var(--brand)',
-          ket: `${k.jumlah} transaksi · ${persenDari(k.total, totalKeluar)}`,
-        })),
-        { formatNilai: (v) => rupiahRingkas(v) },
-      )
+      ? h('.grid-2', { style: { alignItems: 'center' } }, [
+        grafikDonat(
+          atas.map((k) => ({ label: k.namaBersih, nilai: k.total, warna: k.warna })),
+          { judul: 'Komposisi pengeluaran per kategori', labelTengah: 'Total keluar' },
+        ),
+        grafikBatangHorizontal(
+          /* Peringkat memakai satu warna: yang dibandingkan panjangnya. Pembeda
+             antar kategori sudah dikerjakan oleh donat di sebelahnya. */
+          atas.map((k) => ({
+            label: k.namaBersih,
+            nilai: k.total,
+            warna: 'var(--brand)',
+            ket: `${k.jumlah} transaksi · ${persenDari(k.total, totalKeluar)}`,
+          })),
+          { formatNilai: (v) => rupiahRingkas(v) },
+        ),
+      ])
       : h('.dv__kosong', null, 'Belum ada pengeluaran pada periode ini.'),
   ]);
 }
@@ -198,31 +215,6 @@ function kartuPengeluaranTerbesar(kategori, totalKeluar) {
 function persenDari(bagian, total) {
   if (!total) return '0%';
   return `${Math.round((bagian / total) * 100)}% dari total`;
-}
-
-function kartuTransaksiTerbaru(transaksi, petaKategori) {
-  const daftar = terbaru(transaksi, 8);
-
-  return h('.kartu', null, [
-    h('.kartu__kepala', null, [
-      h('.kartu__judul', { text: 'Transaksi Terbaru' }),
-      h('button.btn-halus.btn-kecil', { type: 'button', onclick: () => pergiKe('transaksi') }, 'Lihat semua'),
-    ]),
-    daftar.length
-      ? h('.daftar', null, daftar.map((t) => {
-        const kat = petaKategori.get(t.kategoriId);
-        return h('.daftar__item', null, [
-          h('.daftar__utama', null, [
-            h('.daftar__judul.satu-baris', { text: t.deskripsi || '(tanpa keterangan)' }),
-            h('.daftar__ket', { text: `${tanggalTampil(t.tanggal)} · ${kat ? kat.nama : 'Tanpa kategori'}` }),
-          ]),
-          h(`.daftar__nilai.${t.nominal >= 0 ? 'masuk' : 'keluar'}`, {
-            text: rupiahRingkas(t.nominal),
-          }),
-        ]);
-      }))
-      : h('.dv__kosong', null, 'Belum ada transaksi pada periode ini.'),
-  ]);
 }
 
 function bulanAktif(perBulan) {
