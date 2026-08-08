@@ -96,7 +96,31 @@ async function mulai() {
 function daftarkanServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
   if (location.protocol !== 'https:' && location.hostname !== 'localhost') return;
-  navigator.serviceWorker.register('./service-worker.js').catch(() => { /* offline tetap opsional */ });
+
+  /* Apakah halaman ini sudah dikendalikan service worker saat dimuat. Penting
+     dicatat sekarang: `controllerchange` juga menyala pada pemasangan pertama,
+     dan memuat ulang halaman di saat itu hanya membuat kedipan tanpa guna. */
+  const sudahDikendalikan = Boolean(navigator.serviceWorker.controller);
+  let dimuatUlang = false;
+
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    /* Versi baru mengambil alih. Halaman yang sedang terbuka masih menjalankan
+       modul versi lama, jadi harus dimuat ulang sekali — tanpa ini pengguna
+       tetap melihat tampilan lama sampai menutup dan membuka aplikasi. */
+    if (!sudahDikendalikan || dimuatUlang) return;
+    dimuatUlang = true;
+    location.reload();
+  });
+
+  navigator.serviceWorker.register('./service-worker.js')
+    .then((registrasi) => {
+      // Periksa pembaruan saat aplikasi dibuka dan setiap kali kembali dilihat.
+      registrasi.update().catch(() => {});
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') registrasi.update().catch(() => {});
+      });
+    })
+    .catch(() => { /* kemampuan offline memang opsional */ });
 }
 
 mulai();

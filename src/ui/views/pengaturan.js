@@ -12,6 +12,7 @@ import * as akunRepo from '../../data/repo/accounts.js';
 import * as trxRepo from '../../data/repo/transactions.js';
 import * as uploadRepo from '../../data/repo/uploads.js';
 import { setTema, temaTersimpan, TEMA } from '../theme.js';
+import { versiBerjalan, periksaPembaruan } from '../versi.js';
 import { unduhBackup, pulihkanBackup, dukunganPilihFolder } from '../../services/export.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
 import { toastSukses, toastGagal } from '../components/toast.js';
@@ -30,14 +31,16 @@ export async function mount(wadah) {
   wadah.appendChild(halaman);
 
   async function render() {
-    const [akun, transaksi, upload, kategori, penyimpanan] = await Promise.all([
-      akunRepo.daftar(), trxRepo.semua(), uploadRepo.daftar(), kategoriRepo.daftar(), infoPenyimpanan(),
+    const [akun, transaksi, upload, kategori, penyimpanan, versi] = await Promise.all([
+      akunRepo.daftar(), trxRepo.semua(), uploadRepo.daftar(), kategoriRepo.daftar(),
+      infoPenyimpanan(), versiBerjalan(),
     ]);
 
     ganti(isi, [
       kartuTampilan(render),
       kartuFolder(),
       kartuDatabase({ akun, transaksi, upload, kategori, penyimpanan }, render),
+      kartuVersi(versi),
       kartuTentang(),
     ]);
   }
@@ -276,6 +279,46 @@ async function hapusSemua(render) {
   toastSukses('Semua data dihapus. Kategori bawaan dipasang kembali.');
   emit(EVENT.DATA_BERUBAH, { sumber: 'reset' });
   render();
+}
+
+/* ==========================================================================
+   Versi aplikasi
+   ========================================================================== */
+
+function kartuVersi(versi) {
+  return h('.kartu', null, [
+    h('.kartu__kepala', null, h('div', null, [
+      h('.kartu__judul', { text: 'Versi Aplikasi' }),
+      h('.kartu__ket', { text: 'Berguna saat memastikan pembaruan sudah benar-benar masuk ke perangkat ini.' }),
+    ])),
+
+    h('.pengaturan-baris', null, [
+      h('.pengaturan-baris__teks', null, [
+        h('.pengaturan-baris__judul', { text: 'Versi yang sedang berjalan' }),
+        h('.pengaturan-baris__ket', {
+          text: versi
+            ? 'Angka ini berasal dari service worker, jadi mencerminkan berkas yang benar-benar dipakai.'
+            : 'Belum ada service worker yang mengendalikan halaman ini. Muat ulang sekali, lalu periksa lagi.',
+        }),
+      ]),
+      h(`span.lencana.lencana--${versi ? 'brand' : 'warning'}`, { text: versi || 'belum aktif' }),
+    ]),
+
+    h('.baris.bungkus.mt-3', null, [
+      h('button', {
+        type: 'button',
+        onclick: async () => {
+          try {
+            const adaBaru = await periksaPembaruan();
+            if (adaBaru) toastSukses('Versi baru sedang dipasang. Halaman akan dimuat ulang sendiri sebentar lagi.');
+            else toastSukses('Sudah memakai versi terbaru.');
+          } catch (e) {
+            toastGagal(`Gagal memeriksa pembaruan: ${e.message}`);
+          }
+        },
+      }, [ikon('unduh', 17), h('span', { text: 'Periksa pembaruan' })]),
+    ]),
+  ]);
 }
 
 /* ==========================================================================

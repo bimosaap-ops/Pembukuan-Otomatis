@@ -5,15 +5,25 @@
  * repositori, sehingga halaman ini dikendalikan oleh berkas ini, bukan oleh
  * service worker Kalkulator BBS.
  *
- * Strategi:
- *   - Navigasi: jaringan dulu, jatuh ke cache bila offline.
- *   - Aset (skrip, gaya, pdf.js, ikon): cache dulu supaya aplikasi terbuka
- *     seketika dan tetap jalan tanpa internet.
+ * Strategi cache dibedakan menurut sifat berkasnya:
+ *
+ *   - Kode aplikasi sendiri (HTML, src/, css/): **jaringan dulu** dengan batas
+ *     waktu, jatuh ke cache bila lambat atau offline. Sebelumnya kode aplikasi
+ *     ikut cache-dulu, dan akibatnya perangkat yang sudah pernah membuka
+ *     aplikasi bisa terus menampilkan versi lama walau versi baru sudah
+ *     terbit — persoalan yang mahal ditelusuri karena tampak seperti
+ *     perubahannya tidak jadi ter-deploy.
+ *   - Pustaka pihak ketiga dan gambar (vendor/, *.png): **cache dulu**. Isinya
+ *     tidak berubah tanpa ganti nama berkas, ukurannya besar, dan mengunduhnya
+ *     ulang tiap kali hanya membuang kuota.
  *
  * Naikkan CACHE_NAME setiap kali aset berubah agar versi lama dibersihkan.
  */
 
-const CACHE_NAME = 'pembukuan-v5';
+const CACHE_NAME = 'pembukuan-v6';
+
+/** Berapa lama menunggu jaringan sebelum memakai salinan cache. */
+const BATAS_JARINGAN_MS = 2500;
 
 const ASET = [
   './',
@@ -34,6 +44,7 @@ const ASET = [
   './src/ui/nav.js',
   './src/ui/menu.js',
   './src/ui/theme.js',
+  './src/ui/versi.js',
   './src/ui/components/toast.js',
   './src/ui/components/modal.js',
   './src/ui/components/data-view.js',
@@ -131,18 +142,62 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  event.respondWith((async () => {
-    const tersimpan = await caches.match(request);
-    if (tersimpan) return tersimpan;
-    try {
-      const jaringan = await fetch(request);
-      if (jaringan.ok) {
-        const cache = await caches.open(CACHE_NAME);
-        cache.put(request, jaringan.clone());
-      }
-      return jaringan;
-    } catch {
-      return Response.error();
+  const tetap = url.pathname.includes('/vendor/')
+    || /\.(png|ico|svg|woff2?)$/i.test(url.pathname);
+
+  event.respondWith(tetap ? cacheDulu(request) : jaringanDulu(request));
+});
+
+/** Untuk berkas yang tidak pernah berubah tanpa ganti nama. */
+async function cacheDulu(request) {
+  const tersimpan = await caches.match(request);
+  if (tersimpan) return tersimpan;
+  try {
+    const jaringan = await fetch(request);
+    if (jaringan.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put(request, jaringan.clone());
     }
-  })());
+    return jaringan;
+  } catch {
+    return Response.error();
+  }
+}
+
+/**
+ * Untuk kode aplikasi: selalu ambil yang terbaru selagi jaringan memadai,
+ * tapi jangan sampai menggantung bila jaringannya buruk.
+ */
+async function jaringanDulu(request) {
+  const cache = await caches.open(CACHE_NAME);
+
+  try {
+    const jaringan = await Promise.race([
+      fetch(request),
+      new Promise((_, tolak) => setTimeout(() => tolak(new Error('lambat')), BATAS_JARINGAN_MS)),
+    ]);
+    if (jaringan && jaringan.ok) {
+      cache.put(request, jaringan.clone());
+      return jaringan;
+    }
+    if (jaringan) return jaringan;
+  } catch {
+    /* jaringan gagal atau kelewat lambat — pakai salinan cache di bawah */
+  }
+
+  const tersimpan = await caches.match(request);
+  if (tersimpan) return tersimpan;
+
+  try {
+    return await fetch(request);
+  } catch {
+    return Response.error();
+  }
+}
+
+/** Halaman Pengaturan menanyakan versi yang sedang berjalan lewat pesan ini. */
+self.addEventListener('message', (event) => {
+  if (event.data === 'versi' && event.ports[0]) {
+    event.ports[0].postMessage(CACHE_NAME);
+  }
 });
