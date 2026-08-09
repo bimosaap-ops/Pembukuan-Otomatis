@@ -20,14 +20,23 @@ export function temaTersimpan() {
   }
 }
 
+/** Apakah tampilan sedang gelap, entah karena dipilih atau karena ikut sistem. */
+export function modeGelapAktif() {
+  const dipilih = document.documentElement.getAttribute('data-theme');
+  if (dipilih === TEMA.GELAP) return true;
+  if (dipilih === TEMA.TERANG) return false;
+  return Boolean(window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+}
+
 export function terapkanTema(tema) {
   const root = document.documentElement;
   if (tema === TEMA.OTOMATIS) root.removeAttribute('data-theme');
   else root.setAttribute('data-theme', tema);
 
-  const gelap = tema === TEMA.GELAP
-    || (tema === TEMA.OTOMATIS && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', gelap ? '#0b1120' : '#0a58ca');
+  /* Warna bilah status disamakan dengan sudut kiri atas gradien, bukan dengan
+     warna aksen: yang menempel di bawah bilah itu memang latar halaman. */
+  document.querySelector('meta[name="theme-color"]')
+    ?.setAttribute('content', modeGelapAktif() ? '#191320' : '#f8e6dd');
 
   try { localStorage.setItem(KUNCI_LOKAL, tema); } catch { /* mode privat */ }
   emit(EVENT.TEMA_BERUBAH, tema);

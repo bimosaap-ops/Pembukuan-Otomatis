@@ -7,28 +7,46 @@
 @media print {
   @page { size: A4; margin: 14mm 12mm; }
 
+  /* Di kertas tidak ada gradien dan tidak ada kaca: latar dikosongkan, seluruh
+     permukaan jadi putih polos, dan garisnya dibuat abu yang benar-benar
+     tercetak. Tanpa ini panel kaca ikut tercetak sebagai kotak kelabu pucat
+     yang memakan tinta tanpa menambah keterbacaan. */
   :root {
+    --latar: none;
     --bg: #fff; --surface: #fff; --surface-2: #fff; --surface-3: #fff;
-    --text: #000; --text-2: #333; --text-3: #555;
+    --kaca: #fff; --kaca-2: #fff; --kaca-3: #fff;
+    --kaca-garis: #bbb; --kaca-garis-halus: #ddd;
+    --kaca-blur: none;
+    --kaca-bayang: none;
+    --shadow-1: none; --shadow-2: none; --shadow-3: none;
+    --tombol-isi: none; --tombol-bayang: none;
+    --text: #000; --text-2: #333; --text-3: #555; --text-tegas: #000;
     --line: #bbb; --line-kuat: #999;
-    --masuk: #04682f; --keluar: #a51111; --brand: #123f8c;
+    --masuk: #04682f; --keluar: #a51111; --brand: #123f8c; --surplus: #000;
     color-scheme: light;
   }
 
   body { background: #fff; color: #000; font-size: 10.5pt; }
+  /* backdrop-filter tidak dimatikan oleh nilai token, jadi dimatikan langsung. */
+  .kartu, .kaca, .header, .sidebar, .halaman__kepala, .dv__gulir, .dv__kartu, .modal, .toast {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
 
   /* Elemen antarmuka tidak ikut tercetak. */
-  .sidebar, .bottomnav, .header__aksi, .toast-wadah, .sheet-latar, .modal-latar,
-  .tanpa-cetak, .filter, .dropzone, .segment, .chip-baris { display: none !important; }
+  .sidebar, .bottomnav, .header, .toast-wadah, .sheet-latar, .modal-latar,
+  .tanpa-cetak, .filter, .filter-ringkas, .dropzone, .segment, .chip-baris,
+  .tautan { display: none !important; }
 
-  .app { display: block; }
+  .app { display: block; padding: 0; gap: 0; }
   .utama { padding: 0; }
   .halaman { max-width: none; gap: 10pt; }
   .kartu { border: 1px solid var(--line); box-shadow: none; break-inside: avoid; padding: 8pt; }
+  .halaman__kepala { border: 0; box-shadow: none; padding: 0 0 6pt; }
 
   /* Di kertas selalu pakai tabel, bukan daftar kartu. */
   .dv__kartu-list { display: none !important; }
-  .dv__gulir { display: block !important; overflow: visible !important; border: 0; }
+  .dv__gulir { display: block !important; overflow: visible !important; border: 0; box-shadow: none; padding: 0; }
   .dv__tabel { font-size: 9pt; width: 100%; }
   .dv__tabel thead { display: table-header-group; }
   .dv__tabel thead th { background: #eee !important; border-bottom: 1px solid #999; padding: 4pt 5pt; }

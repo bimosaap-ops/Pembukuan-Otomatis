@@ -8,6 +8,7 @@ import { on, EVENT } from '../core/events.js';
 import { MENU, menuUtama, menuTambahan } from './menu.js';
 import { pergiKe, ruteAktif } from './router.js';
 import { bukaSheet } from './components/modal.js';
+import { terapkanTema, setTema, modeGelapAktif, TEMA } from './theme.js';
 
 export function buatSidebar() {
   const tombol = MENU.map((m) => h('button.sidebar__btn', {
@@ -24,13 +25,50 @@ export function buatSidebar() {
       h('.merek', null, [
         h('.merek__logo', { text: '📊', 'aria-hidden': 'true' }),
         h('.merek__teks', null, [
-          h('div', { text: 'Pembukuan', style: { fontWeight: '750', fontSize: '.95rem' } }),
-          h('div.redup-2', { text: 'Dashboard Keuangan', style: { fontSize: '.74rem' } }),
+          h('div', { text: 'Pembukuan', style: { fontWeight: '800', fontSize: '1.05rem', letterSpacing: '-.01em' } }),
+          h('div.redup-2', { text: 'Dashboard Keuangan', style: { fontSize: '.72rem' } }),
         ]),
       ]),
     ]),
     ...tombol,
+    // Di layar lebar header tidak ditampilkan, jadi pengganti tema pindah ke sini.
+    h('.sidebar__kaki', null, tombolTema()),
   ]);
+}
+
+/**
+ * Tombol tema. Labelnya menyebut tujuan ("Mode gelap"), bukan keadaan sekarang,
+ * supaya jelas apa yang akan terjadi kalau ditekan.
+ */
+function tombolTema() {
+  const tombol = h('button.sidebar__btn', {
+    type: 'button',
+    onclick: async () => {
+      const berikutnya = modeGelapAktif() ? TEMA.TERANG : TEMA.GELAP;
+      try {
+        await setTema(berikutnya);
+      } catch {
+        terapkanTema(berikutnya);
+      }
+      segarkan();
+    },
+  });
+
+  function segarkan() {
+    const gelap = modeGelapAktif();
+    const label = gelap ? 'Mode terang' : 'Mode gelap';
+    tombol.setAttribute('aria-label', label);
+    tombol.title = label;
+    tombol.replaceChildren(
+      ikon(gelap ? 'terang' : 'gelap', 21),
+      h('span.sidebar__label', { text: label }),
+    );
+  }
+
+  segarkan();
+  // Tema juga bisa diganti dari Pengaturan atau dari preferensi sistem.
+  on(EVENT.TEMA_BERUBAH, segarkan);
+  return tombol;
 }
 
 export function buatBottomNav() {

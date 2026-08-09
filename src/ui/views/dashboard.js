@@ -4,18 +4,23 @@
  * Susunannya mengikuti urutan pertanyaan yang sebenarnya diajukan pengguna:
  *
  *   1. "Sekarang uang saya berapa?"        -> satu angka besar, dengan rincian rekening
- *   2. "Bulan-bulan ini untung atau rugi?" -> arus kas bersih per bulan
- *   3. "Habisnya ke kategori apa saja?"    -> komposisi dan peringkat kategori
+ *   2. "Masuk dan keluarnya berapa?"       -> dua angka pendamping di panel yang sama
+ *   3. "Bulan-bulan ini untung atau rugi?" -> arus kas bersih per bulan
+ *   4. "Habisnya ke kategori apa saja?"    -> peringkat kategori dengan bar
  *
- * Dua keputusan tampilan yang disengaja:
+ * Tiga keputusan tampilan yang disengaja:
  *
- * - Hanya satu angka yang dibuat besar. Empat kartu berbobot sama membuat mata
- *   tidak tahu harus melihat ke mana, padahal saldo hampir selalu yang dicari.
+ * - Saldo, pemasukan, dan pengeluaran berada dalam satu panel, bukan tiga kartu
+ *   terpisah. Ketiganya satu kalimat, dan hanya angka saldo yang dibuat besar:
+ *   kartu-kartu berbobot sama membuat mata tidak tahu harus melihat ke mana.
  * - Grafiknya arus kas *bersih* — satu batang naik atau turun dari garis nol —
  *   bukan pasangan batang pemasukan dan pengeluaran. Membandingkan tinggi dua
  *   batang yang terpisah jarak jauh lebih berat dibaca daripada melihat satu
  *   batang berada di atas atau di bawah nol. Perbandingan dua deret itu tetap
  *   tersedia di halaman Analitik bagi yang memerlukannya.
+ * - Kategori ditampilkan sebagai baris berbar, bukan donat. Yang ditanyakan
+ *   "mana yang paling besar", dan panjang batang jauh lebih cepat dibandingkan
+ *   daripada sudut potongan lingkaran.
  */
 
 import { h, ikon, ganti } from '../../core/dom.js';
@@ -27,14 +32,13 @@ import * as kategoriRepo from '../../data/repo/categories.js';
 import {
   ringkasArus, arusPerBulan, perKategori, totalSaldo, rataRataBulanan,
 } from '../../domain/analytics.js';
-import { grafikBatang, grafikBatangHorizontal } from '../../charts/bar.js';
-import { grafikDonat } from '../../charts/donut.js';
+import { grafikBatang } from '../../charts/bar.js';
 import { filterRingkas, periodeIkutData } from '../components/filterbar.js';
 import { pergiKe } from '../router.js';
 
 export async function mount(wadah) {
   const halaman = h('.halaman');
-  const isi = h('.tumpuk');
+  const isi = h('.tumpuk-pias');
   // Periode awal mengikuti data yang ada, bukan tanggal hari ini.
   let filter = { ...periodeIkutData(await trxRepo.rentangTersedia()), accountId: '' };
 
@@ -47,7 +51,7 @@ export async function mount(wadah) {
         h('.halaman__ket', { text: 'Ringkasan dari seluruh e-statement yang sudah di-upload.' }),
       ]),
       h('button.btn-primary.btn-kecil', { type: 'button', onclick: () => pergiKe('upload') },
-        [ikon('upload', 17), h('span', { text: 'Upload statement' })]),
+        [h('span', { text: 'Upload statement' }), ikon('upload', 15)]),
     ]),
     isi,
   );
@@ -79,23 +83,19 @@ export async function mount(wadah) {
     const saldoBelumBerpatokan = semua.length > 0 && !adaSaldoResmi && !adaSaldoAwal;
 
     ganti(isi, [
-      h('.kartu.kartu--rapat', null,
-        filterRingkas(filter, akun, (baru) => { filter = { ...filter, ...baru }; render(); })),
+      /* Pemilih periode sengaja tidak dibungkus panel: ia alat, bukan isi.
+         Diberi panel sendiri, ia jadi kotak besar berisi satu baris tombol dan
+         mendorong angka saldo turun dari layar pertama. */
+      filterRingkas(filter, akun, (baru) => { filter = { ...filter, ...baru }; render(); }),
 
-      kartuSaldo(akunTampil, saldoBelumBerpatokan),
+      kartuRingkasan(akunTampil, arus, perBulan, saldoBelumBerpatokan),
 
-      h('.grid-stat', null, [
-        statTenang('Pemasukan', rupiahRingkas(arus.masuk), 'masuk',
-          `${bulanAktif(perBulan)} bulan tercakup`),
-        statTenang('Pengeluaran', rupiahRingkas(arus.keluar), 'keluar',
-          `Rata-rata ${rupiahRingkas(rataRataBulanan(perBulan, 'keluar'))}/bulan`),
-        statTenang('Selisih', rupiahRingkas(arus.netto), arus.netto >= 0 ? 'masuk' : 'keluar',
-          `${new Intl.NumberFormat('id-ID').format(arus.jumlah)} transaksi`),
+      stripSelisih(arus),
+
+      h('.grid-2.grid-2--lebar-kiri', null, [
+        kartuArusKas(perBulan),
+        kartuPengeluaranKategori(kategoriKeluar, arus.keluar),
       ]),
-
-      kartuArusKas(perBulan),
-
-      kartuPengeluaranKategori(kategoriKeluar, arus.keluar),
     ]);
   }
 
@@ -107,33 +107,48 @@ export async function mount(wadah) {
    Blok-blok penyusun
    ========================================================================== */
 
-function kartuSaldo(akun, belumBerpatokan) {
-  return h('.kartu.saldo-utama', null, [
-    h('.saldo-utama__label', null, [ikon('rekening', 15), h('span', { text: 'Total Saldo' })]),
-    h('.saldo-utama__nilai', { text: rupiah(totalSaldo(akun)) }),
-    belumBerpatokan
-      ? h('.saldo-utama__ket', { text: 'Baru selisih mutasi — isi Saldo Awal di menu Rekening agar sesuai saldo bank.' })
-      : null,
+/**
+ * Panel ringkasan: saldo besar di kiri, pemasukan dan pengeluaran mendampingi.
+ */
+function kartuRingkasan(akun, arus, perBulan, belumBerpatokan) {
+  return h('.kartu', null, h('.ringkas', null, [
+    h('div', null, [
+      h('.ringkas__label', null, [ikon('rekening', 13), h('span', { text: 'Total Saldo' })]),
+      h('.ringkas__nilai', { text: rupiah(totalSaldo(akun)) }),
+      belumBerpatokan
+        ? h('.ringkas__sub', { text: 'Baru selisih mutasi — isi Saldo Awal di menu Rekening agar sesuai saldo bank.' })
+        : null,
 
-    h('.saldo-utama__akun', null, [
-      ...akun.map((a) => h('.saldo-akun', null, [
-        h('.saldo-akun__nama', { text: `${a.bank} ${maskRekening(a.nomorRekening)}`.trim() }),
-        h('.saldo-akun__nilai', { text: rupiah(a.saldo) }),
-      ])),
-      h('button.btn-halus.btn-kecil', {
-        type: 'button',
-        style: { marginLeft: 'auto', alignSelf: 'center' },
-        onclick: () => pergiKe('rekening'),
-      }, 'Kelola rekening'),
+      h('.ringkas__akun', null, [
+        ...akun.map((a) => h('div', null, [
+          h('.saldo-akun__nama', { text: `${a.bank} ${maskRekening(a.nomorRekening)}`.trim() }),
+          h('.saldo-akun__nilai', { text: rupiah(a.saldo) }),
+        ])),
+        tautan('Kelola rekening', 'rekening', { marginLeft: 'auto' }),
+      ]),
     ]),
-  ]);
+
+    h('div', null, [
+      h('.ringkas__label', { text: 'Pemasukan' }),
+      h('.ringkas__angka.masuk', { text: rupiahRingkas(arus.masuk) }),
+      h('.ringkas__sub', { text: `${bulanAktif(perBulan)} bulan tercakup` }),
+    ]),
+
+    h('div', null, [
+      h('.ringkas__label', { text: 'Pengeluaran' }),
+      h('.ringkas__angka.keluar', { text: rupiahRingkas(arus.keluar) }),
+      h('.ringkas__sub', { text: `Rata-rata ${rupiahRingkas(rataRataBulanan(perBulan, 'keluar'))}/bulan` }),
+    ]),
+  ]));
 }
 
-function statTenang(label, nilai, jenis, sub) {
-  return h('.stat-tenang', null, [
-    h('.stat-tenang__label', { text: label }),
-    h(`.stat-tenang__nilai.${jenis}`, { text: nilai }),
-    h('.stat-tenang__sub', { text: sub }),
+/** Satu baris tipis: hasil akhir periode berjalan, tanpa kartu penuh. */
+function stripSelisih(arus) {
+  return h('.kartu.strip', null, [
+    h('span', { text: 'Selisih periode berjalan' }),
+    h(`span.strip__nilai.${arus.netto >= 0 ? 'masuk' : 'keluar'}`, {
+      text: `${rupiah(arus.netto, { tanda: true })} · ${new Intl.NumberFormat('id-ID').format(arus.jumlah)} transaksi`,
+    }),
   ]);
 }
 
@@ -143,78 +158,80 @@ function kartuArusKas(perBulan) {
 
   return h('.kartu', null, [
     h('.kartu__kepala', null, [
-      h('div', null, [
-        h('.kartu__judul', { text: 'Arus Kas Bersih' }),
-        h('.kartu__ket', { text: 'Batang di atas garis berarti bulan itu surplus, di bawah garis berarti defisit' }),
-      ]),
-      h('button.btn-halus.btn-kecil', { type: 'button', onclick: () => pergiKe('analitik') }, 'Analitik'),
+      h('.kartu__judul', { text: 'Arus Kas Bersih' }),
+      tautan('Analitik', 'analitik'),
     ]),
     grafikBatang(
       perBulan.map((b) => ({ label: b.label, nilai: [b.netto] })),
       {
-        seri: [{ nama: 'Arus kas bersih', warna: 'var(--c1)' }],
+        seri: [{ nama: 'Arus kas bersih', warna: 'var(--surplus)' }],
+        /* Bulan surplus memakai warna tinta yang tenang, bulan defisit memakai
+           warna aksen. Tandanya jadi terbaca sebelum sumbunya dilihat. */
+        warnaNilai: (v) => (v < 0 ? 'var(--keluar)' : 'var(--surplus)'),
         judul: 'Arus kas bersih per bulan',
         kosong: 'Belum ada transaksi pada periode ini.',
       },
     ),
-    perBulan.length ? h('.dv__kaki', null, [
-      h('div.redup', { text: `${naik} bulan surplus · ${turun} bulan defisit` }),
-    ]) : null,
+    perBulan.length
+      ? h('.kartu__ket.mt-3', { text: `${naik} bulan surplus · ${turun} bulan defisit` })
+      : null,
   ]);
 }
 
-/**
- * Pengeluaran per kategori, dibaca dua cara sekaligus.
- *
- * Donat menjawab "berapa bagiannya" — proporsi paling cepat ditangkap dari luas
- * potongan. Peringkat batang menjawab "berapa nilainya dan mana yang terbesar" —
- * panjang batang jauh lebih mudah dibandingkan daripada sudut. Keduanya dijadikan
- * satu kartu, bukan dua, supaya terbaca sebagai satu gagasan.
- */
 function kartuPengeluaranKategori(kategori, totalKeluar) {
   /* Enam kategori: cukup untuk menangkap hampir seluruh pengeluaran, dan
-     tingginya seimbang dengan donat di sebelahnya sehingga tidak menyisakan
-     ruang kosong. Sisanya bisa dilihat di halaman Analitik. */
+     tingginya seimbang dengan grafik di sebelahnya. Sisanya di halaman Analitik. */
   const atas = kategori.slice(0, 6);
+  const terbesar = atas.length ? atas[0].total : 0;
 
   return h('.kartu', null, [
     h('.kartu__kepala', null, [
       h('div', null, [
         h('.kartu__judul', { text: 'Pengeluaran per Kategori' }),
-        h('.kartu__ket', {
-          text: kategori.length
-            ? `Ke mana uang paling banyak keluar · ${kategori.length} kategori terpakai`
-            : 'Ke mana uang paling banyak keluar',
-        }),
+        kategori.length
+          ? h('.kartu__ket', { text: `${kategori.length} kategori terpakai pada periode ini` })
+          : null,
       ]),
-      h('button.btn-halus.btn-kecil', { type: 'button', onclick: () => pergiKe('transaksi') }, 'Lihat transaksi'),
+      tautan('Transaksi', 'transaksi'),
     ]),
 
     atas.length
-      ? h('.grid-2', { style: { alignItems: 'center' } }, [
-        grafikDonat(
-          atas.map((k) => ({ label: k.namaBersih, nilai: k.total, warna: k.warna })),
-          { judul: 'Komposisi pengeluaran per kategori', labelTengah: 'Total keluar' },
-        ),
-        grafikBatangHorizontal(
-          /* Peringkat memakai satu warna: yang dibandingkan panjangnya. Pembeda
-             antar kategori sudah dikerjakan oleh donat di sebelahnya. */
-          atas.map((k) => ({
-            label: k.namaBersih,
-            nilai: k.total,
-            warna: 'var(--brand)',
-            ket: `${k.jumlah} transaksi · ${persenDari(k.total, totalKeluar)}`,
-          })),
-          { formatNilai: (v) => rupiahRingkas(v) },
-        ),
-      ])
+      ? h('div', null, atas.map((k) => barisKategori(k, terbesar, totalKeluar)))
       : h('.dv__kosong', null, 'Belum ada pengeluaran pada periode ini.'),
   ]);
 }
 
+/**
+ * Panjang bar dibandingkan terhadap kategori terbesar, bukan terhadap total.
+ * Dibandingkan total, kategori terbesar pun sering hanya mengisi seperempat bar
+ * dan seluruh baris tampak sama pendeknya — persis perbandingan yang ingin
+ * dilihat justru jadi hilang. Persentase terhadap total tetap ditulis sebagai
+ * angka di bawahnya.
+ */
+function barisKategori(k, terbesar, totalKeluar) {
+  return h('.kat-baris', null, [
+    h('.kat-baris__utama', null, [
+      h('.kat-baris__nama', { text: k.namaBersih }),
+      h('.kat-baris__bar', null,
+        h('.kat-baris__isi', { style: { width: `${terbesar ? (k.total / terbesar) * 100 : 0}%` } })),
+      h('.kat-baris__ket', { text: `${k.jumlah} transaksi · ${persenDari(k.total, totalKeluar)} dari total` }),
+    ]),
+    h('.kat-baris__nilai', { text: rupiahRingkas(k.total) }),
+  ]);
+}
+
+/** Tautan teks bergaya rancangan: label diikuti panah, bukan tombol berkotak. */
+function tautan(label, rute, gaya = null) {
+  return h('button.tautan', {
+    type: 'button',
+    style: gaya,
+    onclick: () => pergiKe(rute),
+  }, [h('span', { text: label }), h('span', { text: '→', 'aria-hidden': 'true' })]);
+}
+
 function persenDari(bagian, total) {
   if (!total) return '0%';
-  return `${Math.round((bagian / total) * 100)}% dari total`;
+  return `${Math.round((bagian / total) * 100)}%`;
 }
 
 function bulanAktif(perBulan) {
@@ -227,6 +244,6 @@ function kartuKosong() {
     h('strong', { text: 'Pembukuan masih kosong' }),
     h('div.redup-2', { text: 'Upload e-statement PDF pertama Anda. Bank, nomor rekening, dan seluruh transaksinya akan dibaca otomatis.' }),
     h('button.btn-primary.mt-3', { type: 'button', onclick: () => pergiKe('upload') },
-      [ikon('upload', 18), h('span', { text: 'Upload e-Statement' })]),
+      [h('span', { text: 'Upload e-Statement' }), ikon('upload', 18)]),
   ]);
 }

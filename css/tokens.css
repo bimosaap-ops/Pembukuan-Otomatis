@@ -1,146 +1,271 @@
 /* ==========================================================================
    Token desain — satu-satunya tempat warna, jarak, dan radius didefinisikan.
+
+   Gaya visualnya "liquid glass": latar gradien hangat-sejuk, panel putih
+   separuh tembus dengan blur, dan tombol berbentuk pil. Nilai-nilai di
+   bawah — warna, radius, blur, bayangan — diambil dari berkas rancangan
+   dan tidak boleh ditulis ulang di tempat lain.
+
    Mode terang adalah nilai dasar; mode gelap menimpanya lewat prefers-color-scheme
    (otomatis) dan lewat [data-theme] di <html> (pilihan manual di Pengaturan).
+   Rancangannya hanya menggambar mode terang, jadi mode gelap di sini adalah
+   terjemahan gagasan yang sama: gradien malam yang hangat di satu sudut dan
+   sejuk di sudut lain, dengan panel kaca gelap sebagai ganti panel putih.
    ========================================================================== */
 
 :root {
-  /* Warna dasar */
-  --bg: #f4f6fb;
-  --bg-2: #eaeef7;
-  --surface: #ffffff;
-  --surface-2: #f8fafc;
-  --surface-3: #f1f5f9;
-  --line: #dfe6f0;
-  --line-kuat: #c7d2e0;
+  /* --- Latar ------------------------------------------------------------
+     Empat lapis: tiga sorotan radial (jingga, biru, merah muda) di atas
+     gradien dasar. Dipasang di body dengan `background-attachment: fixed`
+     supaya sorotannya tidak ikut menggulung bersama isi halaman. */
+  --latar: radial-gradient(1100px 700px at 8% -8%, #ffd9c9 0%, transparent 60%),
+           radial-gradient(900px 700px at 95% 10%, #cfe3ff 0%, transparent 55%),
+           radial-gradient(1000px 800px at 30% 110%, #ffe1e8 0%, transparent 55%),
+           linear-gradient(160deg, #eef2fb, #fdeee7);
+  --bg: #f3f0f6;              /* warna rata di balik gradien (theme-color, overscroll) */
+  --bg-2: #ece8f1;
 
-  --text: #0f172a;
-  --text-2: #475569;
-  --text-3: #7c8ba1;
+  /* --- Permukaan kaca ---------------------------------------------------
+     --surface dipakai komponen yang memang harus padat (modal, sheet, dropdown
+     bawaan browser); --kaca-* dipakai panel yang mengambang di atas gradien. */
+  --kaca: rgba(255, 255, 255, .42);
+  --kaca-2: rgba(255, 255, 255, .55);   /* panel di atas panel: input, baris aktif */
+  --kaca-3: rgba(255, 255, 255, .3);    /* sorotan halus: hover baris tabel */
+  --kaca-garis: rgba(255, 255, 255, .55);
+  --kaca-garis-halus: rgba(255, 255, 255, .5);
+  --kaca-blur: blur(18px) saturate(160%);
+  --kaca-bayang: 0 8px 32px rgba(31, 38, 68, .12), inset 0 1px 0 rgba(255, 255, 255, .6);
 
-  --brand: #0a58ca;
-  --brand-2: #2563eb;
-  --brand-lembut: #e8f0ff;
+  --surface: #fdf9f7;
+  --surface-2: rgba(255, 255, 255, .55);
+  --surface-3: rgba(58, 48, 42, .07);
+  --line: rgba(255, 255, 255, .55);
+  --line-kuat: rgba(58, 48, 42, .22);
+
+  /* --- Teks -------------------------------------------------------------- */
+  --text: #3a302a;
+  --text-tegas: #3a1710;      /* judul dan angka utama */
+  --text-2: rgba(58, 48, 42, .72);
+  --text-3: rgba(58, 48, 42, .55);
+
+  /* --- Aksen ------------------------------------------------------------
+     Aksen dan warna "keluar" sengaja satu warna. Di aplikasi pembukuan, aksi
+     utama dan pengeluaran memang selalu berdampingan; memberi keduanya warna
+     berbeda membuat layar penuh warna tanpa menambah arti. */
+  --brand: #c0392b;
+  --brand-2: #a02c1f;
+  --brand-lembut: rgba(192, 57, 43, .12);
   --brand-kontras: #ffffff;
 
-  --masuk: #15803d;
-  --masuk-lembut: #e7f7ed;
-  --keluar: #dc2626;
-  --keluar-lembut: #fdeaea;
-  --warning: #b45309;
-  --warning-lembut: #fef3c7;
-  --info: #0369a1;
-  --info-lembut: #e0f2fe;
+  --masuk: #2f7d5c;
+  --masuk-lembut: rgba(47, 125, 92, .13);
+  /* Batang bulan surplus pada grafik arus kas. Sengaja bukan --masuk maupun
+     --c1: warnanya harus jelas berbeda dari --keluar di kedua mode, sedangkan
+     hijau dan merah berdampingan justru sulit dibedakan sebagian pengguna. */
+  --surplus: #3a1710;
+  --keluar: #c0392b;
+  --keluar-lembut: rgba(192, 57, 43, .12);
+  --warning: #a5622a;
+  --warning-lembut: rgba(165, 98, 42, .14);
+  --info: #3a1710;
+  --info-lembut: rgba(58, 23, 16, .09);
 
-  /* Palet grafik — urutan dipakai untuk kategori */
-  --c1: #2563eb; --c2: #0d9488; --c3: #d97706; --c4: #db2777;
-  --c5: #7c3aed; --c6: #059669; --c7: #dc2626; --c8: #0891b2;
-  --c9: #ca8a04; --c10: #4f46e5; --c11: #be123c; --c12: #65a30d;
+  /* Palet grafik — urutan dipakai untuk kategori. Disetel ulang ke rentang
+     terakota–biru gelap agar sepanggung dengan latar hangat. */
+  --c1: #3a1710; --c2: #c0392b; --c3: #2f7d5c; --c4: #b4713a;
+  --c5: #5b6ea8; --c6: #8e2418; --c7: #7b8b5f; --c8: #a0567c;
+  --c9: #d08c3c; --c10: #4a6b7c; --c11: #9c5a3c; --c12: #6b7a4a;
 
-  /* Bentuk */
-  --r-sm: 10px;
-  --r-md: 14px;
-  --r-lg: 18px;
-  --r-xl: 24px;
+  /* --- Bentuk ------------------------------------------------------------ */
+  --r-sm: 12px;
+  --r-md: 14px;    /* isian formulir */
+  --r-lg: 16px;    /* tautan nav, elemen di dalam panel */
+  --r-xl: 24px;    /* panel dan kartu */
   --r-bulat: 999px;
 
-  /* Jarak */
+  /* --- Jarak ------------------------------------------------------------- */
   --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
   --sp-5: 20px; --sp-6: 24px; --sp-7: 32px; --sp-8: 40px;
 
-  /* Bayangan */
-  --shadow-1: 0 1px 2px rgba(15, 23, 42, .06);
-  --shadow-2: 0 4px 16px rgba(15, 23, 42, .08);
-  --shadow-3: 0 16px 40px rgba(15, 23, 42, .14);
+  /* --- Bayangan ---------------------------------------------------------- */
+  --shadow-1: 0 4px 18px rgba(31, 38, 68, .08), inset 0 1px 0 rgba(255, 255, 255, .5);
+  --shadow-2: 0 8px 32px rgba(31, 38, 68, .12), inset 0 1px 0 rgba(255, 255, 255, .6);
+  --shadow-3: 0 20px 50px rgba(31, 38, 68, .22);
+  --tombol-bayang: 0 4px 14px rgba(192, 57, 43, .25), inset 0 1px 0 rgba(255, 255, 255, .7);
+  --tombol-isi: linear-gradient(180deg, rgba(255, 255, 255, .55), rgba(255, 166, 148, .35));
 
-  /* Ukuran layout */
-  --sidebar-w: 248px;
-  --rail-w: 76px;
-  --bottomnav-h: 62px;
+  /* --- Ukuran layout ----------------------------------------------------- */
+  --sidebar-w: 224px;
+  --rail-w: 84px;
+  --bottomnav-h: 66px;
   --header-h: 56px;
   --sentuh: 44px;          /* target sentuh minimum */
+  /* Jarak tepi halaman sekaligus jarak antar panel. Rancangannya menyebut 20px;
+     di layar HP angka itu memakan lebih dari 10% lebar layar, jadi dinaikkan ke
+     20px baru mulai tablet (lihat layout.css). */
+  --pias: 14px;
 
-  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font: Archivo, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-angka: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
-  --transisi: 160ms cubic-bezier(.4, 0, .2, 1);
+  --transisi: 200ms cubic-bezier(.4, 0, .2, 1);
+  --transisi-pil: 300ms cubic-bezier(.1, .4, .2, 1);
   color-scheme: light;
 }
 
 /* Mode gelap otomatis mengikuti sistem, kecuali pengguna memaksa mode terang. */
 @media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { color-scheme: dark; }
+}
+
+/* ==========================================================================
+   Mode gelap, ditulis dua kali dengan sengaja.
+
+   Daftar yang sama muncul di dalam @media (mengikuti preferensi sistem) dan di
+   :root[data-theme="dark"] (pilihan manual di Pengaturan). Keduanya tidak bisa
+   digabung menjadi satu daftar pemilih karena media query tidak boleh berada di
+   dalam daftar pemilih, dan menaruhnya di variabel perantara justru membuat
+   nilai warnanya tak bisa ditelusuri. Bila salah satu diubah, ubah keduanya.
+   ========================================================================== */
+
+@media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0b1120;
-    --bg-2: #0f172a;
-    --surface: #151d2e;
-    --surface-2: #1b2436;
-    --surface-3: #212c42;
-    --line: #2a3550;
-    --line-kuat: #3a4767;
+    --latar: radial-gradient(1100px 700px at 8% -8%, #46231c 0%, transparent 60%),
+             radial-gradient(900px 700px at 95% 10%, #1c2b4a 0%, transparent 55%),
+             radial-gradient(1000px 800px at 30% 110%, #3a1f30 0%, transparent 55%),
+             linear-gradient(160deg, #10131f, #1b1512);
+    --bg: #14151f;
+    --bg-2: #1a1b26;
 
-    --text: #e8edf7;
-    --text-2: #a8b6cd;
-    --text-3: #7c8ba6;
+    --kaca: rgba(255, 255, 255, .07);
+    --kaca-2: rgba(255, 255, 255, .12);
+    --kaca-3: rgba(255, 255, 255, .06);
+    --kaca-garis: rgba(255, 255, 255, .14);
+    --kaca-garis-halus: rgba(255, 255, 255, .1);
+    --kaca-bayang: 0 8px 32px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .12);
 
-    --brand: #5b9bff;
-    --brand-2: #7fb0ff;
-    --brand-lembut: #16294a;
-    --brand-kontras: #071022;
+    --surface: #1e1f2b;
+    --surface-2: rgba(255, 255, 255, .09);
+    --surface-3: rgba(255, 255, 255, .1);
+    --line: rgba(255, 255, 255, .14);
+    --line-kuat: rgba(255, 255, 255, .28);
 
-    --masuk: #4ade80;
-    --masuk-lembut: #10281a;
-    --keluar: #f87171;
-    --keluar-lembut: #2c1519;
-    --warning: #fbbf24;
-    --warning-lembut: #2c2210;
-    --info: #38bdf8;
-    --info-lembut: #0d2537;
+    --text: #f0e7e2;
+    --text-tegas: #fff6f1;
+    --text-2: rgba(240, 231, 226, .74);
+    --text-3: rgba(240, 231, 226, .55);
 
-    --c1: #60a5fa; --c2: #2dd4bf; --c3: #fbbf24; --c4: #f472b6;
-    --c5: #a78bfa; --c6: #34d399; --c7: #f87171; --c8: #22d3ee;
-    --c9: #facc15; --c10: #818cf8; --c11: #fb7185; --c12: #a3e635;
+    --brand: #ff8a75;
+    --brand-2: #ffa694;
+    --brand-lembut: rgba(255, 138, 117, .16);
+    --brand-kontras: #2a0f0a;
 
-    --shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
-    --shadow-2: 0 4px 16px rgba(0, 0, 0, .45);
-    --shadow-3: 0 16px 40px rgba(0, 0, 0, .6);
-    color-scheme: dark;
+    --masuk: #5fd3a2;
+    --masuk-lembut: rgba(95, 211, 162, .16);
+    --surplus: #e9ded6;
+    --keluar: #ff8a75;
+    --keluar-lembut: rgba(255, 138, 117, .16);
+    --warning: #e8b062;
+    --warning-lembut: rgba(232, 176, 98, .16);
+    --info: #ffd9c9;
+    --info-lembut: rgba(255, 217, 201, .12);
+
+    --c1: #ffb3a3; --c2: #ff8a75; --c3: #5fd3a2; --c4: #e8b062;
+    --c5: #94a8e0; --c6: #ff6f57; --c7: #b8c98f; --c8: #d494b4;
+    --c9: #f0c078; --c10: #86aec4; --c11: #d0937a; --c12: #a8b878;
+
+    --shadow-1: 0 4px 18px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .08);
+    --shadow-2: 0 8px 32px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .1);
+    --shadow-3: 0 20px 50px rgba(0, 0, 0, .6);
+    --tombol-bayang: 0 4px 14px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .2);
+    --tombol-isi: linear-gradient(180deg, rgba(255, 255, 255, .16), rgba(255, 138, 117, .22));
   }
 }
 
 /* Pilihan manual dari Pengaturan selalu menang atas preferensi sistem. */
 :root[data-theme="dark"] {
-  --bg: #0b1120;
-  --bg-2: #0f172a;
-  --surface: #151d2e;
-  --surface-2: #1b2436;
-  --surface-3: #212c42;
-  --line: #2a3550;
-  --line-kuat: #3a4767;
+  --latar: radial-gradient(1100px 700px at 8% -8%, #46231c 0%, transparent 60%),
+           radial-gradient(900px 700px at 95% 10%, #1c2b4a 0%, transparent 55%),
+           radial-gradient(1000px 800px at 30% 110%, #3a1f30 0%, transparent 55%),
+           linear-gradient(160deg, #10131f, #1b1512);
+  --bg: #14151f;
+  --bg-2: #1a1b26;
 
-  --text: #e8edf7;
-  --text-2: #a8b6cd;
-  --text-3: #7c8ba6;
+  --kaca: rgba(255, 255, 255, .07);
+  --kaca-2: rgba(255, 255, 255, .12);
+  --kaca-3: rgba(255, 255, 255, .06);
+  --kaca-garis: rgba(255, 255, 255, .14);
+  --kaca-garis-halus: rgba(255, 255, 255, .1);
+  --kaca-bayang: 0 8px 32px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .12);
 
-  --brand: #5b9bff;
-  --brand-2: #7fb0ff;
-  --brand-lembut: #16294a;
-  --brand-kontras: #071022;
+  --surface: #1e1f2b;
+  --surface-2: rgba(255, 255, 255, .09);
+  --surface-3: rgba(255, 255, 255, .1);
+  --line: rgba(255, 255, 255, .14);
+  --line-kuat: rgba(255, 255, 255, .28);
 
-  --masuk: #4ade80;
-  --masuk-lembut: #10281a;
-  --keluar: #f87171;
-  --keluar-lembut: #2c1519;
-  --warning: #fbbf24;
-  --warning-lembut: #2c2210;
-  --info: #38bdf8;
-  --info-lembut: #0d2537;
+  --text: #f0e7e2;
+  --text-tegas: #fff6f1;
+  --text-2: rgba(240, 231, 226, .74);
+  --text-3: rgba(240, 231, 226, .55);
 
-  --c1: #60a5fa; --c2: #2dd4bf; --c3: #fbbf24; --c4: #f472b6;
-  --c5: #a78bfa; --c6: #34d399; --c7: #f87171; --c8: #22d3ee;
-  --c9: #facc15; --c10: #818cf8; --c11: #fb7185; --c12: #a3e635;
+  --brand: #ff8a75;
+  --brand-2: #ffa694;
+  --brand-lembut: rgba(255, 138, 117, .16);
+  --brand-kontras: #2a0f0a;
 
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
-  --shadow-2: 0 4px 16px rgba(0, 0, 0, .45);
-  --shadow-3: 0 16px 40px rgba(0, 0, 0, .6);
+  --masuk: #5fd3a2;
+  --masuk-lembut: rgba(95, 211, 162, .16);
+  --surplus: #e9ded6;
+  --keluar: #ff8a75;
+  --keluar-lembut: rgba(255, 138, 117, .16);
+  --warning: #e8b062;
+  --warning-lembut: rgba(232, 176, 98, .16);
+  --info: #ffd9c9;
+  --info-lembut: rgba(255, 217, 201, .12);
+
+  --c1: #ffb3a3; --c2: #ff8a75; --c3: #5fd3a2; --c4: #e8b062;
+  --c5: #94a8e0; --c6: #ff6f57; --c7: #b8c98f; --c8: #d494b4;
+  --c9: #f0c078; --c10: #86aec4; --c11: #d0937a; --c12: #a8b878;
+
+  --shadow-1: 0 4px 18px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .08);
+  --shadow-2: 0 8px 32px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .1);
+  --shadow-3: 0 20px 50px rgba(0, 0, 0, .6);
+  --tombol-bayang: 0 4px 14px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .2);
+  --tombol-isi: linear-gradient(180deg, rgba(255, 255, 255, .16), rgba(255, 138, 117, .22));
   color-scheme: dark;
+}
+
+/* Panel kaca. Satu kelas dipakai sidebar, header, kartu, dan modal supaya
+   ketebalan blur dan garis tepinya tidak pernah berbeda antar layar. */
+.kaca {
+  background: var(--kaca);
+  border: 1px solid var(--kaca-garis);
+  border-radius: var(--r-xl);
+  box-shadow: var(--kaca-bayang);
+  backdrop-filter: var(--kaca-blur);
+  -webkit-backdrop-filter: var(--kaca-blur);
+}
+
+/* Browser tanpa backdrop-filter (Firefox lama, sebagian WebView) menampilkan
+   panel nyaris transparan sehingga teks bertumpuk dengan gradien di belakangnya.
+   Di sana panelnya dibuat lebih pekat — kehilangan efek buram, bukan keterbacaan. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --kaca: rgba(255, 255, 255, .86);
+    --kaca-2: rgba(255, 255, 255, .94);
+    --kaca-3: rgba(255, 255, 255, .7);
+  }
+  :root[data-theme="dark"] {
+    --kaca: rgba(30, 31, 43, .92);
+    --kaca-2: rgba(46, 48, 63, .95);
+    --kaca-3: rgba(255, 255, 255, .08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --kaca: rgba(30, 31, 43, .92);
+      --kaca-2: rgba(46, 48, 63, .95);
+      --kaca-3: rgba(255, 255, 255, .08);
+    }
+  }
 }

@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#0a58ca" />
+  <!-- Nilainya disetel ulang oleh theme.js: pilihan manual di Pengaturan bisa
+       berbeda dari preferensi sistem, jadi tidak bisa diserahkan ke media query. -->
+  <meta name="theme-color" content="#f5eef4" />
   <meta name="description" content="Pembukuan dan dashboard keuangan dari e-statement bank. Data tersimpan di perangkat Anda sendiri." />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -13,6 +15,12 @@
   <link rel="icon" href="icon-192.png" />
   <title>Pembukuan &amp; Dashboard Keuangan</title>
 
+  <!-- Dua berat huruf yang paling dulu terlihat diminta lebih awal, supaya
+       judul dan angka saldo tidak sempat tergambar dengan huruf sistem. -->
+  <link rel="preload" href="vendor/fonts/archivo-400.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="vendor/fonts/archivo-800.woff2" as="font" type="font/woff2" crossorigin />
+
+  <link rel="stylesheet" href="css/fonts.css" />
   <link rel="stylesheet" href="css/tokens.css" />
   <link rel="stylesheet" href="css/base.css" />
   <link rel="stylesheet" href="css/layout.css" />

@@ -106,7 +106,7 @@ export function filterRingkas(nilai, akun, onUbah) {
       onclick: () => onUbah({ preset: p.id, ...periodePreset(p.id, hariIni()) }),
     }, p.label)));
 
-  const rincian = h('details.lipat.mt-3', null, [
+  const rincian = h('details.lipat', null, [
     h('summary', { text: 'Rentang tanggal & rekening' }),
     h('.filter__baris.mt-3', null, [
       h('div', null, [h('label', { text: 'Dari tanggal' }), h('input', {
@@ -121,5 +121,5 @@ export function filterRingkas(nilai, akun, onUbah) {
     ]),
   ]);
 
-  return h('div', null, [segment, akun.length ? rincian : null]);
+  return h('.filter-ringkas', null, [segment, akun.length ? rincian : null]);
 }

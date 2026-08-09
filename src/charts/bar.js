@@ -16,7 +16,13 @@ const LEBAR_BATANG_MAKS = 46;
 
 /**
  * @param {Array<{label:string, nilai:Array<number>}>} data
- * @param {{seri:Array<{nama:string, warna:string}>, judul?:string}} opsi
+ * @param {{seri:Array<{nama:string, warna:string}>, judul?:string,
+ *          warnaNilai?:(nilai:number)=>string}} opsi
+ *
+ * `warnaNilai` memberi warna per batang, bukan per seri. Dipakai grafik arus kas
+ * bersih: satu deret angka yang bisa positif atau negatif, dan tandanya justru
+ * hal pertama yang ingin dilihat — bulan surplus dan bulan defisit harus bisa
+ * dibedakan tanpa membaca sumbu.
  */
 export function grafikBatang(data, opsi = {}) {
   const seri = opsi.seri || [{ nama: 'Nilai', warna: 'var(--c1)' }];
@@ -98,8 +104,8 @@ function gambar(data, seri, opsi, L, T) {
         y: atas,
         width: Math.max(1, lebarBatang - 2),
         height: Math.max(v ? 1.5 : 0, tinggi),
-        rx: Math.min(3, lebarBatang / 3),
-        fill: seri[s]?.warna || 'var(--c1)',
+        rx: Math.min(8, lebarBatang / 3),
+        fill: opsi.warnaNilai ? opsi.warnaNilai(v) : (seri[s]?.warna || 'var(--c1)'),
       }, svgEl('title', {}, `${d.label} · ${seri[s]?.nama || ''}: ${labelRingkas(v)}`)));
     });
 

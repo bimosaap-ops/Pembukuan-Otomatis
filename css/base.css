@@ -20,7 +20,16 @@ html {
 
 body {
   margin: 0;
-  background: var(--bg);
+  /* Ditulis per properti, bukan dengan singkatan `background`. --latar berisi
+     empat lapis gradien yang dipisah koma; dimasukkan ke singkatan, koma itu
+     memecah nilainya jadi beberapa lapis latar dan warna --bg jatuh di lapis
+     yang salah — seluruh deklarasinya lalu dibuang browser. Warna rata tetap
+     dipasang agar ada latar yang benar bila gradiennya gagal dilukis. */
+  background-color: var(--bg);
+  background-image: var(--latar);
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-attachment: fixed;
   color: var(--text);
   font-family: var(--font);
   font-size: 15px;
@@ -29,13 +38,13 @@ body {
   overscroll-behavior-y: none;
 }
 
-h1, h2, h3, h4 { margin: 0; line-height: 1.25; font-weight: 700; }
+h1, h2, h3, h4 { margin: 0; line-height: 1.25; font-weight: 800; color: var(--text-tegas); letter-spacing: -.01em; }
 h1 { font-size: 1.3rem; }
 h2 { font-size: 1.08rem; }
 h3 { font-size: .98rem; }
 p { margin: 0 0 var(--sp-3); }
-a { color: var(--brand); text-decoration: none; }
-a:hover { text-decoration: underline; }
+a { color: var(--brand); text-decoration: none; font-weight: 700; }
+a:hover { color: var(--brand-2); text-decoration: underline; }
 small { font-size: .82rem; }
 
 ::selection { background: var(--brand-lembut); color: var(--text); }
@@ -50,19 +59,20 @@ input, select, textarea {
   /* 16px mencegah iOS Safari melakukan zoom otomatis saat input difokus. */
   font-size: 16px;
   min-height: var(--sentuh);
-  padding: 10px 12px;
+  padding: 10px 16px;
   color: var(--text);
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--kaca-2);
+  border: 1px solid var(--kaca-garis);
   border-radius: var(--r-md);
   outline: none;
-  transition: border-color var(--transisi), box-shadow var(--transisi);
+  transition: border-color var(--transisi), box-shadow var(--transisi), background var(--transisi);
   appearance: none;
 }
 textarea { min-height: 88px; resize: vertical; line-height: 1.5; }
 
 input:focus-visible, select:focus-visible, textarea:focus-visible {
   border-color: var(--brand);
+  background: var(--kaca-2);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent);
 }
 input::placeholder, textarea::placeholder { color: var(--text-3); }
@@ -88,7 +98,11 @@ input[type="date"] { min-width: 0; }
 
 fieldset { border: 0; margin: 0; padding: 0; }
 
-/* --- Tombol -------------------------------------------------------------- */
+/* --- Tombol --------------------------------------------------------------
+   Semua tombol berbentuk pil. Tombol biasa memakai kaca bening; tombol utama
+   memakai gradien "liquid glass" hangat dan satu-satunya yang membesar saat
+   disentuh, supaya di layar mana pun hanya ada satu ajakan bertindak yang
+   menonjol. */
 
 button, .btn {
   display: inline-flex;
@@ -97,35 +111,44 @@ button, .btn {
   gap: var(--sp-2);
   min-height: var(--sentuh);
   min-width: var(--sentuh);
-  padding: 10px 16px;
+  padding: 11px 22px;
   font-family: inherit;
   font-size: .92rem;
-  font-weight: 650;
+  font-weight: 700;
   color: var(--text);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  background: var(--kaca-2);
+  border: 1px solid var(--kaca-garis);
+  border-radius: var(--r-bulat);
   cursor: pointer;
-  transition: background var(--transisi), border-color var(--transisi), transform var(--transisi);
+  transition: background var(--transisi), border-color var(--transisi),
+              transform var(--transisi-pil), filter var(--transisi-pil);
   -webkit-tap-highlight-color: transparent;
   white-space: nowrap;
 }
-button:hover, .btn:hover { background: var(--surface-2); text-decoration: none; }
+button:hover, .btn:hover { background: var(--kaca-2); filter: brightness(1.04); text-decoration: none; }
 button:active, .btn:active { transform: scale(.98); }
 button:focus-visible, .btn:focus-visible {
   outline: 2px solid var(--brand);
   outline-offset: 2px;
 }
-button:disabled, .btn[aria-disabled="true"] { opacity: .5; cursor: not-allowed; transform: none; }
+button:disabled, .btn[aria-disabled="true"] { opacity: .5; cursor: not-allowed; transform: none; filter: none; }
 
-.btn-primary { background: var(--brand); border-color: var(--brand); color: var(--brand-kontras); }
-.btn-primary:hover { background: var(--brand-2); border-color: var(--brand-2); }
-.btn-bahaya { color: var(--keluar); border-color: color-mix(in srgb, var(--keluar) 40%, var(--line)); background: var(--surface); }
-.btn-bahaya:hover { background: var(--keluar-lembut); }
+.btn-primary {
+  color: var(--text-tegas);
+  background: var(--tombol-isi);
+  border-color: var(--kaca-garis-halus);
+  box-shadow: var(--tombol-bayang);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.btn-primary:hover { background: var(--tombol-isi); transform: scale(1.05); filter: brightness(1.06); }
+.btn-primary:active { transform: scale(.98); }
+.btn-bahaya { color: var(--keluar); border-color: color-mix(in srgb, var(--keluar) 45%, transparent); background: var(--keluar-lembut); }
+.btn-bahaya:hover { background: var(--keluar-lembut); filter: brightness(1.06); }
 .btn-sukses { background: var(--masuk); border-color: var(--masuk); color: #fff; }
-.btn-halus { background: transparent; border-color: transparent; color: var(--text-2); }
-.btn-halus:hover { background: var(--surface-2); }
-.btn-kecil { min-height: 34px; padding: 6px 12px; font-size: .84rem; }
+.btn-halus { background: transparent; border-color: transparent; color: var(--text-2); font-weight: 700; }
+.btn-halus:hover { background: var(--kaca-3); color: var(--text); }
+.btn-kecil { min-height: 36px; padding: 8px 16px; font-size: .84rem; }
 .btn-ikon { padding: 8px; width: var(--sentuh); }
 .btn-blok { width: 100%; }
 
@@ -140,6 +163,7 @@ button:disabled, .btn[aria-disabled="true"] { opacity: .5; cursor: not-allowed; 
 .mono { font-family: var(--font-angka); font-size: .9em; }
 .masuk { color: var(--masuk); }
 .keluar { color: var(--keluar); }
+.tegas { color: var(--text-tegas); }
 .redup { color: var(--text-2); }
 .redup-2 { color: var(--text-3); }
 .tebal { font-weight: 700; }
@@ -151,6 +175,9 @@ button:disabled, .btn[aria-disabled="true"] { opacity: .5; cursor: not-allowed; 
 .baris-antara { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
 .bungkus { flex-wrap: wrap; }
 .tumpuk { display: flex; flex-direction: column; gap: var(--sp-3); }
+/* Tumpukan antar panel kaca: jaraknya harus sama dengan jarak tepi halaman,
+   supaya seluruh kisi panel terbaca sebagai satu irama. */
+.tumpuk-pias { display: flex; flex-direction: column; gap: var(--pias); }
 .mt-0 { margin-top: 0; } .mt-2 { margin-top: var(--sp-2); } .mt-3 { margin-top: var(--sp-3); }
 .mt-4 { margin-top: var(--sp-4); } .mt-5 { margin-top: var(--sp-5); }
 .mb-0 { margin-bottom: 0; } .mb-2 { margin-bottom: var(--sp-2); } .mb-3 { margin-bottom: var(--sp-3); }
@@ -161,6 +188,13 @@ button:disabled, .btn[aria-disabled="true"] { opacity: .5; cursor: not-allowed; 
 @media (pointer: fine) {
   * { scrollbar-width: thin; scrollbar-color: var(--line-kuat) transparent; }
   *::-webkit-scrollbar { width: 10px; height: 10px; }
-  *::-webkit-scrollbar-thumb { background: var(--line-kuat); border-radius: var(--r-bulat); border: 3px solid var(--bg); }
+  *::-webkit-scrollbar-thumb {
+    background: var(--line-kuat);
+    border-radius: var(--r-bulat);
+    /* Lebar bilah dipersempit lewat border transparan, bukan border sewarna
+       latar: di atas gradien tidak ada satu warna latar yang bisa dipakai. */
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
   *::-webkit-scrollbar-track { background: transparent; }
 }

@@ -1,0 +1,4 @@
+# Playwright hanya dipasang sementara untuk menjalankan tests/ui-check.mjs;
+# aplikasinya sendiri tidak punya dependensi npm.
+node_modules/
+tests/screenshot/

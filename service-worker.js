@@ -20,7 +20,7 @@
  * Naikkan CACHE_NAME setiap kali aset berubah agar versi lama dibersihkan.
  */
 
-const CACHE_NAME = 'pembukuan-v6';
+const CACHE_NAME = 'pembukuan-v7';
 
 /** Berapa lama menunggu jaringan sebelum memakai salinan cache. */
 const BATAS_JARINGAN_MS = 2500;
@@ -33,11 +33,20 @@ const ASET = [
   './icon-512.png',
   './icon-maskable-512.png',
 
+  './css/fonts.css',
   './css/tokens.css',
   './css/base.css',
   './css/layout.css',
   './css/components.css',
   './css/print.css',
+
+  /* Hanya rentang latin dasar yang ikut dipasang di muka. Berkas latin-ext
+     baru diunduh kalau memang ada huruf beraksen di layar, dan saat itu
+     tertangkap cacheDulu seperti aset tetap lainnya. */
+  './vendor/fonts/archivo-400.woff2',
+  './vendor/fonts/archivo-600.woff2',
+  './vendor/fonts/archivo-700.woff2',
+  './vendor/fonts/archivo-800.woff2',
 
   './src/ui/app.js',
   './src/ui/router.js',

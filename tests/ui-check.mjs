@@ -94,16 +94,16 @@ console.log('\n== Alur upload sampai dashboard (390x844) ==');
 
   // Dashboard
   await page.goto(`${BASE}#/dashboard`, { waitUntil: 'load' });
-  await page.waitForSelector('.saldo-utama__nilai', { timeout: 10000 });
-  const saldo = (await page.locator('.saldo-utama__nilai').textContent()).trim();
+  await page.waitForSelector('.ringkas__nilai', { timeout: 10000 });
+  const saldo = (await page.locator('.ringkas__nilai').textContent()).trim();
   cek('saldo terisi di dashboard', saldo.includes('8.257.500'), saldo);
 
-  const stat = await page.locator('.stat-tenang__nilai').allTextContents();
+  const stat = await page.locator('.ringkas__angka').allTextContents();
   cek('pemasukan terisi', /5,01 jt/.test(stat[0] || ''), stat[0]);
   cek('pengeluaran terisi', /6,76 jt/.test(stat[1] || ''), stat[1]);
   cek('rincian saldo per rekening tampil', (await page.locator('.saldo-akun__nilai').count()) > 0);
   cek('grafik arus kas bersih tergambar', (await page.locator('.grafik svg rect').count()) > 0);
-  cek('pengeluaran terbesar terisi', (await page.locator('.bar-mini__isi').count()) > 0);
+  cek('pengeluaran terbesar terisi', (await page.locator('.kat-baris__isi').count()) > 0);
   await page.screenshot({ path: join(SHOT, 'dashboard-mobile.png'), fullPage: true });
 
   // Duplikat: berkas yang sama diunggah lagi
@@ -223,7 +223,7 @@ console.log('\n== Mode gelap ==');
   await page.waitForSelector('text=transaksi masuk ke pembukuan', { timeout: 15000 });
 
   await page.goto(`${BASE}#/dashboard`, { waitUntil: 'load' });
-  await page.waitForSelector('.saldo-utama__nilai', { timeout: 10000 });
+  await page.waitForSelector('.ringkas__nilai', { timeout: 10000 });
 
   const latar = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   const gelap = /rgb\((\d+), (\d+), (\d+)\)/.exec(latar);

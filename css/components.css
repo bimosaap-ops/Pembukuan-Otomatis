@@ -2,46 +2,57 @@
    Komponen yang dipakai ulang di seluruh view.
    ========================================================================== */
 
-/* --- Kartu --------------------------------------------------------------- */
+/* --- Kartu ---------------------------------------------------------------
+   Kartu adalah panel kaca: putih separuh tembus dengan blur, sudut 24px, dan
+   garis tepi putih tipis yang menangkap cahaya. Semua permukaan isi halaman
+   memakai satu resep ini supaya tidak ada dua "tebal kaca" yang berbeda. */
 
 .kartu {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-1);
-  padding: var(--sp-4);
+  background: var(--kaca);
+  border: 1px solid var(--kaca-garis);
+  border-radius: var(--r-xl);
+  box-shadow: var(--kaca-bayang);
+  backdrop-filter: var(--kaca-blur);
+  -webkit-backdrop-filter: var(--kaca-blur);
+  padding: var(--sp-5);
 }
-.kartu--rapat { padding: var(--sp-3); }
+.kartu--rapat { padding: var(--sp-3) var(--sp-4); }
 .kartu--kosong { padding: 0; overflow: hidden; }
 .kartu__kepala {
   display: flex; align-items: center; justify-content: space-between;
-  gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-3);
+  gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-4);
 }
-.kartu__judul { font-size: .98rem; font-weight: 700; }
-.kartu__ket { font-size: .82rem; color: var(--text-3); margin-top: 2px; }
+.kartu__judul { font-size: 1.06rem; font-weight: 800; color: var(--text-tegas); letter-spacing: -.01em; }
+.kartu__ket { font-size: .8rem; color: var(--text-3); margin-top: 3px; font-weight: 400; }
+
+@media (min-width: 1025px) { .kartu { padding: var(--sp-6); } }
 
 /* --- KPI ----------------------------------------------------------------- */
 
 .kpi {
   position: relative;
   display: flex; flex-direction: column; gap: 6px;
-  padding: var(--sp-4);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-1);
+  padding: var(--sp-5);
+  background: var(--kaca);
+  border: 1px solid var(--kaca-garis);
+  border-radius: var(--r-xl);
+  box-shadow: var(--kaca-bayang);
+  backdrop-filter: var(--kaca-blur);
+  -webkit-backdrop-filter: var(--kaca-blur);
   overflow: hidden;
 }
-.kpi::before {
-  content: ""; position: absolute; inset: 0 auto 0 0; width: 4px;
-  background: var(--kpi-warna, var(--brand));
+/* Arah masuk/keluar ditandai lewat warna angkanya, bukan lewat pita tegak di
+   tepi kartu. Pita itu bentuk pinjaman dari kartu berlatar padat; di atas panel
+   kaca ia jadi garis keras yang tidak sejalan dengan apa pun di sekitarnya —
+   sementara mewarnai angkanya menandai hal yang justru dibaca. */
+.kpi__label {
+  font-size: .7rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-3); display: flex; align-items: center; gap: 6px;
 }
-.kpi__label { font-size: .8rem; font-weight: 650; color: var(--text-2); display: flex; align-items: center; gap: 6px; }
-.kpi__nilai { font-size: 1.42rem; font-weight: 780; letter-spacing: -.02em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.kpi__nilai { font-size: 1.42rem; font-weight: 800; letter-spacing: -.02em; color: var(--text-tegas); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .kpi__sub { font-size: .78rem; color: var(--text-3); }
-.kpi--masuk { --kpi-warna: var(--masuk); }
-.kpi--keluar { --kpi-warna: var(--keluar); }
-.kpi--netral { --kpi-warna: var(--info); }
+.kpi--masuk .kpi__nilai { color: var(--masuk); }
+.kpi--keluar .kpi__nilai { color: var(--keluar); }
 
 @media (min-width: 768px) { .kpi__nilai { font-size: 1.5rem; } }
 
@@ -49,10 +60,10 @@
 
 .lencana {
   display: inline-flex; align-items: center; gap: 5px;
-  padding: 3px 9px;
+  padding: 3px 10px;
   border-radius: var(--r-bulat);
   font-size: .74rem; font-weight: 700; line-height: 1.5;
-  background: var(--surface-3); color: var(--text-2);
+  background: var(--kaca-2); color: var(--text-2);
   white-space: nowrap;
 }
 .lencana--masuk { background: var(--masuk-lembut); color: var(--masuk); }
@@ -63,16 +74,17 @@
 
 .chip {
   display: inline-flex; align-items: center; gap: 6px;
-  min-height: 36px; padding: 6px 13px;
-  border: 1px solid var(--line);
+  min-height: 36px; padding: 6px 14px;
+  border: 1px solid var(--kaca-garis);
   border-radius: var(--r-bulat);
-  background: var(--surface);
-  font-size: .84rem; font-weight: 650; color: var(--text-2);
+  background: var(--kaca-2);
+  font-size: .84rem; font-weight: 700; color: var(--text-2);
   cursor: pointer; white-space: nowrap;
 }
 .chip[aria-pressed="true"], .chip.aktif {
-  background: var(--brand-lembut); color: var(--brand);
-  border-color: color-mix(in srgb, var(--brand) 35%, transparent);
+  background: var(--tombol-isi); color: var(--text-tegas);
+  border-color: var(--kaca-garis-halus);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .7);
 }
 .chip-baris {
   display: flex; gap: var(--sp-2);
@@ -100,36 +112,73 @@
 
 /* --- Data view: tabel di layar lebar, daftar kartu di HP ----------------- */
 
-.dv__gulir { overflow-x: auto; border-radius: var(--r-lg); border: 1px solid var(--line); background: var(--surface); }
+/* Daftar bisa berdiri sendiri (Transaksi, Rekening) atau berada di dalam kartu
+   (Laporan). Berdiri sendiri ia jadi panel kaca utuh; di dalam kartu, kacanya
+   dilucuti supaya tidak ada dua lapis kaca bertumpuk yang membuat teksnya kabur.
+   Pemisah barisnya garis putih tipis, bukan abu — di atas kaca, garis terang
+   terbaca sebagai lipatan cahaya, garis gelap sebagai kotor. */
+.dv__gulir {
+  overflow-x: auto;
+  padding: var(--sp-2) var(--sp-5);
+  background: var(--kaca);
+  border: 1px solid var(--kaca-garis);
+  border-radius: var(--r-xl);
+  box-shadow: var(--kaca-bayang);
+  backdrop-filter: var(--kaca-blur);
+  -webkit-backdrop-filter: var(--kaca-blur);
+}
+.kartu .dv__gulir {
+  padding: 0 var(--sp-5) var(--sp-2);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
 .dv__tabel { width: 100%; border-collapse: collapse; font-size: .88rem; }
 .dv__tabel thead th {
   position: sticky; top: 0; z-index: 1;
-  padding: 11px 12px;
-  background: var(--surface-2);
-  color: var(--text-2);
-  font-size: .78rem; font-weight: 700; text-align: left;
+  padding: 10px 8px;
+  background: var(--kaca);
+  backdrop-filter: var(--kaca-blur);
+  -webkit-backdrop-filter: var(--kaca-blur);
+  color: var(--text-3);
+  font-size: .69rem; font-weight: 700; text-align: left;
+  letter-spacing: .08em; text-transform: uppercase;
   white-space: nowrap;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--kaca-garis);
 }
 .dv__tabel tbody td {
-  padding: 11px 12px;
-  border-bottom: 1px solid var(--line);
+  padding: 11px 8px;
+  border-bottom: 1px solid var(--kaca-garis-halus);
   vertical-align: top;
 }
 .dv__tabel tbody tr:last-child td { border-bottom: 0; }
-.dv__tabel tbody tr:hover { background: var(--surface-2); }
+.dv__tabel tbody tr:hover td { background: var(--kaca-3); }
 .dv__tabel .kanan, .dv__tabel th.kanan { text-align: right; }
 .dv__tabel .angka { font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-.dv__kartu-list { display: flex; flex-direction: column; gap: var(--sp-2); }
+.dv__kartu-list { display: flex; flex-direction: column; gap: var(--sp-3); }
 .dv__kartu {
   display: flex; flex-direction: column; gap: 6px;
-  padding: var(--sp-3);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-1);
+  padding: var(--sp-4);
+  background: var(--kaca);
+  border: 1px solid var(--kaca-garis);
+  border-radius: var(--r-xl);
+  box-shadow: var(--kaca-bayang);
+  backdrop-filter: var(--kaca-blur);
+  -webkit-backdrop-filter: var(--kaca-blur);
 }
+.kartu .dv__kartu {
+  background: var(--kaca-3);
+  border-color: var(--kaca-garis-halus);
+  border-radius: var(--r-lg);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.kartu .dv__kartu-list { padding: 0 var(--sp-4) var(--sp-4); }
 .dv__kartu-kepala { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-3); }
 .dv__kartu-utama { font-weight: 650; min-width: 0; overflow-wrap: anywhere; }
 .dv__kartu-nilai { font-weight: 750; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -165,22 +214,27 @@
   min-height: 190px;
   padding: var(--sp-6) var(--sp-4);
   text-align: center;
-  background: var(--surface);
+  background: var(--kaca);
   border: 2px dashed var(--line-kuat);
   border-radius: var(--r-xl);
+  box-shadow: var(--kaca-bayang);
+  backdrop-filter: var(--kaca-blur);
+  -webkit-backdrop-filter: var(--kaca-blur);
   color: var(--text-2);
   cursor: pointer;
   transition: border-color var(--transisi), background var(--transisi);
 }
-.dropzone:hover { border-color: var(--brand); background: var(--surface-2); }
+.dropzone:hover { border-color: var(--brand); background: var(--kaca-2); }
 .dropzone.seret { border-color: var(--brand); background: var(--brand-lembut); }
 .dropzone__ikon {
   width: 58px; height: 58px;
   display: grid; place-items: center;
   border-radius: var(--r-lg);
-  background: var(--brand-lembut); color: var(--brand);
+  background: var(--tombol-isi);
+  border: 1px solid var(--kaca-garis-halus);
+  color: var(--text-tegas);
 }
-.dropzone__judul { font-size: 1rem; font-weight: 700; color: var(--text); }
+.dropzone__judul { font-size: 1rem; font-weight: 800; color: var(--text-tegas); }
 .dropzone__ket { font-size: .85rem; max-width: 42ch; }
 
 /* --- Stepper alur upload ------------------------------------------------- */
@@ -220,37 +274,44 @@
 .modal-latar {
   position: fixed; inset: 0; z-index: 60;
   display: flex; align-items: flex-end; justify-content: center;
-  padding: 0;
-  background: rgba(2, 6, 23, .55);
-  backdrop-filter: blur(2px);
+  padding: var(--sp-3);
+  background: rgba(40, 24, 20, .4);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   animation: fade .18s ease;
 }
+/* Modal berisi formulir yang harus terbaca jelas, jadi permukaannya lebih pekat
+   daripada panel kaca biasa — cukup untuk menenggelamkan gradien di belakangnya
+   tanpa kehilangan kesan kaca di tepinya. */
 .modal {
   width: 100%;
   max-height: 92dvh;
   display: flex; flex-direction: column;
-  background: var(--surface);
-  border-radius: var(--r-xl) var(--r-xl) 0 0;
+  background: var(--kaca-2);
+  border: 1px solid var(--kaca-garis);
+  border-radius: var(--r-xl);
   box-shadow: var(--shadow-3);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
   animation: naik .22s cubic-bezier(.32, .72, 0, 1);
 }
 .modal__kepala {
   display: flex; align-items: center; gap: var(--sp-3);
-  padding: var(--sp-4);
-  border-bottom: 1px solid var(--line);
+  padding: var(--sp-4) var(--sp-5);
+  border-bottom: 1px solid var(--kaca-garis);
 }
-.modal__judul { font-size: 1.02rem; font-weight: 750; flex: 1 1 auto; min-width: 0; }
-.modal__isi { padding: var(--sp-4); overflow: auto; flex: 1 1 auto; }
+.modal__judul { font-size: 1.02rem; font-weight: 800; color: var(--text-tegas); flex: 1 1 auto; min-width: 0; }
+.modal__isi { padding: var(--sp-5); overflow: auto; flex: 1 1 auto; }
 .modal__kaki {
   display: flex; gap: var(--sp-2); justify-content: flex-end; flex-wrap: wrap;
-  padding: var(--sp-4);
+  padding: var(--sp-4) var(--sp-5);
   padding-bottom: calc(var(--sp-4) + env(safe-area-inset-bottom));
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--kaca-garis);
 }
 .modal__kaki button { flex: 1 1 auto; }
 @media (min-width: 768px) {
   .modal-latar { align-items: center; padding: var(--sp-5); }
-  .modal { max-width: 560px; border-radius: var(--r-xl); }
+  .modal { max-width: 560px; }
   .modal--lebar { max-width: 900px; }
   .modal__kaki button { flex: 0 0 auto; }
 }
@@ -269,12 +330,14 @@
 }
 .toast {
   display: flex; align-items: flex-start; gap: var(--sp-3);
-  padding: 12px 14px;
-  background: var(--surface);
-  border: 1px solid var(--line);
+  padding: 12px 16px;
+  background: var(--kaca-2);
+  border: 1px solid var(--kaca-garis);
   border-left: 4px solid var(--info);
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow-3);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
   font-size: .88rem;
   pointer-events: auto;
   animation: naik .2s ease;
@@ -305,6 +368,12 @@
 
 .grafik { width: 100%; }
 .grafik svg { display: block; width: 100%; height: auto; overflow: visible; }
+
+/* Dua kartu bersebelahan selalu setinggi yang paling tinggi. Tanpa aturan ini
+   grafiknya menempel di atas dan menyisakan ruang kosong besar di bawahnya;
+   dengan ini grafik memanjang mengisi kartunya. */
+.grid-2 > .kartu { display: flex; flex-direction: column; }
+.grid-2 > .kartu > .grafik { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; }
 .grafik__legenda {
   display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4);
   margin-top: var(--sp-3); font-size: .8rem; color: var(--text-2);
@@ -320,7 +389,7 @@
 .daftar__item {
   display: flex; align-items: center; gap: var(--sp-3);
   padding: 11px 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--kaca-garis-halus);
 }
 .daftar__item:last-child { border-bottom: 0; }
 .daftar__utama { flex: 1 1 auto; min-width: 0; }
@@ -336,9 +405,9 @@
 .teks-mentah {
   max-height: 320px; overflow: auto;
   padding: var(--sp-3);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  background: var(--surface-3);
+  border: 1px solid var(--kaca-garis);
+  border-radius: var(--r-lg);
   font-family: var(--font-angka);
   font-size: .76rem;
   line-height: 1.55;
@@ -365,9 +434,9 @@ tr.baris--duplikat td, .dv__kartu.baris--duplikat { opacity: .62; }
 /* --- Segment control ----------------------------------------------------- */
 
 .segment {
-  display: inline-flex; padding: 3px; gap: 2px;
+  display: inline-flex; padding: 4px; gap: 2px;
   background: var(--surface-3);
-  border-radius: var(--r-md);
+  border-radius: var(--r-bulat);
   overflow-x: auto; max-width: 100%;
   scrollbar-width: none;
 }
@@ -376,11 +445,16 @@ tr.baris--duplikat td, .dv__kartu.baris--duplikat { opacity: .62; }
   /* Tanpa ini tombol saling menghimpit di layar sempit dan tulisannya bertumpuk;
      yang diinginkan adalah barisnya bisa digeser ke samping. */
   flex: 0 0 auto;
-  min-height: 38px; padding: 6px 14px;
-  background: transparent; border: 0; border-radius: calc(var(--r-md) - 3px);
-  font-size: .85rem; font-weight: 650; color: var(--text-2);
+  min-height: 36px; padding: 6px 16px;
+  background: transparent; border: 0; border-radius: var(--r-bulat);
+  font-size: .85rem; font-weight: 700; color: var(--text-2);
 }
-.segment__btn[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-1); }
+.segment__btn:hover { background: var(--kaca-3); filter: none; }
+.segment__btn:active { transform: none; }
+.segment__btn[aria-pressed="true"] {
+  background: var(--kaca-2); color: var(--text-tegas);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .7), 0 1px 3px rgba(31, 38, 68, .1);
+}
 
 /* --- Switch -------------------------------------------------------------- */
 
@@ -412,71 +486,114 @@ tr.baris--duplikat td, .dv__kartu.baris--duplikat { opacity: .62; }
 .pengaturan-baris {
   display: flex; align-items: center; justify-content: space-between;
   gap: var(--sp-4); padding: var(--sp-3) 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--kaca-garis-halus);
 }
 .pengaturan-baris:last-child { border-bottom: 0; }
 .pengaturan-baris__teks { min-width: 0; }
-.pengaturan-baris__judul { font-weight: 650; font-size: .92rem; }
+.pengaturan-baris__judul { font-weight: 700; font-size: .92rem; }
 .pengaturan-baris__ket { font-size: .8rem; color: var(--text-3); margin-top: 2px; }
 
-/* --- Blok saldo utama di Dashboard --------------------------------------
-   Satu angka dibuat jauh lebih besar dari yang lain karena pertanyaan pertama
-   pengguna selalu sama: "sekarang uang saya berapa?". Angka pendukung sengaja
-   dibuat lebih tenang supaya tidak ikut berebut perhatian. */
+/* --- Panel ringkasan Dashboard -------------------------------------------
+   Satu panel berisi tiga angka: saldo total (yang besar), pemasukan, dan
+   pengeluaran. Ketiganya dijadikan satu panel — bukan tiga kartu terpisah —
+   supaya terbaca sebagai satu kalimat: "punya sekian, masuk sekian, keluar
+   sekian". Kolom saldo dibuat lebih lebar (1.3fr) karena angkanya paling
+   panjang dan tidak boleh patah ke baris berikutnya. */
 
-.saldo-utama { padding: var(--sp-5) var(--sp-4); }
-.saldo-utama__label {
-  display: flex; align-items: center; gap: 6px;
-  font-size: .84rem; font-weight: 650; color: var(--text-2);
+.ringkas {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--sp-5);
 }
-.saldo-utama__nilai {
-  margin-top: 4px;
-  font-size: 2rem; font-weight: 800; letter-spacing: -.03em; line-height: 1.1;
+.ringkas__label {
+  font-size: .69rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-3);
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: var(--sp-2);
+}
+.ringkas__nilai {
+  font-size: 1.85rem; font-weight: 800; letter-spacing: -.02em; line-height: 1.1;
+  color: var(--text-tegas);
   font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
 }
-.saldo-utama__ket { margin-top: 6px; font-size: .8rem; color: var(--text-3); }
-.saldo-utama__akun {
-  display: flex; flex-wrap: wrap; gap: var(--sp-3) var(--sp-6);
-  margin-top: var(--sp-4); padding-top: var(--sp-4);
-  border-top: 1px solid var(--line);
+.ringkas__sub { margin-top: var(--sp-2); font-size: .78rem; color: var(--text-3); }
+.ringkas__angka {
+  font-size: 1.42rem; font-weight: 800; letter-spacing: -.01em;
+  font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
 }
-.saldo-akun__nama { font-size: .76rem; color: var(--text-3); }
+
+/* Rincian saldo per rekening, di bawah garis pemisah pada kolom pertama. */
+.ringkas__akun {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-6);
+  margin-top: var(--sp-4); padding-top: var(--sp-4);
+  border-top: 1px solid var(--kaca-garis-halus);
+}
+.saldo-akun__nama { font-size: .72rem; color: var(--text-3); }
 .saldo-akun__nilai { font-weight: 700; font-variant-numeric: tabular-nums; }
 
-@media (min-width: 768px) { .saldo-utama__nilai { font-size: 2.4rem; } }
-
-/* Angka pendukung: sama informatifnya, jauh lebih tenang daripada kartu KPI. */
-.stat-tenang {
-  padding: var(--sp-4);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
+/* Strip tipis berisi selisih periode — satu baris, dua ujung. */
+.strip {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-3); flex-wrap: wrap;
+  padding: var(--sp-3) var(--sp-5);
+  font-size: .84rem; font-weight: 700;
 }
-.stat-tenang__label { font-size: .8rem; font-weight: 650; color: var(--text-2); }
-.stat-tenang__nilai {
-  margin-top: 4px;
-  font-size: 1.32rem; font-weight: 760; letter-spacing: -.02em;
-  font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
-}
-.stat-tenang__sub { margin-top: 3px; font-size: .76rem; color: var(--text-3); }
-
-/* Baris filter ringkas: hanya preset yang terlihat, rentang khusus dilipat. */
-.filter-ringkas { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
-.filter-ringkas .segment { flex: 1 1 auto; }
-
-/* Tiga angka pendukung Dashboard.
-   Di HP disusun dua kolom dengan Selisih melebar penuh di bawahnya — urutannya
-   jadi terbaca wajar: dua angka masukan, lalu hasilnya. Menumpuk tiga baris
-   memakan tinggi tanpa alasan, sedangkan tiga kolom di layar 390px membuat
-   keterangan di bawah angka pecah jadi empat baris. */
-.grid-stat {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--sp-3);
-}
-.grid-stat > :last-child { grid-column: 1 / -1; }
+.strip__nilai { font-variant-numeric: tabular-nums; }
 
 @media (min-width: 768px) {
-  .grid-stat { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); }
-  .grid-stat > :last-child { grid-column: auto; }
+  .ringkas { grid-template-columns: 1.3fr 1fr 1fr; gap: var(--sp-6); }
+  /* Saldo total hanya boleh dilarang patah setelah kolomnya cukup lebar;
+     di HP justru harus boleh patah agar tidak melebar keluar layar. */
+  .ringkas__nilai { font-size: 2.1rem; white-space: nowrap; overflow-wrap: normal; }
+  .strip { padding: var(--sp-4) var(--sp-6); }
 }
+
+/* --- Baris kategori dengan bar progres -----------------------------------
+   Nama kategori, bar yang panjangnya sebanding dengan pengeluaran terbesar,
+   lalu nominal rata kanan. Panjang bar jauh lebih cepat dibandingkan daripada
+   sudut potongan lingkaran, dan bentuk barisnya sama persis dengan tabel di
+   sebelahnya sehingga mata tidak perlu belajar dua bentuk. */
+.kat-baris {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: 10px 0;
+  border-bottom: 1px solid var(--kaca-garis-halus);
+}
+.kat-baris:last-child { border-bottom: 0; }
+.kat-baris__utama { flex: 1 1 auto; min-width: 0; }
+.kat-baris__nama { font-weight: 700; font-size: .84rem; overflow-wrap: anywhere; }
+.kat-baris__nilai { font-weight: 800; font-size: .84rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.kat-baris__bar {
+  height: 5px; margin-top: 6px;
+  border-radius: var(--r-bulat);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.kat-baris__isi { height: 100%; border-radius: inherit; background: var(--brand); }
+.kat-baris__ket { font-size: .72rem; color: var(--text-3); margin-top: 4px; }
+
+/* Tautan "lihat selengkapnya" di pojok kartu. Secara teknis tombol (navigasinya
+   lewat router), tapi tampil sebagai tautan teks berpanah seperti di rancangan —
+   tombol berkotak di sana akan berebut perhatian dengan tombol utama di kepala
+   halaman. Tinggi sentuhnya tetap dijaga lewat padding. */
+.tautan {
+  display: inline-flex; align-items: center; gap: 5px;
+  min-height: 0; min-width: 0;
+  padding: 8px 4px;
+  background: transparent; border: 0; border-radius: var(--r-sm);
+  color: var(--brand);
+  font-size: .82rem; font-weight: 700;
+  white-space: nowrap;
+}
+.tautan:hover { background: transparent; color: var(--brand-2); text-decoration: underline; filter: none; }
+.tautan:active { transform: none; }
+
+/* Baris filter ringkas: hanya preset yang terlihat, rentang khusus dilipat.
+   Deretan preset dan tombol pelipat duduk sebaris; isian tanggal yang muncul
+   saat dilipat-buka melebar penuh ke baris berikutnya. */
+.filter-ringkas {
+  display: flex; align-items: center; gap: var(--sp-2) var(--sp-4);
+  flex-wrap: wrap;
+}
+.filter-ringkas > details { flex: 1 1 auto; min-width: 0; }
+.filter-ringkas > details[open] { flex-basis: 100%; }
+.filter-ringkas > details > summary { min-height: 36px; }
