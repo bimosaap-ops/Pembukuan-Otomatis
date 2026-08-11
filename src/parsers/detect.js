@@ -49,12 +49,25 @@ const TANDA_BANK = [
  * Permata punya rekening koran bulanan (berkolom Debet dan Kredit) sekaligus unduhan
  * "Mutasi Transaksi" dari aplikasi yang sama sekali tidak berkolom. Pemeriksaan ini
  * berjalan lebih dulu supaya berkas diarahkan ke pembaca yang tepat.
+ *
+ * Statement BCA "Rekening Tahapan" masuk daftar ini karena kata "BCA" sendiri
+ * tidak selalu bisa diandalkan di kop: sebagian statement hanya mencantumkannya
+ * di paragraf disclaimer yang dicetak dengan jarak antar huruf ("B C A"), dan
+ * potongan teks seperti itu tidak pernah cocok dengan pola nama bank biasa.
+ * Judul kolom "CBG" + "MUTASI" + "SALDO" berdampingan jauh lebih dapat
+ * diandalkan — itu justru kolom yang sama persis dicari adapter BCA sendiri
+ * (lihat KOLOM di banks/bca.js), dan tidak dipakai bank lain.
  */
 const TANDA_LAYOUT = [
   {
     adapter: ADAPTER.PERMATA_MUTASI,
     bank: 'Permata',
     cocok: (isi) => /PERMATA/i.test(isi) && /MUTASI\s+TRANSAKSI/i.test(isi),
+  },
+  {
+    adapter: ADAPTER.BCA,
+    bank: 'BCA',
+    cocok: (isi) => /TANGGAL\s+KETERANGAN\s+CBG\s+MUTASI\s+SALDO/i.test(isi),
   },
 ];
 

@@ -37,7 +37,13 @@ export function pesanMasalah(kode) {
  */
 export function validasiBaris(daftar) {
   const adaKolomSaldo = daftar.some((b) => b.saldo !== null && b.saldo !== undefined);
-  let saldoSebelumnya = null;
+  let saldoAcuan = null;
+  // Sebagian bank (mis. BCA) hanya mencetak saldo berjalan pada sebagian baris,
+  // bukan di setiap baris. Mutasi baris-baris yang tidak bersaldo di antara dua
+  // baris bersaldo tetap harus ikut dijumlahkan sebelum dibandingkan — kalau
+  // hanya mutasi baris terakhir yang dibandingkan, hampir setiap baris sesudah
+  // baris tak-bersaldo akan salah ditandai padahal angkanya benar.
+  let akumulasi = 0;
   let tanggalSebelumnya = null;
 
   const baris = daftar.map((b) => {
@@ -51,13 +57,18 @@ export function validasiBaris(daftar) {
     }
     if (b.tanggal) tanggalSebelumnya = b.tanggal;
 
-    const saldo = b.saldo;
-    if (adaKolomSaldo && saldo !== null && saldo !== undefined) {
-      if (saldoSebelumnya !== null) {
-        const diharapkan = saldoSebelumnya + (Number(b.nominal) || 0);
-        if (Math.abs(diharapkan - saldo) > TOLERANSI) masalah.push(MASALAH.SALDO_LONCAT);
+    if (adaKolomSaldo) {
+      akumulasi += Number(b.nominal) || 0;
+      const saldo = b.saldo;
+      if (saldo !== null && saldo !== undefined) {
+        if (saldoAcuan !== null && Math.abs(saldoAcuan + akumulasi - saldo) > TOLERANSI) {
+          masalah.push(MASALAH.SALDO_LONCAT);
+        }
+        // Nilai tercetak selalu dipercaya sebagai acuan berikutnya, supaya satu
+        // baris yang salah baca tidak ikut menandai seluruh baris sesudahnya.
+        saldoAcuan = saldo;
+        akumulasi = 0;
       }
-      saldoSebelumnya = saldo;
     }
 
     return { ...b, masalah, curiga: masalah.length > 0 };

@@ -75,6 +75,28 @@ test('deteksiBank mengenali BCA dan Permata', () => {
   assert.equal(deteksiBank('Koperasi Simpan Pinjam').adapter, ADAPTER.GENERIK);
 });
 
+test('deteksiBank mengenali BCA dari judul kolom walau kata "BCA" tidak bersih di kop', () => {
+  // Statement BCA "Rekening Tahapan" sungguhan: kata "BCA" hanya muncul di
+  // paragraf disclaimer yang tercetak dengan jarak antar huruf ("B C A"), jadi
+  // tidak cocok dengan pola nama bank. Tanpa judul kolom sebagai penanda, deteksi
+  // jatuh ke pemindaian seluruh dokumen dan bisa salah kena nama bank lawan
+  // transaksi di uraian (mis. "LLG-BANK JAGO" pada transfer masuk).
+  const kop = [
+    'REKENING TAHAPAN',
+    'BIMO SAPUTRO NO. REKENING : 6090378994',
+    'PERIODE : JULI 2026',
+    'C A T A T A N :',
+    '• B C A b e r h a k s e t i a p s a a t m e l a k u k a n k o r e k s i',
+    'TANGGAL KETERANGAN CBG MUTASI SALDO',
+    '01/07 SALDO AWAL 2,428,676.44',
+  ].join('\n');
+  const isiPenuh = `${kop}\n06/07 KR OTOMATIS LLG-BANK JAGO 0938 2,346,168.00`;
+
+  const hasil = deteksiBank(isiPenuh, kop);
+  assert.equal(hasil.adapter, ADAPTER.BCA);
+  assert.equal(hasil.bank, 'BCA');
+});
+
 test('bacaKepala mengambil nomor rekening, nama, dan periode', () => {
   const kepala = bacaKepala([
     'PT. BANK CENTRAL ASIA Tbk',
@@ -223,6 +245,22 @@ test('validasiBaris menandai baris yang saldonya tidak nyambung', () => {
   assert.equal(ringkas.curiga, 1);
   assert.equal(hasil[1].curiga, false);
   assert.equal(hasil[2].curiga, true, 'selisih saldo 1.000 padahal mutasi 500');
+});
+
+test('validasiBaris tidak salah menandai bila saldo hanya tercetak pada sebagian baris', () => {
+  // Statement BCA sungguhan tidak mencetak saldo di setiap baris. Baris tanpa
+  // saldo di antara dua baris bersaldo tetap harus ikut dijumlahkan sebelum
+  // dibandingkan — sebelum diperbaiki, tiap baris sesudah baris tak-bersaldo
+  // salah ditandai padahal mutasinya benar.
+  const { baris: hasil, ringkas } = validasiBaris([
+    { tanggal: '2025-07-01', deskripsi: 'Saldo awal', nominal: 100000, saldo: 2000000 },
+    { tanggal: '2025-07-01', deskripsi: 'Tanpa saldo 1', nominal: -50000, saldo: null },
+    { tanggal: '2025-07-01', deskripsi: 'Tanpa saldo 2', nominal: -30000, saldo: null },
+    { tanggal: '2025-07-02', deskripsi: 'Bersaldo lagi', nominal: -20000, saldo: 1900000 },
+  ]);
+
+  assert.equal(ringkas.curiga, 0);
+  assert.equal(hasil.every((b) => !b.curiga), true);
 });
 
 test('validasiBaris tidak mengeluh bila statement tidak punya kolom saldo', () => {
