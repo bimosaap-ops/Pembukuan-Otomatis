@@ -108,6 +108,15 @@ const cacheKunci = new Map();
  * seluler) dan "DANAMON" memuat "DANA" (dompet digital), sehingga transfer ke
  * seseorang bisa masuk kategori Pulsa & Internet.
  *
+ * Batasnya sengaja dituliskan sendiri sebagai "tidak ada huruf tepat di
+ * sebelum/sesudahnya", bukan `\b` bawaan regex — `\b` menganggap digit dan huruf
+ * sama-sama karakter kata, sehingga transisi digit-ke-huruf tidak dihitung batas.
+ * Statement BCA mencetak kode referensi transaksi QR menempel langsung ke nama
+ * merchant tanpa spasi ("00000.00KOPI KLOTO"), dan dengan `\b` biasa kata kunci
+ * "KOPI" gagal cocok padahal nama merchant-nya sendiri jelas dan benar. Batas
+ * berbasis huruf mengizinkan digit menempel di kedua sisi, tapi tetap menahan
+ * SAFITRI/DANAMON di atas karena keduanya transisi huruf-ke-huruf.
+ *
  * Kata kunci yang berupa frasa berspasi tetap dicocokkan sebagai potongan teks,
  * karena justru urutan katanyalah yang menjadi cirinya (mis. "TRSF E-BANKING DB").
  */
@@ -116,7 +125,7 @@ function cocokKunci(teks, kunci) {
 
   let re = cacheKunci.get(kunci);
   if (!re) {
-    re = new RegExp(`\\b${kunci.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+    re = new RegExp(`(?<![A-Za-z])${kunci.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z])`);
     cacheKunci.set(kunci, re);
   }
   return re.test(teks);

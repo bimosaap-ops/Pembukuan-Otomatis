@@ -8,7 +8,7 @@ import { parseAngka } from '../src/core/format.js';
 import { parseTanggal } from '../src/core/dates.js';
 import { validasiBaris, cocokkanRingkasan } from '../src/domain/validate.js';
 import {
-  statementBCA, statementBCAAgustus, statementBCAAkhirTahun,
+  statementBCA, statementBCAAgustus, statementBCAAkhirTahun, statementBCADuaHalaman,
   statementPermataRekeningKoran, statementGenerikTanpaHeader, baris,
 } from './fixtures/statements.js';
 
@@ -157,6 +157,27 @@ test('total hasil parsing BCA cocok dengan ringkasan di statement', () => {
 
   assert.ok(cek, 'ringkasan MUTASI CR/DB harus terbaca');
   assert.ok(cek.semuaCocok, `ada total yang tidak cocok: ${JSON.stringify(cek.cek)}`);
+});
+
+test('kop dan disclaimer yang dicetak ulang di halaman kedua tidak tersambung ke deskripsi transaksi', () => {
+  const hasil = parseStatement(statementBCADuaHalaman());
+
+  assert.equal(hasil.transaksi.length, 2, '"SALDO AWAL" bukan transaksi, hanya saldo pembuka');
+
+  const trxTerakhirHal1 = hasil.transaksi[0];
+  assert.equal(trxTerakhirHal1.tanggal, '2025-07-02');
+  assert.ok(
+    !/KETENTUAN/i.test(trxTerakhirHal1.deskripsi),
+    `deskripsi tercemar baris halaman berikutnya: "${trxTerakhirHal1.deskripsi}"`,
+  );
+  assert.equal(trxTerakhirHal1.deskripsi, 'TRSF E-BANKING DB PEMBAYARAN GRAB');
+
+  // Transaksi di halaman kedua tetap terbaca dengan benar setelah tutup() per halaman.
+  assert.equal(hasil.transaksi[1].tanggal, '2025-07-10');
+  assert.equal(hasil.transaksi[1].deskripsi, 'BIAYA ADM');
+
+  const cek = cocokkanRingkasan(hasil.transaksi, hasil.ringkasan);
+  assert.ok(cek?.semuaCocok, `ada total yang tidak cocok: ${JSON.stringify(cek?.cek)}`);
 });
 
 /* ==========================================================================

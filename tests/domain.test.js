@@ -186,3 +186,22 @@ test('kata kunci kategori tidak menangkap potongan nama orang', async () => {
   assert.equal(tentukan('PULSA TELKOMSEL 0812', -50000, bawaan), 'kat_pulsa');
   assert.equal(tentukan('ISI SALDO DANA 0812', -100000, bawaan), 'kat_dompet_digital');
 });
+
+test('kata kunci tetap cocok walau kode referensi menempel tanpa spasi ke nama merchant', () => {
+  // Statement BCA sungguhan mencetak kode referensi QR menempel langsung ke nama
+  // merchant tanpa spasi ("00000.00KOPI KLOTO") — batas kata `\b` bawaan regex
+  // menganggap digit dan huruf sama-sama karakter kata, jadi transisi ini gagal
+  // dianggap batas dan "KOPI" gagal cocok walau merchant-nya jelas.
+  assert.equal(
+    tentukanKategori('TRANSAKSI DEBIT TGL: 05/07 QR 002 00000.00KOPI KLOTO', -57800, KATEGORI_BAWAAN),
+    'kat_makan',
+  );
+  assert.equal(
+    tentukanKategori('TRANSAKSI DEBIT TGL: 12/07 QR 014 00000.00SPBU 31.13', -45000, KATEGORI_BAWAAN),
+    'kat_transport',
+  );
+
+  // Proteksi lama tidak boleh melonggar: transisi huruf-ke-huruf tetap ditolak.
+  assert.equal(tentukanKategori('PB KE GIANI SAFITRI 1238840550 Permata ME', -107100, KATEGORI_BAWAAN), 'kat_transfer_keluar');
+  assert.equal(tentukanKategori('TRF DARI BESTINDO BANK DANAMON Dana Dimuka', 5730000, KATEGORI_BAWAAN), 'kat_transfer_masuk');
+});

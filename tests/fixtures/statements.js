@@ -89,6 +89,46 @@ export function statementBCAAkhirTahun() {
   ]);
 }
 
+/**
+ * Statement BCA dua halaman — meniru berkas sungguhan yang mencetak ulang kop
+ * dan paragraf semacam disclaimer di kepala SETIAP halaman, bukan hanya
+ * halaman pertama. Dipakai membuktikan transaksi terakhir halaman pertama
+ * tidak tersambung dengan baris kop/disclaimer di awal halaman kedua.
+ */
+export function statementBCADuaHalaman() {
+  const K = BCA_KOLOM;
+
+  const hal1 = halaman([
+    [[200, 'PT. BANK CENTRAL ASIA Tbk']],
+    [[40, 'NO. REKENING'], [150, ': 1234567890']],
+    [[40, 'PERIODE'], [150, ': JULI 2025']],
+    null,
+    [[K.tanggal, 'TANGGAL'], [K.keterangan, 'KETERANGAN'], [K.cabang, 'CBG'], [K.mutasi, 'MUTASI'], [K.saldo, 'SALDO']],
+    [[K.tanggal, '01/07'], [K.keterangan, 'SALDO AWAL'], [K.saldo, '10.000.000,00']],
+    [[K.tanggal, '02/07'], [K.keterangan, 'TRSF E-BANKING DB'], [K.mutasi, '50.000,00'], [K.mutasi + 60, 'DB'], [K.saldo, '9.950.000,00']],
+    [[K.keterangan, 'PEMBAYARAN GRAB']],
+    [[40, 'Bersambung ke halaman berikut']],
+  ]);
+
+  const hal2 = halaman([
+    [[200, 'PT. BANK CENTRAL ASIA Tbk']],
+    [[40, 'HALAMAN'], [150, ': 2/2']],
+    // Baris ini meniru paragraf disclaimer yang dicetak ulang di kepala tiap
+    // halaman pada statement sungguhan — bukan judul kolom, bukan baris
+    // ringkasan, dan posisinya bertumpuk dengan pita kolom KETERANGAN, persis
+    // seperti paragraf disclaimer BCA yang sebagian tumpang tindih pita itu.
+    [[K.keterangan, 'KETENTUAN UMUM BERLAKU SESUAI SYARAT']],
+    [[K.tanggal, 'TANGGAL'], [K.keterangan, 'KETERANGAN'], [K.cabang, 'CBG'], [K.mutasi, 'MUTASI'], [K.saldo, 'SALDO']],
+    [[K.tanggal, '10/07'], [K.keterangan, 'BIAYA ADM'], [K.mutasi, '15.000,00'], [K.mutasi + 60, 'DB'], [K.saldo, '9.935.000,00']],
+    null,
+    [[K.cabang, 'SALDO AWAL'], [K.saldo, ': 10.000.000,00']],
+    [[K.cabang, 'MUTASI DB'], [K.saldo, ': 65.000,00']],
+    [[K.cabang, 'SALDO AKHIR'], [K.saldo, ': 9.935.000,00']],
+  ]);
+
+  return [hal1, hal2];
+}
+
 /* ==========================================================================
    Permata Rekening Koran bulanan — meniru berkas sungguhan:
    judul kolom dua bahasa yang berulang tiap halaman, dua kolom tanggal,
