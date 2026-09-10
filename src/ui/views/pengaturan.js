@@ -14,6 +14,7 @@ import * as uploadRepo from '../../data/repo/uploads.js';
 import { setTema, temaTersimpan, TEMA } from '../theme.js';
 import { versiBerjalan, periksaPembaruan } from '../versi.js';
 import { unduhBackup, pulihkanBackup, dukunganPilihFolder } from '../../services/export.js';
+import { bacaKonfigSheets, simpanKonfigSheets, testWebhook, syncKeSheets } from '../../services/sheets-sync.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
 import { toastSukses, toastGagal } from '../components/toast.js';
 
@@ -39,6 +40,7 @@ export async function mount(wadah) {
     ganti(isi, [
       kartuTampilan(render),
       kartuFolder(),
+      await kartuSheets(),
       kartuDatabase({ akun, transaksi, upload, kategori, penyimpanan }, render),
       kartuVersi(versi),
       kartuTentang(),
@@ -279,6 +281,82 @@ async function hapusSemua(render) {
   toastSukses('Semua data dihapus. Kategori bawaan dipasang kembali.');
   emit(EVENT.DATA_BERUBAH, { sumber: 'reset' });
   render();
+}
+
+/* ==========================================================================
+   Google Sheets — webhook Apps Script
+   ========================================================================== */
+
+async function kartuSheets() {
+  const { url, aktif } = await bacaKonfigSheets();
+  let urlVal = url;
+  let aktifVal = aktif;
+  let sibuk = false;
+
+  const inputUrl = h('input', {
+    type: 'url',
+    placeholder: 'https://script.google.com/macros/s/.../exec',
+    value: urlVal,
+    oninput: (e) => { urlVal = e.target.value; },
+    style: { width: '100%' },
+  });
+  const checkAktif = h('input', {
+    type: 'checkbox',
+    checked: aktifVal,
+    onchange: (e) => { aktifVal = e.target.checked; },
+  });
+  const statusEl = h('.redup-2', { style: { fontSize: '.82rem' }, text: aktif ? 'Aktif — tiap simpan auto kirim ke Sheets' : 'Nonaktif' });
+
+  const simpan = async (btn) => {
+    if (sibuk) return;
+    sibuk = true; btn.disabled = true;
+    try {
+      await simpanKonfigSheets({ url: urlVal, aktif: aktifVal });
+      statusEl.textContent = aktifVal ? 'Tersimpan · Aktif' : 'Tersimpan · Nonaktif';
+      toastSukses('Pengaturan Sheets tersimpan');
+    } catch (e) { toastGagal(e.message); }
+    finally { sibuk = false; btn.disabled = false; }
+  };
+
+  return h('.kartu', null, [
+    h('.kartu__kepala', null, h('div', null, [
+      h('.kartu__judul', { text: 'Google Sheets' }),
+      h('.kartu__ket', { text: 'Tempel URL Web App Apps Script. Tiap transaksi baru auto-POST ke Sheet. Kosongkan untuk matikan.' }),
+    ])),
+    h('.tumpuk', null, [
+      h('label', { text: 'Webhook URL' }),
+      inputUrl,
+      h('.baris.bungkus.mt-2', null, [
+        h('label.baris', { style: { gap: '8px', alignItems: 'center' } }, [checkAktif, h('span', { text: 'Aktifkan sync otomatis' })]),
+        statusEl,
+      ]),
+      h('.baris.bungkus.mt-3', null, [
+        h('button.btn-primary', { type: 'button', onclick(e) { simpan(e.currentTarget); } }, 'Simpan'),
+        h('button', { type: 'button', onclick: async (e) => {
+          const b = e.currentTarget; b.disabled = true;
+          try { await testWebhook(); toastSukses('Webhook OK'); } catch (err) { toastGagal(err.message); } finally { b.disabled = false; }
+        } }, 'Test webhook'),
+        h('button', { type: 'button', onclick: async (e) => {
+          const b = e.currentTarget; b.disabled = true;
+          try {
+            const [trx, akun] = await Promise.all([trxRepo.semua(), akunRepo.peta()]);
+            if (!trx.length) { toastGagal('Belum ada transaksi'); return; }
+            const r = await syncKeSheets(trx, akun);
+            if (r?.skipped) toastGagal('Aktifkan Sheets & isi URL dulu');
+            else toastSukses(`Terkirim ${r.jumlah} baris ke Sheets`);
+          } catch (err) { toastGagal(err.message); } finally { b.disabled = false; }
+        } }, 'Kirim semua sekarang'),
+      ]),
+      h('details.mt-3', null, [
+        h('summary.redup', { text: 'Cara buat Sheet + Script (1 menit)' }),
+        h('.redup-2.mt-2', { style: { fontSize: '.82rem', lineHeight: '1.6' } }, [
+          h('div', { text: '1. Buat Google Sheet baru, header baris 1: hash | tanggal | deskripsi | nominal | debit | kredit | kategoriId | bank | nomorRekening | namaPemilik | sumber' }),
+          h('div', { text: '2. Extensions → Apps Script → tempel Code.gs dari repo (lihat sheets/Code.gs) → Deploy → Web App → Anyone with link → copy URL → tempel di atas → Simpan → Test webhook.' }),
+          h('div', { text: '3. Sheet terisi otomatis tiap upload. Tombol \"Kirim semua\" untuk backfill.' }),
+        ]),
+      ]),
+    ]),
+  ]);
 }
 
 /* ==========================================================================

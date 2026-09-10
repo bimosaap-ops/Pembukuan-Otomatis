@@ -24,6 +24,7 @@ import * as trxRepo from '../data/repo/transactions.js';
 import * as uploadRepo from '../data/repo/uploads.js';
 import * as kategoriRepo from '../data/repo/categories.js';
 import { emit, EVENT } from '../core/events.js';
+import { syncKeSheets } from './sheets-sync.js';
 
 export const LANGKAH = [
   { id: 'upload', label: 'Upload PDF' },
@@ -255,7 +256,16 @@ export async function simpanDraft(draft, pilihan = {}) {
   onLangkah('selesai', 'jalan');
   const akunTerbaru = await akunRepo.hitungUlangSaldo(akun.id);
   emit(EVENT.DATA_BERUBAH, { sumber: 'upload', uploadedFileId: rekaman.id });
-  onLangkah('selesai', 'selesai', 'Saldo dan dashboard diperbarui');
+  // sheets: fire-and-forget, simpan tetap sukses walau offline/gagal
+  // ponytail: tanpa antrean, tambah queue bila butuh retry offline
+  try {
+    const r = await syncKeSheets(transaksi, new Map([[akun.id, akunTerbaru]]));
+    if (r?.ok) onLangkah('selesai', 'selesai', `Saldo diperbarui · ${r.jumlah} baris ke Sheets`);
+    else onLangkah('selesai', 'selesai', 'Saldo dan dashboard diperbarui');
+  } catch (e) {
+    console.warn('Sheets sync gagal:', e);
+    onLangkah('selesai', 'selesai', 'Saldo diperbarui · Sheets gagal (cek Pengaturan)');
+  }
 
   return { akun: akunTerbaru, upload: rekaman, jumlah: transaksi.length };
 }
