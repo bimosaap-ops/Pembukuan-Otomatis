@@ -12,9 +12,11 @@
  * di halaman Kategori) — kalau cuma dedupe-skip, koreksi itu tidak akan pernah
  * sampai ke Sheet walau tombol "Kirim semua sekarang" dipakai.
  *
- * Tab "Dashboard" dibuat otomatis sekali berisi kartu ringkasan, breakdown per
- * kategori, dan tren bulanan — semuanya rumus Sheets yang merujuk balik ke tab
- * data, jadi ikut ter-update sendiri tiap ada transaksi baru. Sekali dibuat tab
+ * Tab "Dashboard" dibuat otomatis sekali, bergaya laporan keuangan: kartu
+ * ringkasan, tabel bulanan dengan Net Cash Flow dan status surplus/defisit,
+ * pengeluaran per kategori, serta matriks rincian kategori x bulan yang dipisah
+ * seksi Pengeluaran dan Pemasukan — semuanya rumus Sheets yang merujuk balik ke
+ * tab data, jadi ikut ter-update sendiri tiap ada transaksi baru. Sekali dibuat tab
  * itu tidak ditimpa lagi, KECUALI kalau rusak (rumusnya bernilai galat, atau
  * tabnya tertulisi data transaksi) — keadaan itu disembuhkan sendiri pada POST
  * berikutnya, lihat pastikanDashboard. Menu "Pembukuan" di spreadsheet berisi
@@ -41,7 +43,10 @@ const DASHBOARD_SHEET_NAME = 'Dashboard';
  * perbaikan rumus hanya berlaku untuk Sheet baru, sementara Sheet yang sudah
  * ada tetap memakai rumus lama sampai pengguna ingat membuka menu "Pembukuan".
  */
-const VERSI_DASHBOARD = '3';
+const VERSI_DASHBOARD = '4';
+
+/** Sel rumus kunci di Dashboard — dipantau untuk mendeteksi kerusakan. */
+const SEL_RUMUS = ['A9', 'D10', 'G9', 'A45'];
 
 const HEADER = ['Hash','Tanggal','Deskripsi','Nominal','Debit','Kredit','ID Kategori','Bank','No. Rekening','Nama Pemilik','Sumber','ID Upload','Dikirim Pada','Kategori'];
 const LEBAR_KOLOM = [110, 95, 300, 120, 120, 120, 130, 90, 130, 150, 80, 110, 140, 150];
@@ -51,6 +56,13 @@ const KOLOM_SEMBUNYI = [1, 7, 12]; // Hash, ID Kategori, ID Upload — dipakai m
 
 const RP = '"Rp "#,##0;[RED]-"Rp "#,##0';
 const FORMAT_WAKTU = 'dd/mm/yyyy HH:mm';
+
+/* Palet laporan keuangan: kepala tabel biru tua berteks putih, angka surplus
+   hijau, defisit merah, pita seksi pengeluaran merah tua. */
+const BIRU_TUA = '#1f4e79';
+const MERAH_TUA = '#922b21';
+const HIJAU = '#006600';
+const MERAH = '#cc0000';
 
 /** Menu di spreadsheet, supaya perbaikan tidak perlu buka editor Apps Script. */
 function onOpen() {
@@ -190,7 +202,7 @@ function pisahArgumen(ss) {
 function dashboardRusak(d) {
   const judul = String(d.getRange('A1').getValue()).trim().toLowerCase();
   if (judul === HEADER[0].toLowerCase() || judul === 'hash') return true;
-  return ['A9', 'C10', 'F9'].some((a) => String(d.getRange(a).getValue()).charAt(0) === '#');
+  return SEL_RUMUS.some((a) => String(d.getRange(a).getValue()).charAt(0) === '#');
 }
 
 /**
@@ -228,95 +240,139 @@ function pastikanDashboard(ss, namaSheetData) {
   const d = ss.insertSheet(DASHBOARD_SHEET_NAME, ss.getNumSheets());
   const kol = (huruf) => `'${namaSheetData}'!${huruf}2:${huruf}`;
 
+  const BULAN = `ARRAYFORMULA(LEFT(${kol('B')}${S}7))`;
+  // Nama kategori dipakai kalau ada. Kalau kosong (baris yang terunggah sebelum
+  // kolom Kategori ada), ID-nya dijadikan terbaca: "kat_transfer_keluar" ->
+  // "Transfer Keluar". Kategori buatan sendiri ber-ID acak tetap tidak terbaca;
+  // hanya "Kirim semua sekarang" yang bisa memberi nama aslinya.
+  const KATEGORI = `ARRAYFORMULA(IF(${kol('N')}<>""${S}${kol('N')}${S}`
+    + `IF(LEFT(${kol('G')}${S}4)="kat_"${S}PROPER(SUBSTITUTE(MID(${kol('G')}${S}5${S}100)${S}"_"${S}" "))${S}${kol('G')})))`;
+
   d.setHiddenGridlines(true);
-  d.setTabColor('#1a73e8');
-  d.setColumnWidths(1, 8, 130);
-  d.setColumnWidth(9, 20);
-  d.setColumnWidths(10, 6, 90);
+  d.setTabColor(BIRU_TUA);
+  d.setColumnWidth(1, 150);
+  d.setColumnWidths(2, 4, 125);
+  d.setColumnWidth(6, 24);
+  d.setColumnWidth(7, 170);
+  d.setColumnWidths(8, 2, 125);
+  d.setColumnWidth(10, 24);
+  d.setColumnWidths(11, 24, 105);
 
-  d.getRange('A1:H1').merge()
-    .setValue('  Dashboard Keuangan')
-    .setFontSize(20).setFontWeight('bold').setFontColor('#ffffff')
-    .setBackground('#1a73e8').setVerticalAlignment('middle');
-  d.setRowHeight(1, 46);
-
-  d.getRange('A2:H2').merge()
-    .setValue(`  Dihitung otomatis dari sheet "${namaSheetData}" — tidak perlu diperbarui manual.`)
+  /* ---------- Judul ---------- */
+  d.getRange('A1:I1').merge()
+    .setValue('LAPORAN KEUANGAN — RINGKASAN OTOMATIS')
+    .setFontSize(14).setFontWeight('bold').setFontColor(BIRU_TUA)
+    .setVerticalAlignment('middle');
+  d.setRowHeight(1, 34);
+  d.getRange('A2:I2').merge()
+    .setValue(`Dihitung otomatis dari sheet "${namaSheetData}" — tidak perlu diperbarui manual.`)
     .setFontStyle('italic').setFontColor('#5f6368').setFontSize(10);
 
+  /* ---------- Kartu ringkasan ---------- */
   const KARTU = [
-    { kol: 'A', label: 'Total Pemasukan', formula: `=SUM(${kol('F')})`, bg: '#e6f4ea', fg: '#1e7e34', format: RP },
-    { kol: 'C', label: 'Total Pengeluaran', formula: `=SUM(${kol('E')})`, bg: '#fce8e6', fg: '#c5221f', format: RP },
-    { kol: 'E', label: 'Saldo Bersih', formula: '=A5-C5', bg: '#e8f0fe', fg: '#1967d2', format: RP },
-    { kol: 'G', label: 'Jumlah Transaksi', formula: `=COUNTA(${kol('A')})`, bg: '#f1f3f4', fg: '#3c4043', format: '#,##0' },
+    { kol: 'A', label: 'TOTAL PEMASUKAN', formula: `=SUM(${kol('F')})`, bg: '#e6f4ea', fg: HIJAU, format: RP },
+    { kol: 'C', label: 'TOTAL PENGELUARAN', formula: `=SUM(${kol('E')})`, bg: '#fce8e6', fg: MERAH, format: RP },
+    { kol: 'E', label: 'SALDO BERSIH', formula: '=A5-C5', bg: '#e8f0fe', fg: BIRU_TUA, format: RP },
+    { kol: 'G', label: 'JUMLAH TRANSAKSI', formula: `=COUNTA(${kol('A')})`, bg: '#f1f3f4', fg: '#3c4043', format: '#,##0' },
   ];
   KARTU.forEach((k) => {
     const akhir = String.fromCharCode(k.kol.charCodeAt(0) + 1);
     d.getRange(`${k.kol}4:${akhir}4`).merge().setValue(k.label)
-      .setFontWeight('bold').setFontSize(10).setFontColor(k.fg).setBackground(k.bg)
+      .setFontWeight('bold').setFontSize(9).setFontColor(k.fg).setBackground(k.bg)
       .setHorizontalAlignment('center');
     d.getRange(`${k.kol}5:${akhir}6`).merge().setFormula(k.formula)
-      .setFontSize(20).setFontWeight('bold').setFontColor(k.fg).setBackground(k.bg)
+      .setFontSize(18).setFontWeight('bold').setFontColor(k.fg).setBackground(k.bg)
       .setHorizontalAlignment('center').setVerticalAlignment('middle')
       .setNumberFormat(k.format);
   });
-  d.setRowHeights(5, 2, 32);
+  d.setRowHeights(5, 2, 30);
 
-  // Pengeluaran per kategori. QUERY menulis headernya sendiri di baris 9
-  // ("Kategori"/"Total"), datanya mulai baris 10. Kolom persentase dihitung
-  // terpisah karena QUERY tidak bisa membagi tiap baris ke total keseluruhan.
-  // Catatan: koma DI DALAM string query (select, label) adalah bahasa QUERY,
-  // selalu koma di lokal mana pun — yang ikut lokal hanya pemisah argumen rumus.
-  d.getRange('A8').setValue('Pengeluaran per Kategori').setFontWeight('bold').setFontSize(12);
-  // Nama kategori dipakai kalau ada, kalau tidak jatuh ke ID kategori. Baris
-  // yang terunggah sebelum kolom "Kategori" ada punya nama kosong, dan tanpa
-  // cadangan ini seluruh tabel beserta grafiknya ikut kosong — lebih baik
-  // menampilkan ID daripada tidak menampilkan apa pun. Begitu pengguna menekan
-  // "Kirim semua sekarang", namanya terisi dan tabel ini ikut membaik sendiri.
+  /* ---------- Ringkasan bulanan (A8:E40) ---------- */
+  d.getRange('A8').setValue('RINGKASAN BULANAN').setFontWeight('bold').setFontSize(11).setFontColor(BIRU_TUA);
   d.getRange('A9').setFormula(
-    `=IFERROR(QUERY({ARRAYFORMULA(IF(${kol('N')}<>""${S}${kol('N')}${S}${kol('G')}))${AS}${kol('E')}}${S}"select Col1, sum(Col2) where Col2 > 0 and Col1 <> '' group by Col1 order by sum(Col2) desc label Col1 'Kategori', sum(Col2) 'Total'"${S}0)${S}"Belum ada data pengeluaran")`,
+    `=IFERROR(QUERY({${BULAN}${AS}${kol('F')}${AS}${kol('E')}}${S}`
+    + `"select Col1, sum(Col2), sum(Col3) where Col1 <> '' group by Col1 order by Col1 asc `
+    + `label Col1 'Bulan', sum(Col2) 'Total Masuk', sum(Col3) 'Total Keluar'"${S}0)${S}"Belum ada data")`,
   );
-  d.getRange('C9').setValue('% Pengeluaran');
-  d.getRange('C10').setFormula(
-    `=IFERROR(ARRAYFORMULA(IF(B10:B100=""${S}""${S}B10:B100/$C$5))${S}"")`,
+  d.getRange('D9').setValue('Net Cash Flow');
+  d.getRange('E9').setValue('Status');
+  d.getRange('D10').setFormula(
+    `=IFERROR(ARRAYFORMULA(IF(A10:A40=""${S}""${S}B10:B40-C10:C40))${S}"")`,
   );
-  d.getRange('A9:C9').setFontWeight('bold').setBackground('#f1f3f4').setFontColor('#3c4043');
-  d.getRange('B10:B100').setNumberFormat(RP);
-  d.getRange('C10:C100').setNumberFormat('0.0%');
+  d.getRange('E10').setFormula(
+    `=IFERROR(ARRAYFORMULA(IF(A10:A40=""${S}""${S}IF(B10:B40-C10:C40>=0${S}"✅ Surplus"${S}"⚠️ Defisit")))${S}"")`,
+  );
+  kepalaTabel(d, 'A9:E9');
+  d.getRange('B10:D40').setNumberFormat(RP);
+  d.getRange('A10:A40').setHorizontalAlignment('center');
+  d.getRange('E10:E40').setHorizontalAlignment('center');
 
-  // Tren bulanan. "Bulan" dibentuk dari LEFT(tanggal,7) karena tanggal tersimpan
-  // sebagai teks ISO ("2025-07-01"), bukan tipe Date, sehingga fungsi
-  // month()/year() bawaan QUERY tidak bisa dipakai langsung.
-  d.getRange('F8').setValue('Tren Bulanan: Pemasukan vs Pengeluaran').setFontWeight('bold').setFontSize(12);
-  d.getRange('F9').setFormula(
-    `=IFERROR(QUERY({ARRAYFORMULA(LEFT(${kol('B')}${S}7))${AS}${kol('F')}${AS}${kol('E')}}${S}"select Col1, sum(Col2), sum(Col3) where Col1 <> '' group by Col1 order by Col1 asc label Col1 'Bulan', sum(Col2) 'Pemasukan', sum(Col3) 'Pengeluaran'"${S}0)${S}"Belum ada data")`,
+  /* ---------- Pengeluaran per kategori (G8:I40) ---------- */
+  d.getRange('G8').setValue('PENGELUARAN PER KATEGORI').setFontWeight('bold').setFontSize(11).setFontColor(BIRU_TUA);
+  d.getRange('G9').setFormula(
+    `=IFERROR(QUERY({${KATEGORI}${AS}${kol('E')}}${S}`
+    + `"select Col1, sum(Col2) where Col2 > 0 and Col1 <> '' group by Col1 order by sum(Col2) desc `
+    + `label Col1 'Kategori', sum(Col2) 'Total'"${S}0)${S}"Belum ada data pengeluaran")`,
   );
-  d.getRange('F9:H9').setFontWeight('bold').setBackground('#f1f3f4').setFontColor('#3c4043');
-  d.getRange('G10:H100').setNumberFormat(RP);
+  d.getRange('I9').setValue('% Pengeluaran');
+  d.getRange('I10').setFormula(
+    `=IFERROR(ARRAYFORMULA(IF(H10:H40=""${S}""${S}H10:H40/$C$5))${S}"")`,
+  );
+  kepalaTabel(d, 'G9:I9');
+  d.getRange('H10:H40').setNumberFormat(RP);
+  d.getRange('I10:I40').setNumberFormat('0.0%');
+
+  /* ---------- Rincian kategori per bulan ---------- */
+  d.getRange('A43').setValue('RINCIAN PER KATEGORI DAN BULAN')
+    .setFontWeight('bold').setFontSize(11).setFontColor(BIRU_TUA);
+
+  pitaSeksi(d, 'A44:I44', 'PENGELUARAN (DEBIT)', MERAH_TUA);
+  d.getRange('A45').setFormula(
+    `=IFERROR(QUERY({${KATEGORI}${AS}${BULAN}${AS}${kol('E')}}${S}`
+    + `"select Col1, sum(Col3) where Col3 > 0 and Col1 <> '' group by Col1 pivot Col2"${S}0)${S}"Belum ada data")`,
+  );
+  kepalaTabel(d, 'A45:Z45');
+  d.getRange('B46:Z78').setNumberFormat(RP);
+
+  pitaSeksi(d, 'A80:I80', 'PEMASUKAN (KREDIT)', BIRU_TUA);
+  d.getRange('A81').setFormula(
+    `=IFERROR(QUERY({${KATEGORI}${AS}${BULAN}${AS}${kol('F')}}${S}`
+    + `"select Col1, sum(Col3) where Col3 > 0 and Col1 <> '' group by Col1 pivot Col2"${S}0)${S}"Belum ada data")`,
+  );
+  kepalaTabel(d, 'A81:Z81');
+  d.getRange('B82:Z110').setNumberFormat(RP);
 
   d.setFrozenRows(2);
 
+  /* ---------- Net Cash Flow: hijau kalau surplus, merah kalau defisit ---------- */
+  const rentangNet = [d.getRange('D10:D40')];
+  d.setConditionalFormatRules([
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenNumberGreaterThan(0).setFontColor(HIJAU).setBold(true).setRanges(rentangNet).build(),
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenNumberLessThan(0).setFontColor(MERAH).setBold(true).setRanges(rentangNet).build(),
+  ]);
+
+  /* ---------- Grafik ---------- */
   const donat = d.newChart()
     .setChartType(Charts.ChartType.PIE)
-    .addRange(d.getRange('A9:B100'))
-    .setPosition(4, 10, 0, 0)
+    .addRange(d.getRange('G9:H40'))
+    .setPosition(4, 11, 0, 0)
     .setOption('title', 'Pengeluaran per Kategori')
     .setOption('pieHole', 0.45)
     .setOption('legend', { position: 'right' })
-    .setOption('width', 520)
-    .setOption('height', 340)
+    .setOption('width', 560).setOption('height', 340)
     .build();
   d.insertChart(donat);
 
   const tren = d.newChart()
     .setChartType(Charts.ChartType.COLUMN)
-    .addRange(d.getRange('F9:H100'))
-    .setPosition(23, 10, 0, 0)
-    .setOption('title', 'Tren Bulanan')
+    .addRange(d.getRange('A9:C40'))
+    .setPosition(23, 11, 0, 0)
+    .setOption('title', 'Pemasukan vs Pengeluaran per Bulan')
     .setOption('legend', { position: 'top' })
-    .setOption('width', 520)
-    .setOption('height', 340)
-    .setOption('colors', ['#1e7e34', '#c5221f'])
+    .setOption('width', 560).setOption('height', 340)
+    .setOption('colors', [HIJAU, MERAH])
     .build();
   d.insertChart(tren);
 
@@ -324,6 +380,21 @@ function pastikanDashboard(ss, namaSheetData) {
   // pembangunan gagal di tengah jalan, versinya tidak ikut tercatat sehingga
   // POST berikutnya mencoba lagi, bukan menganggap sudah beres.
   prop.setProperty('versiDashboard', VERSI_DASHBOARD);
+}
+
+/** Baris kepala tabel: teks putih tebal di atas biru tua. */
+function kepalaTabel(d, a1) {
+  d.getRange(a1)
+    .setFontWeight('bold').setFontColor('#ffffff').setBackground(BIRU_TUA)
+    .setVerticalAlignment('middle').setHorizontalAlignment('center');
+}
+
+/** Pita pemisah seksi selebar tabel, seperti "PENGELUARAN (DEBIT)". */
+function pitaSeksi(d, a1, teks, warna) {
+  d.getRange(a1).merge()
+    .setValue(teks)
+    .setFontWeight('bold').setFontColor('#ffffff').setBackground(warna)
+    .setVerticalAlignment('middle');
 }
 
 /**
@@ -373,7 +444,7 @@ function diagnosaDashboard() {
   ];
   if (d) {
     baris.push(`Dianggap rusak    : ${dashboardRusak(d) ? 'ya' : 'tidak'}`, '');
-    ['A1', 'A9', 'C10', 'F9'].forEach((a) => {
+    ['A1'].concat(SEL_RUMUS).forEach((a) => {
       baris.push(`${a} = ${String(d.getRange(a).getDisplayValue()).slice(0, 70)}`);
     });
   }
