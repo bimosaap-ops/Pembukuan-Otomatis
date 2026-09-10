@@ -20,7 +20,7 @@
  * Naikkan CACHE_NAME setiap kali aset berubah agar versi lama dibersihkan.
  */
 
-const CACHE_NAME = 'pembukuan-v9';
+const CACHE_NAME = 'pembukuan-v10';
 
 /** Berapa lama menunggu jaringan sebelum memakai salinan cache. */
 const BATAS_JARINGAN_MS = 2500;
@@ -101,6 +101,7 @@ const ASET = [
 
   './src/services/ingest.js',
   './src/services/export.js',
+  './src/services/sheets-sync.js',
 
   './src/charts/svg.js',
   './src/charts/bar.js',

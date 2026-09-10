@@ -32,6 +32,14 @@ export async function satu(id) {
   return ambil(STORE.TRANSACTIONS, id);
 }
 
+/** Mengambil beberapa transaksi sekaligus lewat id. Id yang sudah tidak ada dilewati. */
+export async function beberapa(ids) {
+  const unik = [...new Set(ids)].filter(Boolean);
+  if (!unik.length) return [];
+  const rows = await Promise.all(unik.map((id) => ambil(STORE.TRANSACTIONS, id)));
+  return rows.filter(Boolean);
+}
+
 export async function perAkun(accountId) {
   const rows = await ambilLewatIndex(STORE.TRANSACTIONS, 'accountId', accountId);
   rows.sort(bandingkan);

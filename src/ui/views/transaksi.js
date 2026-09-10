@@ -18,6 +18,7 @@ import { buatTransaksi, SUMBER, JENIS_AKUN } from '../../domain/entities.js';
 import { hitungBaseHash, hashFinal } from '../../domain/dedupe.js';
 import { saranPola, tambahPola, tentukanKategori } from '../../domain/categorize.js';
 import { ringkasArus } from '../../domain/analytics.js';
+import { syncAtauAntri } from '../../services/sheets-sync.js';
 import { dataView } from '../components/data-view.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
 import { toastSukses, toastGagal } from '../components/toast.js';
@@ -278,7 +279,8 @@ function kolom(petaAkun, petaKategori, petaUpload, daftarKategori, render) {
  * dipakai untuk transaksi serupa — inilah cara aplikasi "belajar" dari koreksi.
  */
 async function gantiKategori(trx, kategoriId, daftarKategori, render) {
-  await trxRepo.simpanSatu({ ...trx, kategoriId, diubahPada: new Date().toISOString() });
+  const diperbarui = await trxRepo.simpanSatu({ ...trx, kategoriId, diubahPada: new Date().toISOString() });
+  sinkronkanLatarBelakang([diperbarui]);
 
   const pola = saranPola(trx.deskripsi);
   const semua = await trxRepo.semua();
@@ -304,8 +306,25 @@ async function gantiKategori(trx, kategoriId, daftarKategori, render) {
 
   await trxRepo.ubahKategoriBanyak(serupa.map((t) => t.id), kategoriId);
   if (kategori) await kategoriRepo.simpanKategori(tambahPola(kategori, pola));
+  // ubahKategoriBanyak hanya mengembalikan jumlah, bukan baris yang sudah
+  // diperbarui — bentuknya disusun ulang di sini persis seperti yang baru
+  // ditulis ke database, supaya Sheets ikut menerima kategori yang benar.
+  sinkronkanLatarBelakang(serupa.map((t) => ({ ...t, kategoriId })));
   toastSukses(`${serupa.length} transaksi diperbarui. Kata kunci "${pola}" diingat untuk upload berikutnya.`);
   emit(EVENT.DATA_BERUBAH, { sumber: 'kategori' });
+}
+
+/**
+ * Mengirim transaksi ke Google Sheets di latar belakang, tanpa pernah ditunggu
+ * oleh pemanggil — kegagalan jaringan tidak boleh menunda perubahan yang sudah
+ * tersimpan di pembukuan lokal. Dipakai tiap kali transaksi ditambah, diubah,
+ * atau kategorinya dikoreksi di luar alur upload PDF (yang sudah punya jalur
+ * sendiri di `ingest.js`).
+ */
+function sinkronkanLatarBelakang(transaksi) {
+  akunRepo.peta()
+    .then((akunMap) => syncAtauAntri(transaksi, akunMap))
+    .catch((e) => console.warn('Sheets sync gagal:', e));
 }
 
 async function hapus(trx, render) {
@@ -429,9 +448,10 @@ export function bukaFormManual(trx, akun, daftarKategori, selesai) {
     });
 
     try {
-      await trxRepo.simpanSatu(data);
+      const disimpan = await trxRepo.simpanSatu(data);
       await akunRepo.hitungUlangSaldo(data.accountId);
       if (trx && trx.accountId !== data.accountId) await akunRepo.hitungUlangSaldo(trx.accountId);
+      sinkronkanLatarBelakang([disimpan]);
       toastSukses(trx ? 'Transaksi diperbarui.' : 'Transaksi ditambahkan.');
       m.tutup();
       emit(EVENT.DATA_BERUBAH, { sumber: 'manual' });

@@ -14,7 +14,9 @@ import * as uploadRepo from '../../data/repo/uploads.js';
 import { setTema, temaTersimpan, TEMA } from '../theme.js';
 import { versiBerjalan, periksaPembaruan } from '../versi.js';
 import { unduhBackup, pulihkanBackup, dukunganPilihFolder } from '../../services/export.js';
-import { bacaKonfigSheets, simpanKonfigSheets, testWebhook, syncKeSheets } from '../../services/sheets-sync.js';
+import {
+  bacaKonfigSheets, simpanKonfigSheets, testWebhook, syncKeSheets, jumlahAntrean,
+} from '../../services/sheets-sync.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
 import { toastSukses, toastGagal } from '../components/toast.js';
 
@@ -288,7 +290,7 @@ async function hapusSemua(render) {
    ========================================================================== */
 
 async function kartuSheets() {
-  const { url, aktif } = await bacaKonfigSheets();
+  const [{ url, aktif }, antrean] = await Promise.all([bacaKonfigSheets(), jumlahAntrean()]);
   let urlVal = url;
   let aktifVal = aktif;
   let sibuk = false;
@@ -330,6 +332,15 @@ async function kartuSheets() {
         h('label.baris', { style: { gap: '8px', alignItems: 'center' } }, [checkAktif, h('span', { text: 'Aktifkan sync otomatis' })]),
         statusEl,
       ]),
+      antrean
+        ? h('.info-kotak.info-kotak--warning.mt-2', null, [
+          ikon('peringatan', 18),
+          h('div', null, [
+            h('b', { text: `${antrean} transaksi menunggu dikirim ke Sheets. ` }),
+            'Terakhir gagal (offline, URL salah, atau Apps Script tidak merespons) — dicoba otomatis lagi saat simpan berikutnya atau koneksi pulih. "Kirim semua sekarang" juga membersihkannya.',
+          ]),
+        ])
+        : null,
       h('.baris.bungkus.mt-3', null, [
         h('button.btn-primary', { type: 'button', onclick(e) { simpan(e.currentTarget); } }, 'Simpan'),
         h('button', { type: 'button', onclick: async (e) => {
@@ -341,7 +352,9 @@ async function kartuSheets() {
           try {
             const [trx, akun] = await Promise.all([trxRepo.semua(), akunRepo.peta()]);
             if (!trx.length) { toastGagal('Belum ada transaksi'); return; }
-            const r = await syncKeSheets(trx, akun);
+            // Batas waktu dinaikkan: backfill bisa berisi ratusan baris
+            // sekaligus, jauh lebih lambat daripada sinkron satu batch biasa.
+            const r = await syncKeSheets(trx, akun, { batasMs: 30000 });
             if (r?.skipped) toastGagal('Aktifkan Sheets & isi URL dulu');
             else toastSukses(`Terkirim ${r.jumlah} baris ke Sheets`);
           } catch (err) { toastGagal(err.message); } finally { b.disabled = false; }

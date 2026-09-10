@@ -24,7 +24,7 @@ import * as trxRepo from '../data/repo/transactions.js';
 import * as uploadRepo from '../data/repo/uploads.js';
 import * as kategoriRepo from '../data/repo/categories.js';
 import { emit, EVENT } from '../core/events.js';
-import { syncKeSheets } from './sheets-sync.js';
+import { syncAtauAntri } from './sheets-sync.js';
 
 export const LANGKAH = [
   { id: 'upload', label: 'Upload PDF' },
@@ -256,16 +256,23 @@ export async function simpanDraft(draft, pilihan = {}) {
   onLangkah('selesai', 'jalan');
   const akunTerbaru = await akunRepo.hitungUlangSaldo(akun.id);
   emit(EVENT.DATA_BERUBAH, { sumber: 'upload', uploadedFileId: rekaman.id });
-  // sheets: fire-and-forget, simpan tetap sukses walau offline/gagal
-  // ponytail: tanpa antrean, tambah queue bila butuh retry offline
-  try {
-    const r = await syncKeSheets(transaksi, new Map([[akun.id, akunTerbaru]]));
-    if (r?.ok) onLangkah('selesai', 'selesai', `Saldo diperbarui · ${r.jumlah} baris ke Sheets`);
-    else onLangkah('selesai', 'selesai', 'Saldo dan dashboard diperbarui');
-  } catch (e) {
-    console.warn('Sheets sync gagal:', e);
-    onLangkah('selesai', 'selesai', 'Saldo diperbarui · Sheets gagal (cek Pengaturan)');
-  }
+  onLangkah('selesai', 'selesai', 'Saldo dan dashboard diperbarui');
+
+  // Google Sheets: sepenuhnya di latar belakang. Alur simpan di atas sudah
+  // selesai dan TIDAK ditunda menunggu jaringan — URL webhook yang salah atau
+  // Apps Script yang lambat tidak boleh membuat layar Upload terlihat macet,
+  // padahal datanya sudah aman tersimpan. Hasilnya (sukses/antre) dilaporkan
+  // belakangan ke langkah yang sama; aman diabaikan kalau kartunya sudah tidak
+  // terlihat lagi karena pengguna sudah pindah layar. `akunRepo.peta()` dipakai
+  // (bukan hanya rekening yang baru disimpan) karena antrean bisa berisi
+  // transaksi dari rekening lain yang gagal tersinkron sebelumnya.
+  akunRepo.peta()
+    .then((akunMap) => syncAtauAntri(transaksi, akunMap))
+    .then((r) => {
+      if (r?.ok) onLangkah('selesai', 'selesai', `Saldo diperbarui · ${r.jumlah} baris ke Sheets`);
+      else if (r?.queued) onLangkah('selesai', 'selesai', 'Saldo diperbarui · Sheets diantrekan, dicoba lagi otomatis');
+    })
+    .catch((e) => console.warn('Sheets sync gagal:', e));
 
   return { akun: akunTerbaru, upload: rekaman, jumlah: transaksi.length };
 }

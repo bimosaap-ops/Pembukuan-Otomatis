@@ -8,8 +8,10 @@ import { rupiah } from '../../core/format.js';
 import { on, emit, EVENT } from '../../core/events.js';
 import * as kategoriRepo from '../../data/repo/categories.js';
 import * as trxRepo from '../../data/repo/transactions.js';
+import * as akunRepo from '../../data/repo/accounts.js';
 import { buatKategori, TIPE_KATEGORI, KATEGORI_LAINNYA_MASUK, KATEGORI_LAINNYA_KELUAR } from '../../domain/entities.js';
 import { tentukanKategori } from '../../domain/categorize.js';
+import { syncAtauAntri } from '../../services/sheets-sync.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
 import { toastSukses, toastGagal } from '../components/toast.js';
 
@@ -224,17 +226,26 @@ async function kelompokkanUlang(selesai) {
   if (!ya) return;
 
   const [kategori, transaksi] = await Promise.all([kategoriRepo.daftar(), trxRepo.semua()]);
-  let berubah = 0;
+  const berubah = [];
 
   for (const t of transaksi) {
     const baru = tentukanKategori(t.deskripsi, t.nominal, kategori);
     if (baru !== t.kategoriId) {
-      await trxRepo.simpanSatu({ ...t, kategoriId: baru, diubahPada: new Date().toISOString() });
-      berubah += 1;
+      const disimpan = await trxRepo.simpanSatu({ ...t, kategoriId: baru, diubahPada: new Date().toISOString() });
+      berubah.push(disimpan);
     }
   }
 
-  toastSukses(berubah ? `${berubah} transaksi dikelompokkan ulang.` : 'Semua transaksi sudah sesuai aturan.');
+  toastSukses(berubah.length ? `${berubah.length} transaksi dikelompokkan ulang.` : 'Semua transaksi sudah sesuai aturan.');
   emit(EVENT.DATA_BERUBAH, { sumber: 'kategori' });
   selesai?.();
+
+  // Sheets: satu kali pengiriman untuk seluruh baris yang berubah, bukan satu
+  // per transaksi — pengelompokan ulang bisa menyentuh ratusan baris sekaligus.
+  // Di latar belakang, tidak pernah ditunggu.
+  if (berubah.length) {
+    akunRepo.peta()
+      .then((akunMap) => syncAtauAntri(berubah, akunMap))
+      .catch((e) => console.warn('Sheets sync gagal:', e));
+  }
 }

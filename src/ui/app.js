@@ -13,6 +13,7 @@ import {
 import { cegahDropDiLuar } from './components/dropzone.js';
 import { toastGagal } from './components/toast.js';
 import { on, EVENT } from '../core/events.js';
+import { pantauKoneksiSheets } from '../services/sheets-sync.js';
 
 /**
  * Header hanya dipakai di layar HP; di layar lebar tempatnya diambil alih
@@ -77,6 +78,9 @@ async function mulai() {
     await siapkanDb();
     await kategoriRepo.semaiBawaan();
     await muatTema();
+    // Antrean retry Sheets (kalau ada, dari sesi sebelumnya yang gagal
+    // tersinkron) dicoba lagi begitu database siap, dan tiap kali koneksi pulih.
+    pantauKoneksiSheets();
   } catch (e) {
     console.error('Gagal menyiapkan database:', e);
     toastGagal(`Database tidak bisa dibuka: ${e.message}. Coba buka lewat browser biasa (bukan mode penyamaran).`);
