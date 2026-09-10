@@ -266,8 +266,8 @@ export async function simpanDraft(draft, pilihan = {}) {
   // terlihat lagi karena pengguna sudah pindah layar. `akunRepo.peta()` dipakai
   // (bukan hanya rekening yang baru disimpan) karena antrean bisa berisi
   // transaksi dari rekening lain yang gagal tersinkron sebelumnya.
-  akunRepo.peta()
-    .then((akunMap) => syncAtauAntri(transaksi, akunMap))
+  Promise.all([akunRepo.peta(), kategoriRepo.peta()])
+    .then(([akunMap, kategoriMap]) => syncAtauAntri(transaksi, akunMap, kategoriMap))
     .then((r) => {
       if (r?.ok) onLangkah('selesai', 'selesai', `Saldo diperbarui · ${r.jumlah} baris ke Sheets`);
       else if (r?.queued) onLangkah('selesai', 'selesai', 'Saldo diperbarui · Sheets diantrekan, dicoba lagi otomatis');

@@ -19,6 +19,7 @@
 import * as pengaturanRepo from '../data/repo/settings.js';
 import * as trxRepo from '../data/repo/transactions.js';
 import * as akunRepo from '../data/repo/accounts.js';
+import * as kategoriRepo from '../data/repo/categories.js';
 
 export const KUNCI_SHEETS = {
   URL: 'sheetsWebhookUrl',
@@ -86,7 +87,7 @@ export async function jumlahAntrean() {
    Pembentukan baris & pengiriman mentah
    ========================================================================== */
 
-export function barisUntukSheet(t, akunMap) {
+export function barisUntukSheet(t, akunMap, kategoriMap) {
   const akun = akunMap?.get(t.accountId);
   return {
     hash: t.hash || '',
@@ -96,6 +97,7 @@ export function barisUntukSheet(t, akunMap) {
     debit: Number(t.nominal) < 0 ? Math.abs(Number(t.nominal)) : 0,
     kredit: Number(t.nominal) > 0 ? Number(t.nominal) : 0,
     kategoriId: t.kategoriId || '',
+    kategoriNama: kategoriMap?.get(t.kategoriId)?.nama || '',
     bank: akun?.bank || '',
     nomorRekening: akun?.nomorRekening || '',
     namaPemilik: akun?.namaPemilik || '',
@@ -143,14 +145,15 @@ async function post(url, payload, batasMs = BATAS_MS) {
  *
  * @param {Array} transaksi daftar buatTransaksi()
  * @param {Map} akunMap peta id->akun
+ * @param {Map} kategoriMap peta id->kategori (untuk kolom kategoriNama yang mudah dibaca)
  * @param {{batasMs?: number}} [opsi] `batasMs` menaikkan batas waktu bawaan
  *   (8 detik) — dipakai "Kirim semua sekarang" karena bisa mengirim ratusan
  *   baris sekaligus dan Apps Script butuh waktu lebih lama menuliskannya.
  */
-export async function syncKeSheets(transaksi, akunMap, opsi = {}) {
+export async function syncKeSheets(transaksi, akunMap, kategoriMap, opsi = {}) {
   const { url, aktif } = await bacaKonfigSheets();
   if (!aktif || !url || !transaksi?.length) return { skipped: true };
-  const rows = transaksi.map((t) => barisUntukSheet(t, akunMap));
+  const rows = transaksi.map((t) => barisUntukSheet(t, akunMap, kategoriMap));
   const payload = { rows, dikirimPada: new Date().toISOString(), jumlah: rows.length };
   await post(url, payload, opsi.batasMs);
   return { ok: true, jumlah: rows.length };
@@ -169,8 +172,9 @@ export async function syncKeSheets(transaksi, akunMap, opsi = {}) {
  *
  * @param {Array} transaksiBaru transaksi yang baru saja tersimpan (boleh kosong)
  * @param {Map} akunMap peta id->akun, mencakup SELURUH rekening
+ * @param {Map} kategoriMap peta id->kategori
  */
-export async function syncAtauAntri(transaksiBaru, akunMap) {
+export async function syncAtauAntri(transaksiBaru, akunMap, kategoriMap) {
   const { url, aktif } = await bacaKonfigSheets();
   if (!aktif || !url) return { skipped: true };
 
@@ -188,7 +192,7 @@ export async function syncAtauAntri(transaksiBaru, akunMap) {
   if (!gabungan.length) { await tulisAntrean([]); return { skipped: true }; }
 
   try {
-    const hasil = await syncKeSheets(gabungan, akunMap);
+    const hasil = await syncKeSheets(gabungan, akunMap, kategoriMap);
     // Seluruh batch terkonfirmasi sampai (atau memang sudah ada di Sheet
     // dari percobaan sebelumnya) — antrean boleh dikosongkan.
     await tulisAntrean([]);
@@ -208,7 +212,9 @@ export async function syncAtauAntri(transaksiBaru, akunMap) {
  */
 export function pantauKoneksiSheets() {
   const cobaFlush = () => {
-    akunRepo.peta().then((akunMap) => syncAtauAntri([], akunMap)).catch(() => {});
+    Promise.all([akunRepo.peta(), kategoriRepo.peta()])
+      .then(([akunMap, kategoriMap]) => syncAtauAntri([], akunMap, kategoriMap))
+      .catch(() => {});
   };
   cobaFlush();
   window.addEventListener('online', cobaFlush);

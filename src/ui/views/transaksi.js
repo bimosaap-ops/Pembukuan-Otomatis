@@ -322,8 +322,8 @@ async function gantiKategori(trx, kategoriId, daftarKategori, render) {
  * sendiri di `ingest.js`).
  */
 function sinkronkanLatarBelakang(transaksi) {
-  akunRepo.peta()
-    .then((akunMap) => syncAtauAntri(transaksi, akunMap))
+  Promise.all([akunRepo.peta(), kategoriRepo.peta()])
+    .then(([akunMap, kategoriMap]) => syncAtauAntri(transaksi, akunMap, kategoriMap))
     .catch((e) => console.warn('Sheets sync gagal:', e));
 }
 

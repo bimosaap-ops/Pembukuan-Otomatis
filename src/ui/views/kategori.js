@@ -244,8 +244,9 @@ async function kelompokkanUlang(selesai) {
   // per transaksi — pengelompokan ulang bisa menyentuh ratusan baris sekaligus.
   // Di latar belakang, tidak pernah ditunggu.
   if (berubah.length) {
+    const kategoriMap = new Map(kategori.map((k) => [k.id, k]));
     akunRepo.peta()
-      .then((akunMap) => syncAtauAntri(berubah, akunMap))
+      .then((akunMap) => syncAtauAntri(berubah, akunMap, kategoriMap))
       .catch((e) => console.warn('Sheets sync gagal:', e));
   }
 }

@@ -69,6 +69,24 @@ test('barisUntukSheet menyertakan hash, kategoriId, sumber, dan uploadedFileId a
   assert.equal(baris.uploadedFileId, 'upl1');
 });
 
+test('barisUntukSheet mengisi kategoriNama dari kategoriMap berdasarkan kategoriId', () => {
+  const t = buatTransaksi({ hash: 'h6', tanggal: '2025-07-04', deskripsi: 'Warteg', nominal: -20000, kategoriId: 'kat_makan' });
+  const kategoriMap = new Map([['kat_makan', { id: 'kat_makan', nama: 'Makan & Minum' }]]);
+
+  const baris = barisUntukSheet(t, new Map(), kategoriMap);
+  assert.equal(baris.kategoriNama, 'Makan & Minum');
+});
+
+test('barisUntukSheet mengisi kategoriNama string kosong bila kategoriId tidak ada di kategoriMap, tanpa error', () => {
+  const t = buatTransaksi({ hash: 'h7', tanggal: '2025-07-05', deskripsi: 'Tes', nominal: -1000, kategoriId: 'kat-tak-dikenal' });
+
+  const baris = barisUntukSheet(t, new Map(), new Map());
+  assert.equal(baris.kategoriNama, '');
+
+  // kategoriMap kosong/undefined sama sekali juga tidak boleh melempar error.
+  assert.doesNotThrow(() => barisUntukSheet(t, new Map(), undefined));
+});
+
 /* ==========================================================================
    validasiUrlWebhook
    ========================================================================== */

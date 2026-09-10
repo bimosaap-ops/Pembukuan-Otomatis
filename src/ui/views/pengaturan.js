@@ -350,11 +350,11 @@ async function kartuSheets() {
         h('button', { type: 'button', onclick: async (e) => {
           const b = e.currentTarget; b.disabled = true;
           try {
-            const [trx, akun] = await Promise.all([trxRepo.semua(), akunRepo.peta()]);
+            const [trx, akun, kategori] = await Promise.all([trxRepo.semua(), akunRepo.peta(), kategoriRepo.peta()]);
             if (!trx.length) { toastGagal('Belum ada transaksi'); return; }
             // Batas waktu dinaikkan: backfill bisa berisi ratusan baris
             // sekaligus, jauh lebih lambat daripada sinkron satu batch biasa.
-            const r = await syncKeSheets(trx, akun, { batasMs: 30000 });
+            const r = await syncKeSheets(trx, akun, kategori, { batasMs: 30000 });
             if (r?.skipped) toastGagal('Aktifkan Sheets & isi URL dulu');
             else toastSukses(`Terkirim ${r.jumlah} baris ke Sheets`);
           } catch (err) { toastGagal(err.message); } finally { b.disabled = false; }
