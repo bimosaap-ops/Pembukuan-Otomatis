@@ -352,9 +352,12 @@ async function kartuSheets() {
           try {
             const [trx, akun, kategori] = await Promise.all([trxRepo.semua(), akunRepo.peta(), kategoriRepo.peta()]);
             if (!trx.length) { toastGagal('Belum ada transaksi'); return; }
-            // Batas waktu dinaikkan: backfill bisa berisi ratusan baris
-            // sekaligus, jauh lebih lambat daripada sinkron satu batch biasa.
-            const r = await syncKeSheets(trx, akun, kategori, { batasMs: 30000 });
+            // Batas waktu dinaikkan jauh: backfill mengirim SELURUH transaksi
+            // dalam satu permintaan — pada pembukuan ribuan baris itu berarti
+            // payload ratusan KB, ditambah cold start Apps Script yang bisa
+            // beberapa detik sendiri. Batas 30 detik terlalu mepet dan membuat
+            // pengiriman yang sebenarnya berhasil terlihat gagal.
+            const r = await syncKeSheets(trx, akun, kategori, { batasMs: 60000 });
             if (r?.skipped) toastGagal('Aktifkan Sheets & isi URL dulu');
             else toastSukses(`Terkirim ${r.jumlah} baris ke Sheets`);
           } catch (err) { toastGagal(err.message); } finally { b.disabled = false; }

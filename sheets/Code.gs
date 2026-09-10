@@ -414,18 +414,15 @@ function doPost(e) {
       if (!isNaN(t.getTime())) ts = t;
     }
     const tambah = [];
-    let diupdate = 0;
+    const perbarui = [];
     for (const r of dedup.values()) {
       const hash = String(r.hash || '');
       const baru = [hash, r.tanggal||'', r.deskripsi||'', Number(r.nominal)||0, Number(r.debit)||0, Number(r.kredit)||0, r.kategoriId||'', r.bank||'', r.nomorRekening||'', r.namaPemilik||'', r.sumber||'', r.uploadedFileId||'', ts, r.kategoriNama||''];
       const baris = hash ? nomorBaris[hash] : null;
-      if (baris) {
-        sh.getRange(baris, 1, 1, HEADER.length).setValues([baru]);
-        diupdate += 1;
-      } else {
-        tambah.push(baru);
-      }
+      if (baris) perbarui.push({ baris, nilai: baru });
+      else tambah.push(baru);
     }
+    if (perbarui.length) tulisPembaruan(sh, perbarui, last);
     if (tambah.length) {
       sh.getRange(last+1, 1, tambah.length, HEADER.length).setValues(tambah);
       // Baris yang menambah tinggi grid tidak mewarisi format kolom di atasnya,
@@ -435,10 +432,39 @@ function doPost(e) {
       KOLOM_RP.forEach((k) => sh.getRange(last+1, k, tambah.length, 1).setNumberFormat(RP));
       sh.getRange(last+1, KOLOM_WAKTU, tambah.length, 1).setNumberFormat(FORMAT_WAKTU);
     }
-    return json({ok:true, inserted: tambah.length, updated: diupdate});
+    return json({ok:true, inserted: tambah.length, updated: perbarui.length});
   } catch (err) {
     return json({ok:false, error: String(err && err.message || err)});
   }
+}
+
+/** Di atas jumlah ini, menulis baris satu per satu lebih mahal daripada
+ *  membaca-mengubah-menulis seluruh blok data sekaligus. */
+const AMBANG_TULIS_BORONG = 20;
+
+/**
+ * Tuliskan baris hasil upsert. Baris yang diperbarui tersebar posisinya, jadi
+ * tidak bisa ditulis sebagai satu blok begitu saja.
+ *
+ * Untuk pembaruan yang sedikit, menulis per baris paling murah. Tapi "Kirim
+ * semua sekarang" memperbarui SELURUH transaksi sekaligus — pada pembukuan
+ * dengan ribuan baris itu berarti ribuan penulisan terpisah, yang melewati
+ * batas waktu permintaan jauh sebelum selesai. Di atas ambang, seluruh blok
+ * data dibaca sekali, diubah di memori, lalu ditulis balik sekali.
+ *
+ * Konsekuensinya: sel yang berisi rumus di kolom A..N akan berubah jadi nilai
+ * statis. Tab data ini memang murni tulisan skrip, jadi tidak ada rumus yang
+ * hilang; kolom tambahan pengguna di luar A..N tidak tersentuh.
+ */
+function tulisPembaruan(sh, perbarui, last) {
+  if (perbarui.length <= AMBANG_TULIS_BORONG) {
+    perbarui.forEach((p) => sh.getRange(p.baris, 1, 1, HEADER.length).setValues([p.nilai]));
+    return;
+  }
+  const rng = sh.getRange(2, 1, last - 1, HEADER.length);
+  const nilai = rng.getValues();
+  perbarui.forEach((p) => { nilai[p.baris - 2] = p.nilai; });
+  rng.setValues(nilai);
 }
 
 function doGet() { return json({ok:true, usage:'POST {rows:[...]}'}); }
