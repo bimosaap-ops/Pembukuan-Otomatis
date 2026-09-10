@@ -94,7 +94,7 @@ export function perKategori(transaksi, petaKategori, arah = 'keluar') {
  * tidak bisa dijumlahkan begitu saja.
  */
 export function trenSaldo(transaksi, saldoAwal = 0, opsi = {}) {
-  const urut = [...transaksi].sort((a, b) => String(a.tanggal).localeCompare(String(b.tanggal)));
+  const urut = [...transaksi].filter((t) => !t.transferInternal).sort((a, b) => String(a.tanggal).localeCompare(String(b.tanggal)));
   if (!urut.length) return [];
 
   const perBulanNetto = new Map();

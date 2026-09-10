@@ -213,7 +213,7 @@ export async function simpanDraft(draft, pilihan = {}) {
   }
   if (!akun) throw new Error('Rekening tujuan tidak ditemukan.');
 
-  if (draft.hasil.saldoAwal !== null && draft.hasil.saldoAwal !== undefined && !akun.saldoAwal) {
+  if (draft.hasil.saldoAwal !== null && draft.hasil.saldoAwal !== undefined && (akun.saldoAwal == null || akun.saldoAwal === 0)) {
     akun = await akunRepo.simpanAkun({ ...akun, saldoAwal: draft.hasil.saldoAwal });
   }
 

@@ -71,14 +71,18 @@ export function parse({ baris, kepala, warna = [] }) {
 
     const deskripsi = rapikanDeskripsi(b.deskripsi.reduce((s, t) => gabungDeskripsi(s, t), ''));
 
-    // Arah diambil dari warna; kalau tidak ada, dari kata kunci.
+    // ponytail: search 3-ahead + always advance prevents one mismatch shifting all later rows
     let arah = 0;
     let dariWarna = false;
-    const w = warnaNominal[indeksWarna];
-    if (w && samaNominal(w.teks, b.nominal.str)) {
-      arah = arahDariWarna(w.rgb);
-      indeksWarna += 1;
-      if (arah !== 0) { dariWarna = true; adaWarna = true; }
+    let w = null; let wIdx = indeksWarna;
+    for (let j = indeksWarna; j < warnaNominal.length && j < indeksWarna + 3; j++) {
+      if (samaNominal(warnaNominal[j].teks, b.nominal.str)) { w = warnaNominal[j]; wIdx = j; break; }
+    }
+    if (!w) { w = warnaNominal[indeksWarna] || null; wIdx = indeksWarna; }
+    if (w) {
+      const aw = arahDariWarna(w.rgb);
+      if (aw !== 0) { arah = aw; dariWarna = true; adaWarna = true; }
+      indeksWarna = wIdx + 1;
     }
     if (arah === 0) arah = arahDariKataKunci(deskripsi);
 
