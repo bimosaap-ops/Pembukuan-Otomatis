@@ -1,50 +1,79 @@
 /**
  * Code.gs — tempel di Extensions > Apps Script pada Google Sheet tujuan.
  * Deploy: Deploy > New deployment > Web App > Anyone with the link > Copy URL -> tempel di Pengaturan app.
- * Sheet data (nama baku "Transaksi") header baris 1 wajib:
- * hash | tanggal | deskripsi | nominal | debit | kredit | kategoriId | bank | nomorRekening | namaPemilik | sumber | uploadedFileId | dikirimPada | kategoriNama
+ *
+ * Sheet data (nama baku "Transaksi") header baris 1 wajib, berurutan A..N:
+ * Hash | Tanggal | Deskripsi | Nominal | Debit | Kredit | ID Kategori | Bank |
+ * No. Rekening | Nama Pemilik | Sumber | ID Upload | Dikirim Pada | Kategori
  *
  * Upsert berdasarkan hash (kolom A): hash yang sudah ada di Sheet DITIMPA di
  * baris yang sama, bukan dilewati. Ini penting karena kategori sebuah transaksi
  * bisa dikoreksi belakangan (lewat halaman Transaksi, atau "Kelompokkan ulang"
- * di halaman Kategori) — kalau cuma dedupe-skip seperti sebelumnya, koreksi itu
- * tidak akan pernah sampai ke Sheet walau tombol "Kirim semua sekarang" dipakai.
+ * di halaman Kategori) — kalau cuma dedupe-skip, koreksi itu tidak akan pernah
+ * sampai ke Sheet walau tombol "Kirim semua sekarang" dipakai.
  *
- * kategoriNama ditambahkan DI AKHIR (bukan menyisip setelah kategoriId) supaya
- * Sheet pengguna yang sudah terisi dari versi sebelumnya tidak kacau urutan
- * kolomnya — kolom A (hash) yang dipakai upsert tetap di posisi yang sama.
+ * Tab "Dashboard" dibuat otomatis sekali berisi kartu ringkasan, breakdown per
+ * kategori, dan tren bulanan — semuanya rumus Sheets yang merujuk balik ke tab
+ * data, jadi ikut ter-update sendiri tiap ada transaksi baru. Sekali dibuat tab
+ * itu tidak ditimpa lagi; untuk membangunnya ulang pakai menu "Pembukuan >
+ * Bangun ulang Dashboard" di spreadsheet.
  *
- * Tab "Dashboard" dibuat otomatis sekali (lihat pastikanDashboard) berisi
- * ringkasan pemasukan/pengeluaran, breakdown per kategori, dan tren bulanan —
- * semuanya rumus Sheets biasa yang merujuk balik ke tab data, jadi otomatis
- * ter-update setiap ada transaksi baru tanpa perlu Apps Script jalan ulang.
- * Sekali dibuat, tab ini TIDAK ditimpa ulang lagi supaya penyesuaian manual
- * pengguna (lebar kolom, urutan, dst.) aman.
+ * Dua hal yang pernah bikin kacau dan sengaja dijaga di sini:
+ *
+ *   1. Dashboard disisipkan di posisi TERAKHIR, bukan pertama. Kode versi lama
+ *      (yang mungkin masih terpasang di deployment lain) mencari sheet data
+ *      dengan "sheet pertama" — kalau Dashboard ada di posisi pertama, data
+ *      transaksi ikut tertulis ke sana dan tab Dashboard jadi berantakan.
+ *   2. Pemisah argumen rumus mengikuti lokal spreadsheet (lihat pisahArgumen).
+ *      Di lokal Indonesia pemisahnya ";" dan pemisah kolom array literal "\",
+ *      bukan ",". Rumus bertanda koma di sheet berlokal Indonesia gagal parse
+ *      jadi #ERROR! — dan #ERROR! tidak bisa ditangkap IFERROR.
  */
-const SHEET_NAME = ''; // kosong = deteksi/migrasi otomatis (lihat getSheet)
+const SHEET_NAME = ''; // kosong = deteksi/migrasi otomatis (lihat sheetData)
 const DATA_SHEET_NAME = 'Transaksi';
 const DASHBOARD_SHEET_NAME = 'Dashboard';
-const HEADER = ['hash','tanggal','deskripsi','nominal','debit','kredit','kategoriId','bank','nomorRekening','namaPemilik','sumber','uploadedFileId','dikirimPada','kategoriNama'];
-const KOLOM_NOMINAL = [4, 5, 6]; // nominal, debit, kredit — format angka ribuan
-const LEBAR_KOLOM = { hash: 90, tanggal: 90, deskripsi: 280, nominal: 110, debit: 110, kredit: 110, kategoriId: 110, bank: 70, nomorRekening: 130, namaPemilik: 140, sumber: 70, uploadedFileId: 90, dikirimPada: 150, kategoriNama: 140 };
+
+const HEADER = ['Hash','Tanggal','Deskripsi','Nominal','Debit','Kredit','ID Kategori','Bank','No. Rekening','Nama Pemilik','Sumber','ID Upload','Dikirim Pada','Kategori'];
+const LEBAR_KOLOM = [110, 95, 300, 120, 120, 120, 130, 90, 130, 150, 80, 110, 140, 150];
+const KOLOM_RP = [4, 5, 6];      // Nominal, Debit, Kredit
+const KOLOM_WAKTU = 13;          // Dikirim Pada
+const KOLOM_SEMBUNYI = [1, 7, 12]; // Hash, ID Kategori, ID Upload — dipakai mesin, bukan mata
+
+const RP = '"Rp "#,##0;[RED]-"Rp "#,##0';
+const FORMAT_WAKTU = 'dd/mm/yyyy HH:mm';
+
+/** Menu di spreadsheet, supaya perbaikan tidak perlu buka editor Apps Script. */
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('Pembukuan')
+    .addItem('Bangun ulang Dashboard & rapikan data', 'bangunUlangDashboard')
+    .addToUi();
+}
+
+/**
+ * Sheet data selalu dicari dengan nama, TIDAK PERNAH dengan "sheet pertama" —
+ * lihat catatan (1) di kepala berkas. Sheet bernama Dashboard tidak akan pernah
+ * dianggap sebagai sheet data.
+ */
+function sheetData(ss) {
+  if (SHEET_NAME) return ss.getSheetByName(SHEET_NAME);
+  const adaNama = ss.getSheetByName(DATA_SHEET_NAME);
+  if (adaNama) return adaNama;
+  const lain = ss.getSheets().filter((s) => s.getName() !== DASHBOARD_SHEET_NAME);
+  return lain.length ? lain[0] : ss.insertSheet(DATA_SHEET_NAME, 0);
+}
 
 function getSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sh = SHEET_NAME
-    ? ss.getSheetByName(SHEET_NAME)
-    : (ss.getSheetByName(DATA_SHEET_NAME) || ss.getSheets().find((s) => s.getName() !== DASHBOARD_SHEET_NAME));
-  // Migrasi dari versi lama: sheet data apa pun namanya dibakukan jadi
-  // "Transaksi" supaya rumus di tab Dashboard bisa merujuknya dengan pasti,
-  // dan supaya Dashboard (yang disisipkan di posisi pertama) tidak tertukar
-  // dengan sheet data saat auto-deteksi "sheet pertama" dipakai.
+  const sh = sheetData(ss);
   if (!SHEET_NAME && sh.getName() !== DATA_SHEET_NAME) sh.setName(DATA_SHEET_NAME);
 
   const baru = sh.getLastRow() === 0;
   if (baru) sh.appendRow(HEADER);
   // header guard
-  const h = sh.getRange(1,1,1,HEADER.length).getValues()[0].map(String);
+  const h = sh.getRange(1, 1, 1, HEADER.length).getValues()[0].map(String);
   const perluPerbaikanHeader = h.join('|') !== HEADER.join('|');
-  if (perluPerbaikanHeader) sh.getRange(1,1,1,HEADER.length).setValues([HEADER]);
+  if (perluPerbaikanHeader) sh.getRange(1, 1, 1, HEADER.length).setValues([HEADER]);
   if (baru || perluPerbaikanHeader) rapikanTampilan(sh);
 
   pastikanDashboard(ss, sh.getName());
@@ -52,50 +81,115 @@ function getSheet() {
 }
 
 /**
- * Rapikan tampilan sekali saat Sheet baru dibuat atau headernya baru
- * diperbaiki — bukan pada tiap doPost, supaya penyesuaian manual pengguna
- * (lebar kolom, dst.) tidak ditimpa ulang tiap ada transaksi masuk.
+ * Rapikan tab data sekali saat Sheet baru dibuat atau headernya baru diperbaiki
+ * — bukan pada tiap doPost, supaya penyesuaian manual pengguna (lebar kolom,
+ * dst.) tidak ditimpa ulang tiap ada transaksi masuk. Bisa dipanggil ulang
+ * kapan saja lewat menu "Pembukuan".
  */
 function rapikanTampilan(sh) {
+  const kolom = HEADER.length;
+  const isi = Math.max(sh.getMaxRows() - 1, 1);
+
   sh.setFrozenRows(1);
-  const header = sh.getRange(1, 1, 1, HEADER.length);
-  header.setFontWeight('bold').setBackground('#f1f3f4');
-  HEADER.forEach((nama, i) => sh.setColumnWidth(i + 1, LEBAR_KOLOM[nama] || 100));
-  KOLOM_NOMINAL.forEach((kolom) => {
-    sh.getRange(2, kolom, Math.max(sh.getMaxRows() - 1, 1), 1).setNumberFormat('#,##0');
-  });
+  sh.setRowHeight(1, 34);
+  sh.getRange(1, 1, 1, kolom)
+    .setFontWeight('bold').setFontColor('#ffffff').setBackground('#1a73e8')
+    .setVerticalAlignment('middle').setWrap(false);
+
+  LEBAR_KOLOM.forEach((lebar, i) => sh.setColumnWidth(i + 1, lebar));
+
+  KOLOM_RP.forEach((k) => sh.getRange(2, k, isi, 1).setNumberFormat(RP));
+  sh.getRange(2, KOLOM_WAKTU, isi, 1).setNumberFormat(FORMAT_WAKTU);
+  // Tanggal sengaja dibiarkan teks ISO ("2025-07-01"): urutannya sudah benar
+  // secara leksikal, dan tabel Tren Bulanan mengambil bulannya lewat LEFT(B,7)
+  // yang hanya bekerja pada teks.
+  sh.getRange(2, 2, isi, 1).setHorizontalAlignment('center');
+  normalkanWaktu(sh);
+
+  // Kolom teknis tetap ditulis dan tetap dipakai upsert, hanya disembunyikan
+  // supaya yang terbaca cuma kolom yang berarti buat manusia.
+  KOLOM_SEMBUNYI.forEach((k) => sh.hideColumns(k));
+
+  // Banding lama dibuang dulu: applyRowBanding menolak range yang bertumpang
+  // tindih dengan banding yang sudah ada.
+  sh.getBandings().forEach((b) => b.remove());
+  sh.getRange(2, 1, isi, kolom)
+    .applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY, false, false);
+
+  sh.setTabColor('#5f6368');
 }
 
 /**
- * Bangun tab "Dashboard" sekali saja (kalau belum ada) — kartu ringkasan,
+ * Ubah "Dikirim Pada" yang masih teks ISO menjadi Date sungguhan, sekali jalan.
+ * Baris yang ditulis versi lama menyimpannya sebagai teks, sedangkan baris baru
+ * sudah berupa Date — tanpa ini satu kolom akan tampil separuh "2026-09-10T18:17:16.925Z"
+ * dan separuh "10/09/2026 18:17".
+ */
+function normalkanWaktu(sh) {
+  const last = sh.getLastRow();
+  if (last < 2) return;
+  const rng = sh.getRange(2, KOLOM_WAKTU, last - 1, 1);
+  const nilai = rng.getValues();
+  let berubah = false;
+  const hasil = nilai.map(([v]) => {
+    if (typeof v === 'string' && v) {
+      const t = new Date(v);
+      if (!isNaN(t.getTime())) { berubah = true; return [t]; }
+    }
+    return [v];
+  });
+  if (berubah) rng.setValues(hasil);
+}
+
+/**
+ * Pemisah argumen rumus mengikuti lokal spreadsheet — lihat catatan (2) di
+ * kepala berkas. Dideteksi dengan mencoba rumus dua argumen: di lokal yang
+ * memakai koma sebagai pemisah argumen hasilnya 3, di lokal yang memakai koma
+ * sebagai pemisah desimal (Indonesia, Jerman, dst.) "1,2" terbaca satu bilangan
+ * sehingga hasilnya bukan 3. Dideteksi, bukan didaftar, supaya tidak perlu
+ * memelihara daftar lokal.
+ */
+function pisahArgumen(sh) {
+  const sel = sh.getRange('Z1');
+  sel.setFormula('=SUM(1,2)');
+  const pakaiKoma = sel.getValue() === 3;
+  sel.clearContent();
+  return pakaiKoma ? ',' : ';';
+}
+
+/**
+ * Bangun tab "Dashboard" sekali saja (kalau belum ada): kartu ringkasan,
  * breakdown pengeluaran per kategori, tren bulanan pemasukan vs pengeluaran,
- * plus grafik pie & kolom. Semuanya rumus (QUERY/SUM/ARRAYFORMULA) yang
- * merujuk balik ke tab data, sehingga tampilannya otomatis ikut ter-update
- * tiap ada transaksi baru — tidak perlu dijalankan ulang oleh doPost.
+ * plus grafik donat & kolom. Semuanya rumus (SUM/COUNTA/QUERY/ARRAYFORMULA)
+ * yang merujuk balik ke tab data, sehingga ikut ter-update tiap ada transaksi
+ * baru — tidak perlu dijalankan ulang oleh doPost.
  */
 function pastikanDashboard(ss, namaSheetData) {
   if (ss.getSheetByName(DASHBOARD_SHEET_NAME)) return;
 
-  const d = ss.insertSheet(DASHBOARD_SHEET_NAME, 0);
+  // Posisi TERAKHIR, bukan pertama — lihat catatan (1) di kepala berkas.
+  const d = ss.insertSheet(DASHBOARD_SHEET_NAME, ss.getNumSheets());
   const data = `'${namaSheetData}'!A2:N`;
   const kol = (huruf) => `'${namaSheetData}'!${huruf}2:${huruf}`;
+  const S = pisahArgumen(d);            // pemisah argumen rumus
+  const AS = S === ',' ? ',' : '\\';    // pemisah kolom di dalam array literal {}
 
   d.setHiddenGridlines(true);
+  d.setTabColor('#1a73e8');
   d.setColumnWidths(1, 8, 130);
   d.setColumnWidth(9, 20);
   d.setColumnWidths(10, 6, 90);
 
   d.getRange('A1:H1').merge()
-    .setValue('📊 Dashboard Keuangan')
+    .setValue('  Dashboard Keuangan')
     .setFontSize(20).setFontWeight('bold').setFontColor('#ffffff')
     .setBackground('#1a73e8').setVerticalAlignment('middle');
   d.setRowHeight(1, 46);
 
   d.getRange('A2:H2').merge()
-    .setValue(`Dihitung otomatis dari sheet "${namaSheetData}" — cukup buka tab ini, tidak perlu diperbarui manual.`)
+    .setValue(`  Dihitung otomatis dari sheet "${namaSheetData}" — tidak perlu diperbarui manual.`)
     .setFontStyle('italic').setFontColor('#5f6368').setFontSize(10);
 
-  const RP = '"Rp "#,##0;[RED]-"Rp "#,##0';
   const KARTU = [
     { kol: 'A', label: 'Total Pemasukan', formula: `=SUM(${kol('F')})`, bg: '#e6f4ea', fg: '#1e7e34', format: RP },
     { kol: 'C', label: 'Total Pengeluaran', formula: `=SUM(${kol('E')})`, bg: '#fce8e6', fg: '#c5221f', format: RP },
@@ -108,60 +202,92 @@ function pastikanDashboard(ss, namaSheetData) {
       .setFontWeight('bold').setFontSize(10).setFontColor(k.fg).setBackground(k.bg)
       .setHorizontalAlignment('center');
     d.getRange(`${k.kol}5:${akhir}6`).merge().setFormula(k.formula)
-      .setFontSize(22).setFontWeight('bold').setFontColor(k.fg).setBackground(k.bg)
+      .setFontSize(20).setFontWeight('bold').setFontColor(k.fg).setBackground(k.bg)
       .setHorizontalAlignment('center').setVerticalAlignment('middle')
       .setNumberFormat(k.format);
   });
-  d.setRowHeights(5, 2, 34);
+  d.setRowHeights(5, 2, 32);
 
-  // Pengeluaran per kategori — QUERY menghasilkan header sendiri di baris 9
-  // ("Kategori"/"Total"), data mulai baris 10. Kolom % dihitung terpisah
-  // (ARRAYFORMULA satu sel di C10) supaya bisa dibagi ke total pengeluaran
-  // di kartu KPI ($C$5), sesuatu yang tidak bisa dilakukan QUERY sendirian.
+  // Pengeluaran per kategori. QUERY menulis headernya sendiri di baris 9
+  // ("Kategori"/"Total"), datanya mulai baris 10. Kolom persentase dihitung
+  // terpisah karena QUERY tidak bisa membagi tiap baris ke total keseluruhan.
+  // Catatan: koma DI DALAM string query (select, label) adalah bahasa QUERY,
+  // selalu koma di lokal mana pun — yang ikut lokal hanya pemisah argumen rumus.
   d.getRange('A8').setValue('Pengeluaran per Kategori').setFontWeight('bold').setFontSize(12);
   d.getRange('A9').setFormula(
-    `=IFERROR(QUERY(${data},"select N, sum(E) where E > 0 and N <> '' group by N order by sum(E) desc label N 'Kategori', sum(E) 'Total'",0),"Belum ada data pengeluaran")`,
+    `=IFERROR(QUERY(${data}${S}"select N, sum(E) where E > 0 and N <> '' group by N order by sum(E) desc label N 'Kategori', sum(E) 'Total'"${S}0)${S}"Belum ada data pengeluaran")`,
   );
-  d.getRange('C9').setValue('% Pengeluaran').setFontWeight('bold');
-  d.getRange('C10').setFormula('=ARRAYFORMULA(IF(B10:B100="","",B10:B100/$C$5))');
-  d.getRange('A9:C9').setFontWeight('bold').setBackground('#f1f3f4');
+  d.getRange('C9').setValue('% Pengeluaran');
+  d.getRange('C10').setFormula(
+    `=IFERROR(ARRAYFORMULA(IF(B10:B100=""${S}""${S}B10:B100/$C$5))${S}"")`,
+  );
+  d.getRange('A9:C9').setFontWeight('bold').setBackground('#f1f3f4').setFontColor('#3c4043');
   d.getRange('B10:B100').setNumberFormat(RP);
   d.getRange('C10:C100').setNumberFormat('0.0%');
 
-  // Tren bulanan — "bulan" dibentuk dari LEFT(tanggal,7) karena tanggal
-  // tersimpan sebagai teks ISO ("2025-07-01"), bukan tipe Date, jadi fungsi
+  // Tren bulanan. "Bulan" dibentuk dari LEFT(tanggal,7) karena tanggal tersimpan
+  // sebagai teks ISO ("2025-07-01"), bukan tipe Date, sehingga fungsi
   // month()/year() bawaan QUERY tidak bisa dipakai langsung.
   d.getRange('F8').setValue('Tren Bulanan: Pemasukan vs Pengeluaran').setFontWeight('bold').setFontSize(12);
   d.getRange('F9').setFormula(
-    `=IFERROR(QUERY({ARRAYFORMULA(LEFT(${kol('B')},7)),${kol('F')},${kol('E')}},"select Col1, sum(Col2), sum(Col3) where Col1 <> '' group by Col1 order by Col1 asc label Col1 'Bulan', sum(Col2) 'Pemasukan', sum(Col3) 'Pengeluaran'",0),"Belum ada data")`,
+    `=IFERROR(QUERY({ARRAYFORMULA(LEFT(${kol('B')}${S}7))${AS}${kol('F')}${AS}${kol('E')}}${S}"select Col1, sum(Col2), sum(Col3) where Col1 <> '' group by Col1 order by Col1 asc label Col1 'Bulan', sum(Col2) 'Pemasukan', sum(Col3) 'Pengeluaran'"${S}0)${S}"Belum ada data")`,
   );
-  d.getRange('F9:H9').setFontWeight('bold').setBackground('#f1f3f4');
+  d.getRange('F9:H9').setFontWeight('bold').setBackground('#f1f3f4').setFontColor('#3c4043');
   d.getRange('G10:H100').setNumberFormat(RP);
 
   d.setFrozenRows(2);
 
-  const pie = d.newChart()
+  const donat = d.newChart()
     .setChartType(Charts.ChartType.PIE)
     .addRange(d.getRange('A9:B100'))
     .setPosition(4, 10, 0, 0)
     .setOption('title', 'Pengeluaran per Kategori')
-    .setOption('pieHole', 0.4)
+    .setOption('pieHole', 0.45)
+    .setOption('legend', { position: 'right' })
     .setOption('width', 520)
     .setOption('height', 340)
     .build();
-  d.insertChart(pie);
+  d.insertChart(donat);
 
   const tren = d.newChart()
     .setChartType(Charts.ChartType.COLUMN)
     .addRange(d.getRange('F9:H100'))
-    .setPosition(24, 10, 0, 0)
+    .setPosition(23, 10, 0, 0)
     .setOption('title', 'Tren Bulanan')
+    .setOption('legend', { position: 'top' })
     .setOption('width', 520)
     .setOption('height', 340)
-    .setOption('series.0.color', '#1e7e34')
-    .setOption('series.1.color', '#c5221f')
+    .setOption('colors', ['#1e7e34', '#c5221f'])
     .build();
   d.insertChart(tren);
+}
+
+/**
+ * Hapus tab Dashboard lalu bangun ulang dari nol, sekaligus merapikan ulang tab
+ * data. Dipakai lewat menu "Pembukuan" — perlu ketika Dashboard sudah terlanjur
+ * kacau (misalnya pernah tertulisi data transaksi oleh deployment versi lama)
+ * atau ketika tata letaknya diperbarui di versi Code.gs yang baru.
+ *
+ * Baris transaksi yang terlanjur nyasar ke tab Dashboard ikut terhapus. Itu
+ * aman: sumber kebenarannya ada di aplikasi, tinggal tekan "Kirim semua
+ * sekarang" di Pengaturan untuk mengisi ulang — upsert-nya berbasis hash, jadi
+ * tidak akan menggandakan baris yang sudah ada.
+ */
+function bangunUlangDashboard() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = sheetData(ss);
+  if (!SHEET_NAME && sh.getName() !== DATA_SHEET_NAME) sh.setName(DATA_SHEET_NAME);
+
+  const lama = ss.getSheetByName(DASHBOARD_SHEET_NAME);
+  if (lama) ss.deleteSheet(lama);
+
+  sh.getRange(1, 1, 1, HEADER.length).setValues([HEADER]);
+  rapikanTampilan(sh);
+  pastikanDashboard(ss, sh.getName());
+
+  const baru = ss.getSheetByName(DASHBOARD_SHEET_NAME);
+  if (baru) ss.setActiveSheet(baru);
+  ss.toast('Selesai. Kalau ada baris yang hilang, tekan "Kirim semua sekarang" di Pengaturan aplikasi.', 'Dashboard dibangun ulang', 10);
 }
 
 function doPost(e) {
@@ -190,7 +316,13 @@ function doPost(e) {
       });
     }
 
-    const ts = data.dikirimPada || new Date().toISOString();
+    // Ditulis sebagai Date sungguhan, bukan teks ISO, supaya tampil sebagai
+    // "10/09/2026 18:17" mengikuti format kolomnya dan bisa diurutkan.
+    let ts = new Date();
+    if (data.dikirimPada) {
+      const t = new Date(data.dikirimPada);
+      if (!isNaN(t.getTime())) ts = t;
+    }
     const tambah = [];
     let diupdate = 0;
     for (const r of dedup.values()) {
@@ -204,7 +336,15 @@ function doPost(e) {
         tambah.push(baru);
       }
     }
-    if (tambah.length) sh.getRange(last+1,1,tambah.length, HEADER.length).setValues(tambah);
+    if (tambah.length) {
+      sh.getRange(last+1, 1, tambah.length, HEADER.length).setValues(tambah);
+      // Baris yang menambah tinggi grid tidak mewarisi format kolom di atasnya,
+      // jadi formatnya dipasang langsung di sini — tanpa ini transaksi baru
+      // tampil "56000" sementara yang lama "Rp 56.000". Baris hasil upsert tidak
+      // perlu diperlakukan begini: menimpa nilai tidak menghapus format selnya.
+      KOLOM_RP.forEach((k) => sh.getRange(last+1, k, tambah.length, 1).setNumberFormat(RP));
+      sh.getRange(last+1, KOLOM_WAKTU, tambah.length, 1).setNumberFormat(FORMAT_WAKTU);
+    }
     return json({ok:true, inserted: tambah.length, updated: diupdate});
   } catch (err) {
     return json({ok:false, error: String(err && err.message || err)});
