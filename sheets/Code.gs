@@ -15,8 +15,11 @@
  * Tab "Dashboard" dibuat otomatis sekali berisi kartu ringkasan, breakdown per
  * kategori, dan tren bulanan — semuanya rumus Sheets yang merujuk balik ke tab
  * data, jadi ikut ter-update sendiri tiap ada transaksi baru. Sekali dibuat tab
- * itu tidak ditimpa lagi; untuk membangunnya ulang pakai menu "Pembukuan >
- * Bangun ulang Dashboard" di spreadsheet.
+ * itu tidak ditimpa lagi, KECUALI kalau rusak (rumusnya bernilai galat, atau
+ * tabnya tertulisi data transaksi) — keadaan itu disembuhkan sendiri pada POST
+ * berikutnya, lihat pastikanDashboard. Menu "Pembukuan" di spreadsheet berisi
+ * "Bangun ulang Dashboard" untuk memaksanya sekarang juga, dan "Diagnosa" yang
+ * melaporkan lokal, pemisah argumen terdeteksi, dan isi sel rumus kunci.
  *
  * Dua hal yang pernah bikin kacau dan sengaja dijaga di sini:
  *
@@ -47,6 +50,7 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Pembukuan')
     .addItem('Bangun ulang Dashboard & rapikan data', 'bangunUlangDashboard')
+    .addItem('Diagnosa', 'diagnosaDashboard')
     .addToUi();
 }
 
@@ -149,30 +153,70 @@ function normalkanWaktu(sh) {
  * sehingga hasilnya bukan 3. Dideteksi, bukan didaftar, supaya tidak perlu
  * memelihara daftar lokal.
  */
-function pisahArgumen(sh) {
-  const sel = sh.getRange('Z1');
-  sel.setFormula('=SUM(1,2)');
-  const pakaiKoma = sel.getValue() === 3;
-  sel.clearContent();
+function pisahArgumen(ss) {
+  // Dicoba di sheet sementara, bukan di sel kosong sheet yang dipakai: sheet
+  // pengguna tidak boleh disentuh sama sekali oleh alat ukur.
+  const tmp = ss.insertSheet(`__uji${Date.now()}`);
+  let pakaiKoma = false;
+  try {
+    const sel = tmp.getRange('A1');
+    sel.setFormula('=SUM(1,2)');
+    pakaiKoma = sel.getValue() === 3;
+  } finally {
+    ss.deleteSheet(tmp);
+  }
   return pakaiKoma ? ',' : ';';
 }
 
 /**
- * Bangun tab "Dashboard" sekali saja (kalau belum ada): kartu ringkasan,
- * breakdown pengeluaran per kategori, tren bulanan pemasukan vs pengeluaran,
- * plus grafik donat & kolom. Semuanya rumus (SUM/COUNTA/QUERY/ARRAYFORMULA)
- * yang merujuk balik ke tab data, sehingga ikut ter-update tiap ada transaksi
- * baru — tidak perlu dijalankan ulang oleh doPost.
+ * Dashboard dianggap rusak (dan boleh dibangun ulang otomatis) hanya pada dua
+ * keadaan yang tidak mungkin disengaja pengguna:
+ *
+ *   - salah satu sel rumusnya bernilai galat (#ERROR!, #REF!, dst.) — misalnya
+ *     rumus dibuat versi lama dengan pemisah argumen yang salah untuk lokal ini;
+ *   - A1 berisi label header tab data, tanda tab ini pernah tertulisi data
+ *     transaksi oleh kode versi lama.
+ *
+ * Sengaja sesempit itu: kalau patokannya "tata letak tidak seperti bawaan",
+ * penyesuaian yang pengguna buat sendiri akan ditimpa berulang kali.
+ */
+function dashboardRusak(d) {
+  const judul = String(d.getRange('A1').getValue()).trim().toLowerCase();
+  if (judul === HEADER[0].toLowerCase() || judul === 'hash') return true;
+  return ['A9', 'C10', 'F9'].some((a) => String(d.getRange(a).getValue()).charAt(0) === '#');
+}
+
+/**
+ * Bangun tab "Dashboard": kartu ringkasan, breakdown pengeluaran per kategori,
+ * tren bulanan pemasukan vs pengeluaran, plus grafik donat & kolom. Semuanya
+ * rumus (SUM/COUNTA/QUERY/ARRAYFORMULA) yang merujuk balik ke tab data,
+ * sehingga ikut ter-update tiap ada transaksi baru.
+ *
+ * Dibangun sekali saat belum ada, lalu dibiarkan supaya penyesuaian pengguna
+ * aman — kecuali kalau rusak (lihat dashboardRusak), yang dibangun ulang
+ * sendiri paling sering sekali per jam. Tanpa penyembuhan otomatis ini,
+ * Dashboard yang terlanjur rusak baru pulih kalau pengguna ingat membuka menu
+ * "Pembukuan", dan itu terlalu bergantung pada ritual yang tidak kelihatan.
  */
 function pastikanDashboard(ss, namaSheetData) {
-  if (ss.getSheetByName(DASHBOARD_SHEET_NAME)) return;
+  const ada = ss.getSheetByName(DASHBOARD_SHEET_NAME);
+  if (ada) {
+    if (!dashboardRusak(ada)) return;
+    const prop = PropertiesService.getScriptProperties();
+    const terakhir = Number(prop.getProperty('perbaikanTerakhir') || 0);
+    // Kalau pembangunan ulang ternyata tidak menyembuhkan, jangan diulang tiap
+    // POST: mahal dan menghabiskan kuota.
+    if (Date.now() - terakhir < 60 * 60 * 1000) return;
+    prop.setProperty('perbaikanTerakhir', String(Date.now()));
+    ss.deleteSheet(ada);
+  }
 
   // Posisi TERAKHIR, bukan pertama — lihat catatan (1) di kepala berkas.
+  const S = pisahArgumen(ss);           // pemisah argumen rumus
+  const AS = S === ',' ? ',' : '\\';    // pemisah kolom di dalam array literal {}
   const d = ss.insertSheet(DASHBOARD_SHEET_NAME, ss.getNumSheets());
   const data = `'${namaSheetData}'!A2:N`;
   const kol = (huruf) => `'${namaSheetData}'!${huruf}2:${huruf}`;
-  const S = pisahArgumen(d);            // pemisah argumen rumus
-  const AS = S === ',' ? ',' : '\\';    // pemisah kolom di dalam array literal {}
 
   d.setHiddenGridlines(true);
   d.setTabColor('#1a73e8');
@@ -288,6 +332,32 @@ function bangunUlangDashboard() {
   const baru = ss.getSheetByName(DASHBOARD_SHEET_NAME);
   if (baru) ss.setActiveSheet(baru);
   ss.toast('Selesai. Kalau ada baris yang hilang, tekan "Kirim semua sekarang" di Pengaturan aplikasi.', 'Dashboard dibangun ulang', 10);
+}
+
+/**
+ * Laporkan apa yang sebenarnya terbaca oleh skrip: lokal, pemisah argumen yang
+ * terdeteksi, sheet mana yang dianggap data, dan isi sel rumus kunci. Satu klik
+ * ini menggantikan satu putaran tebak-tebakan ketika Dashboard masih salah.
+ */
+function diagnosaDashboard() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const sh = sheetData(ss);
+  const d = ss.getSheetByName(DASHBOARD_SHEET_NAME);
+
+  const baris = [
+    `Lokal spreadsheet : ${ss.getSpreadsheetLocale()}`,
+    `Pemisah argumen   : "${pisahArgumen(ss)}"`,
+    `Sheet data        : ${sh ? `${sh.getName()} (posisi ${sh.getIndex()}, ${Math.max(sh.getLastRow() - 1, 0)} baris)` : '(tidak ketemu)'}`,
+    `Tab Dashboard     : ${d ? `ada, posisi ${d.getIndex()}` : 'belum ada'}`,
+  ];
+  if (d) {
+    baris.push(`Dianggap rusak    : ${dashboardRusak(d) ? 'ya' : 'tidak'}`, '');
+    ['A1', 'A9', 'C10', 'F9'].forEach((a) => {
+      baris.push(`${a} = ${String(d.getRange(a).getDisplayValue()).slice(0, 70)}`);
+    });
+  }
+  ui.alert('Diagnosa Pembukuan', baris.join('\n'), ui.ButtonSet.OK);
 }
 
 function doPost(e) {
