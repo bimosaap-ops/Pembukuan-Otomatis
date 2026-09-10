@@ -35,6 +35,13 @@
 const SHEET_NAME = ''; // kosong = deteksi/migrasi otomatis (lihat sheetData)
 const DATA_SHEET_NAME = 'Transaksi';
 const DASHBOARD_SHEET_NAME = 'Dashboard';
+/**
+ * Dinaikkan setiap kali tata letak/rumus Dashboard berubah. Dashboard yang
+ * dibangun versi lama otomatis dibangun ulang saat POST berikutnya — tanpa ini,
+ * perbaikan rumus hanya berlaku untuk Sheet baru, sementara Sheet yang sudah
+ * ada tetap memakai rumus lama sampai pengguna ingat membuka menu "Pembukuan".
+ */
+const VERSI_DASHBOARD = '3';
 
 const HEADER = ['Hash','Tanggal','Deskripsi','Nominal','Debit','Kredit','ID Kategori','Bank','No. Rekening','Nama Pemilik','Sumber','ID Upload','Dikirim Pada','Kategori'];
 const LEBAR_KOLOM = [110, 95, 300, 120, 120, 120, 130, 90, 130, 150, 80, 110, 140, 150];
@@ -199,15 +206,19 @@ function dashboardRusak(d) {
  * "Pembukuan", dan itu terlalu bergantung pada ritual yang tidak kelihatan.
  */
 function pastikanDashboard(ss, namaSheetData) {
+  const prop = PropertiesService.getScriptProperties();
   const ada = ss.getSheetByName(DASHBOARD_SHEET_NAME);
   if (ada) {
-    if (!dashboardRusak(ada)) return;
-    const prop = PropertiesService.getScriptProperties();
-    const terakhir = Number(prop.getProperty('perbaikanTerakhir') || 0);
-    // Kalau pembangunan ulang ternyata tidak menyembuhkan, jangan diulang tiap
-    // POST: mahal dan menghabiskan kuota.
-    if (Date.now() - terakhir < 60 * 60 * 1000) return;
-    prop.setProperty('perbaikanTerakhir', String(Date.now()));
+    const perluUpgrade = prop.getProperty('versiDashboard') !== VERSI_DASHBOARD;
+    if (!perluUpgrade && !dashboardRusak(ada)) return;
+    if (!perluUpgrade) {
+      // Jalur "rusak" dibatasi sekali per jam: kalau pembangunan ulang ternyata
+      // tidak menyembuhkan, jangan diulang tiap POST — mahal dan boros kuota.
+      // Jalur upgrade versi tidak dibatasi: itu sekali jalan dan memang diminta.
+      const terakhir = Number(prop.getProperty('perbaikanTerakhir') || 0);
+      if (Date.now() - terakhir < 60 * 60 * 1000) return;
+      prop.setProperty('perbaikanTerakhir', String(Date.now()));
+    }
     ss.deleteSheet(ada);
   }
 
@@ -215,7 +226,6 @@ function pastikanDashboard(ss, namaSheetData) {
   const S = pisahArgumen(ss);           // pemisah argumen rumus
   const AS = S === ',' ? ',' : '\\';    // pemisah kolom di dalam array literal {}
   const d = ss.insertSheet(DASHBOARD_SHEET_NAME, ss.getNumSheets());
-  const data = `'${namaSheetData}'!A2:N`;
   const kol = (huruf) => `'${namaSheetData}'!${huruf}2:${huruf}`;
 
   d.setHiddenGridlines(true);
@@ -258,8 +268,13 @@ function pastikanDashboard(ss, namaSheetData) {
   // Catatan: koma DI DALAM string query (select, label) adalah bahasa QUERY,
   // selalu koma di lokal mana pun — yang ikut lokal hanya pemisah argumen rumus.
   d.getRange('A8').setValue('Pengeluaran per Kategori').setFontWeight('bold').setFontSize(12);
+  // Nama kategori dipakai kalau ada, kalau tidak jatuh ke ID kategori. Baris
+  // yang terunggah sebelum kolom "Kategori" ada punya nama kosong, dan tanpa
+  // cadangan ini seluruh tabel beserta grafiknya ikut kosong — lebih baik
+  // menampilkan ID daripada tidak menampilkan apa pun. Begitu pengguna menekan
+  // "Kirim semua sekarang", namanya terisi dan tabel ini ikut membaik sendiri.
   d.getRange('A9').setFormula(
-    `=IFERROR(QUERY(${data}${S}"select N, sum(E) where E > 0 and N <> '' group by N order by sum(E) desc label N 'Kategori', sum(E) 'Total'"${S}0)${S}"Belum ada data pengeluaran")`,
+    `=IFERROR(QUERY({ARRAYFORMULA(IF(${kol('N')}<>""${S}${kol('N')}${S}${kol('G')}))${AS}${kol('E')}}${S}"select Col1, sum(Col2) where Col2 > 0 and Col1 <> '' group by Col1 order by sum(Col2) desc label Col1 'Kategori', sum(Col2) 'Total'"${S}0)${S}"Belum ada data pengeluaran")`,
   );
   d.getRange('C9').setValue('% Pengeluaran');
   d.getRange('C10').setFormula(
@@ -304,6 +319,11 @@ function pastikanDashboard(ss, namaSheetData) {
     .setOption('colors', ['#1e7e34', '#c5221f'])
     .build();
   d.insertChart(tren);
+
+  // Dicatat paling akhir, setelah semuanya benar-benar terpasang: kalau
+  // pembangunan gagal di tengah jalan, versinya tidak ikut tercatat sehingga
+  // POST berikutnya mencoba lagi, bukan menganggap sudah beres.
+  prop.setProperty('versiDashboard', VERSI_DASHBOARD);
 }
 
 /**
