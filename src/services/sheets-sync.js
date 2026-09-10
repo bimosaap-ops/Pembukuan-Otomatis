@@ -21,8 +21,10 @@ export async function bacaKonfigSheets() {
 export async function simpanKonfigSheets({ url, aktif }) {
   const bersih = String(url || '').trim();
   if (bersih && !/^https:\/\//i.test(bersih)) throw new Error('URL webhook harus https://');
-  if (bersih && !/script\.google/i.test(bersih)) {
-    // warning only — custom proxy boleh, jangan block
+  if (bersih && /docs\.google\.com\/spreadsheets/i.test(bersih)) {
+    throw new Error('Itu URL Sheet-nya, bukan URL Web App. Buka Extensions → Apps Script → Deploy → Web App → copy URL script.google.com/macros/s/.../exec');
+  }
+  if (bersih && !/script\.google/i.test(bersih) && !/googleusercontent/i.test(bersih)) {
     console.warn('URL bukan script.google.com — pastikan endpoint menerima JSON {rows:[...]}');
   }
   await pengaturanRepo.tulis(KUNCI_SHEETS.URL, bersih);
