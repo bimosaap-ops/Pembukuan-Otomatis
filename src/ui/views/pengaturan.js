@@ -5,6 +5,7 @@
 
 import { h, ikon, ganti } from '../../core/dom.js';
 import { emit, EVENT } from '../../core/events.js';
+import { angka } from '../../core/format.js';
 import { infoPenyimpanan, kosongkanSemua } from '../../data/db.js';
 import * as pengaturanRepo from '../../data/repo/settings.js';
 import * as kategoriRepo from '../../data/repo/categories.js';
@@ -16,6 +17,7 @@ import { versiBerjalan, periksaPembaruan } from '../versi.js';
 import { unduhBackup, pulihkanBackup, dukunganPilihFolder } from '../../services/export.js';
 import {
   bacaKonfigSheets, simpanKonfigSheets, testWebhook, syncKeSheets, jumlahAntrean, praTinjauSelaras,
+  statusSheets,
 } from '../../services/sheets-sync.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
 import { toastSukses, toastGagal } from '../components/toast.js';
@@ -294,6 +296,32 @@ async function hapusSemua(render) {
    Google Sheets — webhook Apps Script
    ========================================================================== */
 
+/**
+ * Laporkan backfill yang gagal dengan menyebut apa yang SEBENARNYA ada di Sheet.
+ *
+ * Batas waktu di sisi browser tidak menghentikan Apps Script; permintaan yang
+ * "tidak merespons" bisa saja sudah menuliskan seluruh bongkahnya. Menyebutnya
+ * gagal begitu saja membuat pengguna menebak — dan tebakan yang paling menakutkan
+ * ("kalau saya tekan lagi, datanya jadi dobel?") justru salah: upsert di Sheet
+ * berbasis hash, jadi menekan lagi memang melanjutkan, bukan menggandakan.
+ */
+async function laporkanBackfillGagal(err) {
+  const sudah = Number(err && err.terkirim);
+  if (!Number.isFinite(sudah)) { toastGagal(err.message); return; }
+
+  let diSheet = null;
+  try {
+    const st = await statusSheets();
+    if (st && st.ok) diSheet = st.total;
+  } catch { /* Sheet tidak bisa ditanya — cukup laporkan yang kita tahu sendiri. */ }
+
+  const dari = Number.isFinite(Number(err && err.total)) ? ` dari ${angka(Number(err.total), 0)}` : '';
+  const isi = diSheet === null ? '' : ` Sheet sekarang berisi ${angka(diSheet, 0)} baris.`;
+  toastGagal(`Terputus setelah ${angka(sudah, 0)}${dari} baris terkirim.${isi} `
+    + 'Tekan "Kirim semua sekarang" lagi untuk melanjutkan — baris yang sudah masuk '
+    + `tidak akan digandakan. (${err.message})`);
+}
+
 async function kartuSheets() {
   const [{ url, aktif }, antrean] = await Promise.all([bacaKonfigSheets(), jumlahAntrean()]);
   let urlVal = url;
@@ -354,6 +382,7 @@ async function kartuSheets() {
         } }, 'Test webhook'),
         h('button', { type: 'button', onclick: async (e) => {
           const b = e.currentTarget; b.disabled = true;
+          const labelAwal = b.textContent;
           try {
             const [trx, akun, kategori] = await Promise.all([trxRepo.semua(), akunRepo.peta(), kategoriRepo.peta()]);
             if (!trx.length) { toastGagal('Belum ada transaksi'); return; }
@@ -378,12 +407,17 @@ async function kartuSheets() {
               if (!ya) return;
             }
 
-            // Batas waktu dinaikkan jauh: backfill mengirim SELURUH transaksi
-            // dalam satu permintaan — pada pembukuan ribuan baris itu berarti
-            // payload ratusan KB, ditambah cold start Apps Script yang bisa
-            // beberapa detik sendiri. Batas 30 detik terlalu mepet dan membuat
-            // pengiriman yang sebenarnya berhasil terlihat gagal.
-            const r = await syncKeSheets(trx, akun, kategori, { batasMs: 60000, selaras: true });
+            // Dikirim per bongkah, jadi kemajuannya bisa ditunjukkan. Backfill
+            // ribuan baris memakan puluhan detik dan tombol yang cuma diam
+            // selama itu tidak bisa dibedakan dari tombol yang macet.
+            const r = await syncKeSheets(trx, akun, kategori, {
+              selaras: true,
+              onProgress: ({ terkirim, total, tahap }) => {
+                b.textContent = tahap === 'selaras'
+                  ? 'Merapikan Dashboard…'
+                  : `Mengirim ${angka(terkirim, 0)}/${angka(total, 0)}…`;
+              },
+            });
             if (r?.skipped) { toastGagal('Aktifkan Sheets & isi URL dulu'); return; }
 
             const tujuan = r.spreadsheet ? ` ke "${r.spreadsheet}"` : '';
@@ -399,7 +433,12 @@ async function kartuSheets() {
             } else {
               toastSukses(`Terkirim${tujuan}: ${rincian} · total ${r.total} baris.`);
             }
-          } catch (err) { toastGagal(err.message); } finally { b.disabled = false; }
+          } catch (err) {
+            await laporkanBackfillGagal(err);
+          } finally {
+            b.disabled = false;
+            b.textContent = labelAwal;
+          }
         } }, 'Kirim semua sekarang'),
       ]),
       h('details.mt-3', null, [

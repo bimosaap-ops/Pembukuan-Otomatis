@@ -31,6 +31,29 @@ export const KUNCI_SHEETS = {
 /** Berapa lama menunggu jawaban webhook sebelum dianggap gagal dan diantrekan. */
 const BATAS_MS = 8000;
 
+/**
+ * Berapa baris per permintaan.
+ *
+ * Sebelumnya seluruh pembukuan dikirim dalam satu POST, dan pada ribuan baris
+ * permintaan itu tidak pernah selesai tepat waktu — yang terlihat oleh pengguna
+ * cuma "Sheets tidak merespons dalam 60 detik", tanpa satu pun bagian yang
+ * terselamatkan. Dipecah, tiap permintaan jadi pendek, kemajuannya bisa
+ * ditunjukkan, dan yang gagal cukup diulang sepotong. Aman diulang karena
+ * upsert di sisi Apps Script berbasis hash: mengirim bongkah yang sama dua kali
+ * tidak menggandakan apa pun.
+ */
+export const UKURAN_BONGKAH = 250;
+
+/** Batas waktu satu bongkah. Lega, karena cold start Apps Script sendiri bisa
+ *  beberapa detik — tapi tidak lagi harus memuat seluruh pembukuan. */
+const BATAS_BONGKAH_MS = 45000;
+
+/** Permintaan terakhir juga membangun ulang Dashboard, dan itu memang lama. */
+const BATAS_RAPIKAN_MS = 90000;
+
+/** Berapa kali satu bongkah diulang sebelum menyerah. */
+const COBA_ULANG_BONGKAH = 2;
+
 export async function bacaKonfigSheets() {
   const [url, aktif] = await Promise.all([
     pengaturanRepo.baca(KUNCI_SHEETS.URL, ''),
@@ -184,43 +207,185 @@ export async function post(url, payload, batasMs = BATAS_MS) {
 }
 
 /**
+ * Ulangi permintaan yang gagal karena keadaan sesaat, bukan karena salah alamat.
+ *
+ * Membedakan keduanya penting: batas waktu dan kunci Apps Script yang sedang
+ * dipegang proses lain memang bisa berbeda hasilnya sedetik kemudian, sedangkan
+ * URL yang salah atau deployment yang tidak publik akan gagal dengan cara yang
+ * persis sama berapa kali pun dicoba — mengulangnya hanya memperlama kegagalan
+ * yang sudah pasti, dan menyembunyikan pesannya di balik penungguan.
+ */
+function layakDiulang(e) {
+  const pesan = String((e && e.message) || '');
+  return /tidak merespons dalam/i.test(pesan)
+    || /sedang dipakai proses lain/i.test(pesan)
+    || /failed to fetch|networkerror|network error|load failed/i.test(pesan);
+}
+
+async function postUlang(url, payload, batasMs, maksUlang = COBA_ULANG_BONGKAH) {
+  let terakhir;
+  for (let coba = 0; coba <= maksUlang; coba += 1) {
+    try {
+      return await post(url, payload, batasMs);
+    } catch (e) {
+      terakhir = e;
+      if (!layakDiulang(e)) throw e;
+    }
+  }
+  throw terakhir;
+}
+
+/** Serap satu balasan server ke hasil gabungan. */
+function serap(hasil, jawab) {
+  hasil.baru += Number(jawab.inserted) || 0;
+  hasil.diperbarui += Number(jawab.updated) || 0;
+  hasil.dihapus += Number(jawab.dihapus) || 0;
+  // `total` adalah keadaan Sheet SESUDAH permintaan itu, jadi yang berlaku
+  // adalah balasan terakhir — bukan penjumlahan seluruh balasan.
+  hasil.total = Number(jawab.total) || 0;
+  if (jawab.spreadsheet) hasil.spreadsheet = jawab.spreadsheet;
+  if (jawab.sheet) hasil.sheet = jawab.sheet;
+}
+
+/**
+ * Kegagalan yang membawa serta berapa baris yang sudah benar-benar mendarat.
+ *
+ * Tanpa angka ini, pengiriman yang putus di tengah tidak bisa dibedakan dari
+ * yang tidak pernah dimulai, dan pengguna hanya bisa menebak apakah menekan
+ * tombolnya lagi akan menggandakan datanya (tidak akan — upsertnya per hash).
+ */
+function terputus(sebab, terkirim, total) {
+  const e = new Error(sebab.message);
+  e.terkirim = terkirim;
+  e.total = total;
+  e.sebab = sebab;
+  return e;
+}
+
+/**
  * Kirim transaksi ke webhook secara langsung, tanpa antrean.
  * Dipakai "Kirim semua sekarang" (backfill penuh) dan oleh `syncAtauAntri`.
  * Melempar error bila gagal — pemanggil yang memutuskan mau diantrekan atau tidak.
  *
+ * Dikirim per bongkah (lihat UKURAN_BONGKAH), berurutan. Berurutan, bukan
+ * serentak: Apps Script menyerialkan permintaan dengan LockService, jadi
+ * mengirim paralel hanya membuat sebagian menunggu kunci sampai batas waktunya
+ * habis — lebih lambat, bukan lebih cepat.
+ *
  * @param {Array} transaksi daftar buatTransaksi()
  * @param {Map} akunMap peta id->akun
  * @param {Map} kategoriMap peta id->kategori (untuk kolom kategoriNama yang mudah dibaca)
- * @param {{batasMs?: number}} [opsi] `batasMs` menaikkan batas waktu bawaan
- *   (8 detik) — dipakai "Kirim semua sekarang" karena bisa mengirim ratusan
- *   baris sekaligus dan Apps Script butuh waktu lebih lama menuliskannya.
+ * @param {{batasMs?: number, selaras?: boolean, onProgress?: Function}} [opsi]
+ *   `onProgress({terkirim, total, tahap})` dipanggil di antara bongkah;
+ *   `selaras` menambahkan permintaan penutup yang membuang baris yatim.
  */
 export async function syncKeSheets(transaksi, akunMap, kategoriMap, opsi = {}) {
   const { url, aktif } = await bacaKonfigSheets();
   if (!aktif || !url || !transaksi?.length) return { skipped: true };
-  const rows = transaksi.map((t) => barisUntukSheet(t, akunMap, kategoriMap));
-  const payload = {
-    rows,
-    dikirimPada: new Date().toISOString(),
-    // `jumlah` dibandingkan dengan rows.length di sisi Apps Script untuk
-    // mendeteksi JSON yang terpotong di tengah jalan — penting justru pada mode
-    // selaras, karena payload cacat di sana berarti penghapusan yang salah.
-    jumlah: rows.length,
-    selaras: opsi.selaras === true,
+  return kirimBaris(url, transaksi.map((t) => barisUntukSheet(t, akunMap, kategoriMap)), opsi);
+}
+
+/**
+ * Inti pengirimannya, dipisah dari pembacaan konfigurasi supaya bisa diuji
+ * langsung dengan `fetch` palsu — seluruh tes di repositori ini sengaja tidak
+ * menyentuh IndexedDB, dan pemotongan bongkah justru bagian yang paling perlu
+ * dibuktikan: salah di sini berarti baris hilang diam-diam.
+ */
+export async function kirimBaris(url, rows, opsi = {}) {
+  const batasMs = opsi.batasMs || BATAS_BONGKAH_MS;
+  const lapor = typeof opsi.onProgress === 'function' ? opsi.onProgress : () => {};
+
+  const hasil = {
+    ok: true, dikirim: rows.length, baru: 0, diperbarui: 0, dihapus: 0,
+    total: 0, spreadsheet: '', sheet: '',
   };
-  const jawab = await post(url, payload, opsi.batasMs);
-  // Yang dilaporkan adalah apa yang DIKERJAKAN server, bukan berapa yang kita
-  // kirim. Keduanya bisa berbeda jauh — dan kalau berbeda, justru itu yang perlu
-  // dilihat pengguna, bukan disembunyikan di balik hitungan lokal yang optimis.
+  let terkirim = 0;
+
+  for (let i = 0; i < rows.length; i += UKURAN_BONGKAH) {
+    const bongkah = rows.slice(i, i + UKURAN_BONGKAH);
+    let jawab;
+    try {
+      jawab = await postUlang(url, {
+        rows: bongkah,
+        dikirimPada: new Date().toISOString(),
+        // `jumlah` dibandingkan dengan rows.length di sisi Apps Script untuk
+        // mendeteksi JSON yang terpotong di tengah jalan — penting justru pada
+        // mode selaras, karena payload cacat di sana berarti penghapusan yang salah.
+        jumlah: bongkah.length,
+      }, batasMs);
+    } catch (e) {
+      throw terputus(e, terkirim, rows.length);
+    }
+    serap(hasil, jawab);
+    terkirim += bongkah.length;
+    lapor({ terkirim, total: rows.length, tahap: 'kirim' });
+  }
+
+  if (opsi.selaras === true) {
+    lapor({ terkirim, total: rows.length, tahap: 'selaras' });
+    try {
+      serap(hasil, await postUlang(url, permintaanSelaras(rows, { rapikan: true }),
+        opsi.batasRapikanMs || BATAS_RAPIKAN_MS));
+    } catch (e) {
+      throw terputus(e, terkirim, rows.length);
+    }
+  } else {
+    // Dashboard disegarkan lewat permintaan TERPISAH yang tidak ditunggu.
+    // Memisahkannya adalah intinya: membangun Dashboard berarti membaca seluruh
+    // tab data dan menghitung ulang QUERY di atasnya, dan selama itu menumpang
+    // permintaan yang membawa data, hiasan ikut menentukan apakah transaksinya
+    // terlihat tersimpan. Gagal pun tidak apa-apa — permintaan berikutnya, atau
+    // menu "Pembukuan" di Sheet, akan mengulangnya.
+    post(url, { rapikan: true, rows: [], dikirimPada: new Date().toISOString() },
+      BATAS_RAPIKAN_MS).catch(() => {});
+  }
+
+  return hasil;
+}
+
+/**
+ * Payload penyelarasan: hanya identitas baris, bukan seluruh isinya.
+ *
+ * Server cuma butuh hash (untuk tahu baris mana yang masih ada) dan label
+ * rekening (untuk tidak menyentuh rekening milik perangkat lain). Mengirim isi
+ * lengkapnya berarti penghapusan baris yatim ikut menunggu ribuan baris
+ * terkirim ulang, padahal baris-baris itu barusan saja dikirim.
+ *
+ * `hanyaSelaras` WAJIB ikut: tanpa penanda itu Apps Script akan memperlakukan
+ * baris identitas sebagai data dan menuliskannya — mengosongkan tanggal,
+ * nominal, dan kategori yang sudah benar.
+ */
+function permintaanSelaras(rows, opsi = {}) {
+  const identitas = rows.map((r) => ({
+    hash: r.hash, bank: r.bank, nomorRekening: r.nomorRekening,
+  }));
+  return {
+    selaras: true,
+    hanyaSelaras: true,
+    rapikan: opsi.rapikan === true,
+    rows: identitas,
+    jumlah: identitas.length,
+    dikirimPada: new Date().toISOString(),
+  };
+}
+
+/**
+ * Tanyakan keadaan Sheet sekarang: namanya, dan berapa baris yang ada di sana.
+ *
+ * `AbortController` hanya memutus sisi browser — Apps Script terus berjalan
+ * sampai selesai. Jadi "tidak merespons dalam 45 detik" sama sekali bukan
+ * berarti tidak ada yang mendarat, dan menebaknya adalah hal terakhir yang
+ * pantas disuruhkan ke pengguna. Satu ping murah menjawabnya dengan pasti.
+ */
+export async function statusSheets() {
+  const { url, aktif } = await bacaKonfigSheets();
+  if (!aktif || !url) return { skipped: true };
+  const j = await post(url, { ping: true, dikirimPada: new Date().toISOString() }, 10000);
   return {
     ok: true,
-    dikirim: rows.length,
-    baru: Number(jawab.inserted) || 0,
-    diperbarui: Number(jawab.updated) || 0,
-    dihapus: Number(jawab.dihapus) || 0,
-    total: Number(jawab.total) || 0,
-    spreadsheet: jawab.spreadsheet || '',
-    sheet: jawab.sheet || '',
+    total: Number(j.total) || 0,
+    spreadsheet: j.spreadsheet || '',
+    sheet: j.sheet || '',
   };
 }
 
@@ -233,14 +398,10 @@ export async function praTinjauSelaras(transaksi, akunMap, kategoriMap) {
   const { url, aktif } = await bacaKonfigSheets();
   if (!aktif || !url || !transaksi?.length) return { skipped: true };
   const rows = transaksi.map((t) => barisUntukSheet(t, akunMap, kategoriMap));
-  const jawab = await post(url, {
-    praTinjau: true,
-    selaras: true,
-    dikirimPada: new Date().toISOString(),
-    jumlah: rows.length,
-    // Pratinjau cukup mengirim identitasnya saja, bukan seluruh isi baris.
-    rows: rows.map((r) => ({ hash: r.hash, bank: r.bank, nomorRekening: r.nomorRekening })),
-  }, 60000);
+  // Bentuk payloadnya persis sama dengan permintaan penyelarasan sungguhan,
+  // hanya ditandai pratinjau — supaya angka yang disebut di dialog konfirmasi
+  // dihitung dari masukan yang sama dengan yang nanti benar-benar dipakai.
+  const jawab = await post(url, Object.assign(permintaanSelaras(rows), { praTinjau: true }), 45000);
   return {
     ok: true,
     akanDihapus: Number(jawab.akanDihapus) || 0,

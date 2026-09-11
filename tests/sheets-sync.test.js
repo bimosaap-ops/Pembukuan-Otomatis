@@ -13,7 +13,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { barisUntukSheet, validasiUrlWebhook, post } from '../src/services/sheets-sync.js';
+import {
+  barisUntukSheet, validasiUrlWebhook, post, kirimBaris, UKURAN_BONGKAH,
+} from '../src/services/sheets-sync.js';
 import { buatTransaksi } from '../src/domain/entities.js';
 
 /* ==========================================================================
@@ -194,4 +196,184 @@ test('post menolak status HTTP yang bukan sukses', async () => {
   try {
     await assert.rejects(() => post('https://x/exec', {}), /404/);
   } finally { pulihkan(); }
+});
+
+/* ==========================================================================
+   kirimBaris — pemotongan bongkah
+
+   Seluruh pembukuan dulu dikirim dalam satu POST, dan pada ribuan baris
+   permintaan itu tidak pernah selesai tepat waktu: yang terlihat pengguna cuma
+   "Sheets tidak merespons dalam 60 detik", tanpa satu baris pun terselamatkan.
+   Yang diuji di sini adalah invarian yang menggantikannya — tiap bongkah pendek,
+   TIDAK ADA baris yang hilang di antara bongkah, dan yang gagal bisa diulang.
+   ========================================================================== */
+
+/** Rekam tiap payload yang dikirim, dan izinkan balasan yang berbeda per POST. */
+function rekamFetch(jawab) {
+  const asli = globalThis.fetch;
+  const dikirim = [];
+  globalThis.fetch = async (url, opsi) => {
+    const payload = JSON.parse(opsi.body);
+    dikirim.push(payload);
+    const hasil = typeof jawab === 'function' ? jawab(payload, dikirim.length) : jawab;
+    if (hasil instanceof Error) throw hasil;
+    return balasanTeks(JSON.stringify(hasil));
+  };
+  return { dikirim, pulihkan: () => { globalThis.fetch = asli; } };
+}
+
+const barisUji = (n) => Array.from({ length: n }, (_, i) => ({
+  hash: `h${i}`, tanggal: '2025-07-01', deskripsi: `Uji ${i}`, nominal: -1000,
+  debit: 1000, kredit: 0, bank: 'BCA', nomorRekening: '1234567890',
+}));
+
+/** Hanya POST yang benar-benar membawa data (bukan selaras/rapikan). */
+const bongkahData = (dikirim) => dikirim.filter((p) => p.rows?.length && !p.selaras && !p.rapikan);
+
+test('kirimBaris memecah kiriman besar jadi beberapa POST, tidak satu pun melebihi UKURAN_BONGKAH', async () => {
+  const { dikirim, pulihkan } = rekamFetch({ ok: true, inserted: 1, total: 600, spreadsheet: 'catatan keuangan' });
+  try {
+    await kirimBaris('https://x/exec', barisUji(600));
+  } finally { pulihkan(); }
+
+  const data = bongkahData(dikirim);
+  assert.equal(data.length, 3, '600 baris / 250 per bongkah = 3 permintaan');
+  for (const p of data) {
+    assert.ok(p.rows.length <= UKURAN_BONGKAH, `bongkah ${p.rows.length} baris melebihi ${UKURAN_BONGKAH}`);
+    // Apps Script menolak payload yang `jumlah`-nya tidak cocok — kalau ini
+    // dihitung dari daftar penuh alih-alih dari bongkahnya, penyelarasan akan
+    // diam-diam berhenti bekerja.
+    assert.equal(p.jumlah, p.rows.length, 'jumlah harus mengikuti bongkahnya, bukan total kiriman');
+  }
+});
+
+test('kirimBaris tidak menghilangkan atau menggandakan satu baris pun di antara bongkah', async () => {
+  const { dikirim, pulihkan } = rekamFetch({ ok: true, inserted: 1, total: 0 });
+  const rows = barisUji(600);
+  try {
+    await kirimBaris('https://x/exec', rows);
+  } finally { pulihkan(); }
+
+  const terkirim = bongkahData(dikirim).flatMap((p) => p.rows.map((r) => r.hash));
+  assert.equal(terkirim.length, 600, 'jumlah baris terkirim harus sama persis');
+  assert.deepEqual(terkirim, rows.map((r) => r.hash), 'isi dan urutannya harus utuh');
+});
+
+test('kirimBaris menjumlahkan hitungan server, tapi mengambil total dari balasan TERAKHIR', async () => {
+  // `total` adalah keadaan Sheet sesudah tiap permintaan, bukan sumbangan
+  // permintaan itu. Menjumlahkannya akan melaporkan 900 untuk Sheet berisi 600.
+  const { pulihkan } = rekamFetch((_p, ke) => ({
+    ok: true, inserted: 200, updated: 50, total: ke * 200, spreadsheet: 'catatan keuangan', sheet: 'Transaksi',
+  }));
+  let r;
+  try {
+    r = await kirimBaris('https://x/exec', barisUji(600));
+  } finally { pulihkan(); }
+
+  assert.equal(r.baru, 600, 'inserted dijumlahkan');
+  assert.equal(r.diperbarui, 150, 'updated dijumlahkan');
+  assert.equal(r.total, 600, 'total diambil dari balasan terakhir, bukan dijumlahkan');
+  assert.equal(r.spreadsheet, 'catatan keuangan');
+  assert.equal(r.dikirim, 600);
+});
+
+test('kirimBaris mengulang bongkah yang kehabisan waktu, dan tidak melewatkan barisnya', async () => {
+  let gagalSekali = false;
+  const { dikirim, pulihkan } = rekamFetch((p) => {
+    if (p.rows?.length && !gagalSekali) {
+      gagalSekali = true;
+      return new Error('Sheets tidak merespons dalam 45 detik');
+    }
+    return { ok: true, inserted: p.rows?.length || 0, total: 300 };
+  });
+  let r;
+  try {
+    r = await kirimBaris('https://x/exec', barisUji(300));
+  } finally { pulihkan(); }
+
+  const data = bongkahData(dikirim);
+  assert.equal(data.length, 3, '2 bongkah + 1 pengulangan');
+  const terkirim = new Set(data.flatMap((p) => p.rows.map((x) => x.hash)));
+  assert.equal(terkirim.size, 300, 'seluruh baris tetap terkirim walau ada yang diulang');
+  assert.equal(r.ok, true);
+});
+
+test('kirimBaris TIDAK mengulang penolakan server — itu akan gagal sama saja', async () => {
+  // URL salah atau deployment tidak publik gagal dengan cara yang persis sama
+  // berapa kali pun dicoba. Mengulangnya hanya memperlama kegagalan yang sudah
+  // pasti, dan menyembunyikan pesannya di balik penungguan.
+  const { dikirim, pulihkan } = rekamFetch({ ok: false, error: 'Sheets menolak data' });
+  try {
+    await assert.rejects(() => kirimBaris('https://x/exec', barisUji(100)), /menolak data/);
+  } finally { pulihkan(); }
+  assert.equal(bongkahData(dikirim).length, 1, 'hanya dicoba sekali');
+});
+
+test('kirimBaris yang putus melaporkan berapa baris yang sudah benar-benar mendarat', async () => {
+  const { pulihkan } = rekamFetch((p, ke) => (ke > 1
+    ? new Error('Sheets tidak merespons dalam 45 detik')
+    : { ok: true, inserted: p.rows.length, total: 250 }));
+  try {
+    await assert.rejects(
+      () => kirimBaris('https://x/exec', barisUji(600)),
+      (e) => {
+        // Tanpa angka ini, pengiriman yang putus di tengah tidak bisa dibedakan
+        // dari yang tidak pernah dimulai.
+        assert.equal(e.terkirim, 250, 'bongkah pertama sudah mendarat');
+        assert.equal(e.total, 600);
+        return true;
+      },
+    );
+  } finally { pulihkan(); }
+});
+
+test('kirimBaris melaporkan kemajuan yang menaik sampai jumlah penuh', async () => {
+  const { pulihkan } = rekamFetch({ ok: true, inserted: 0, total: 0 });
+  const kemajuan = [];
+  try {
+    await kirimBaris('https://x/exec', barisUji(600), {
+      onProgress: (k) => kemajuan.push(k),
+    });
+  } finally { pulihkan(); }
+
+  assert.deepEqual(kemajuan.map((k) => k.terkirim), [250, 500, 600]);
+  assert.ok(kemajuan.every((k) => k.total === 600));
+});
+
+/* ==========================================================================
+   Permintaan penutup: penyelarasan ringan + rapikan
+   ========================================================================== */
+
+test('permintaan selaras hanya membawa identitas baris, dan ditandai hanyaSelaras', async () => {
+  const { dikirim, pulihkan } = rekamFetch({ ok: true, inserted: 0, dihapus: 3, total: 600 });
+  try {
+    await kirimBaris('https://x/exec', barisUji(600), { selaras: true });
+  } finally { pulihkan(); }
+
+  const penutup = dikirim[dikirim.length - 1];
+  assert.equal(penutup.selaras, true);
+  // Tanpa penanda ini Apps Script memperlakukan baris identitas sebagai data
+  // dan menuliskannya — mengosongkan tanggal, nominal, dan kategori.
+  assert.equal(penutup.hanyaSelaras, true, 'penanda hanyaSelaras wajib ikut');
+  assert.equal(penutup.rapikan, true, 'Dashboard dibangun di permintaan penutup');
+  assert.equal(penutup.rows.length, 600);
+  assert.equal(penutup.jumlah, 600, 'jumlah harus cocok, kalau tidak penyelarasan diabaikan server');
+  assert.deepEqual(Object.keys(penutup.rows[0]).sort(), ['bank', 'hash', 'nomorRekening']);
+  assert.ok(!('nominal' in penutup.rows[0]), 'isi baris tidak perlu dikirim ulang');
+});
+
+test('tanpa selaras, Dashboard diminta lewat permintaan terpisah tanpa baris data', async () => {
+  // Memisahkannya adalah intinya: membangun Dashboard berarti membaca seluruh
+  // tab data, dan selama itu menumpang permintaan yang membawa data, hiasan ikut
+  // menentukan apakah transaksinya terlihat tersimpan.
+  const { dikirim, pulihkan } = rekamFetch({ ok: true, inserted: 10, total: 10 });
+  try {
+    await kirimBaris('https://x/exec', barisUji(10));
+    await new Promise((r) => setTimeout(r, 0)); // permintaan rapikan tidak ditunggu
+  } finally { pulihkan(); }
+
+  const rapikan = dikirim.filter((p) => p.rapikan === true);
+  assert.equal(rapikan.length, 1);
+  assert.deepEqual(rapikan[0].rows, [], 'permintaan rapikan tidak membawa data sama sekali');
+  assert.ok(!rapikan[0].selaras, 'rapikan tidak boleh ikut menghapus apa pun');
 });

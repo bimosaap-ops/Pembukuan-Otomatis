@@ -58,6 +58,11 @@ const ARSIP_SHEET_NAME = '_Arsip';
  */
 const VERSI_DASHBOARD = '8';
 
+/** Jeda minimum antar PEMERIKSAAN apakah Dashboard perlu dibangun ulang. */
+const JEDA_PEMERIKSAAN_MS = 2 * 60 * 1000;
+/** Jeda minimum antar pembangunan ulang yang dipicu sidik data / kerusakan. */
+const JEDA_BANGUN_MS = 10 * 60 * 1000;
+
 /**
  * Sel rumus yang dipantau untuk mendeteksi Dashboard rusak. Tata letaknya kini
  * dinamis (tinggi tiap blok bergantung jumlah rekening, bulan, dan kategori),
@@ -71,6 +76,8 @@ const LEBAR_KOLOM = [110, 95, 300, 120, 120, 120, 130, 90, 130, 150, 80, 110, 14
 const KOLOM_RP = [4, 5, 6, 16];  // Nominal, Debit, Kredit, Saldo
 const KOLOM_WAKTU = 13;          // Dikirim Pada
 const KOLOM_SEMBUNYI = [1, 7, 12]; // Hash, ID Kategori, ID Upload — dipakai mesin, bukan mata
+/** Kolom terakhir yang perlu dibaca saat menyelaraskan: I, "No. Rekening". */
+const KOLOM_REKENING_AKHIR = 9;
 
 const RP = '"Rp "#,##0;[RED]-"Rp "#,##0';
 const FORMAT_WAKTU = 'dd/mm/yyyy HH:mm';
@@ -126,16 +133,12 @@ function getSheet() {
   if (perluPerbaikanHeader) sh.getRange(1, 1, 1, HEADER.length).setValues([HEADER]);
   if (baru || perluPerbaikanHeader) rapikanTampilan(sh);
 
-  // Dashboard adalah hiasan; menyimpan transaksi adalah tugas utamanya. Kalau
-  // pembangunan Dashboard gagal, doPost TIDAK boleh ikut gagal — sebelumnya
-  // galat di sini membatalkan seluruh permintaan sehingga transaksinya pun
-  // tidak tersimpan. Versinya baru dicatat setelah berhasil, jadi percobaan
-  // berikutnya akan mengulang sendiri.
-  try {
-    pastikanDashboard(ss, sh.getName());
-  } catch (e) {
-    console.warn('Dashboard gagal dibangun, data tetap disimpan:', e);
-  }
+  // Dashboard SENGAJA tidak dibangun di sini. Membangunnya berarti membaca
+  // seluruh tab data dan memaksa Sheets menghitung ulang QUERY di atas ribuan
+  // baris — pekerjaan yang tidak ada hubungannya dengan menyimpan transaksi,
+  // tapi ikut ditanggung setiap permintaan sampai akhirnya melewati batas waktu
+  // dan permintaannya terlihat gagal. Sekarang hanya permintaan yang secara
+  // eksplisit meminta `rapikan` yang membayarnya (lihat doPost).
   return sh;
 }
 
@@ -277,12 +280,24 @@ function jangkarRumus() {
  */
 function pastikanDashboard(ss, namaSheetData) {
   const prop = PropertiesService.getScriptProperties();
+  const ada = ss.getSheetByName(DASHBOARD_SHEET_NAME);
+  const versiBeda = prop.getProperty('versiDashboard') !== VERSI_DASHBOARD;
+
+  // MEMERIKSA saja sudah mahal: statistikData membaca seluruh tab data, dan
+  // dashboardRusak memaksa Sheets menghitung ulang QUERY/ARRAYFORMULA di atas
+  // ribuan baris. Backfill mengirim datanya dalam banyak bongkah berturut-turut;
+  // tanpa jeda ini, ongkos pemeriksaan itu dibayar berulang-ulang dalam hitungan
+  // detik untuk data yang bentuknya jelas belum berubah.
+  if (ada && !versiBeda) {
+    const diperiksa = Number(prop.getProperty('pemeriksaanTerakhir') || 0);
+    if (Date.now() - diperiksa < JEDA_PEMERIKSAAN_MS) return;
+    prop.setProperty('pemeriksaanTerakhir', String(Date.now()));
+  }
+
   const stat = statistikData(ss.getSheetByName(namaSheetData));
   const sidik = sidikData(stat);
 
-  const ada = ss.getSheetByName(DASHBOARD_SHEET_NAME);
   if (ada) {
-    const versiBeda = prop.getProperty('versiDashboard') !== VERSI_DASHBOARD;
     const sidikBeda = prop.getProperty('sidikDashboard') !== sidik;
     if (!versiBeda && !sidikBeda && !dashboardRusak(ada)) return;
     // Jalur versi berbeda tidak dibatasi: itu sekali jalan dan memang diminta.
@@ -290,7 +305,7 @@ function pastikanDashboard(ss, namaSheetData) {
     // menyembuhkan tidak diulang tiap POST — mahal dan boros kuota.
     if (!versiBeda) {
       const terakhir = Number(prop.getProperty('pembangunanTerakhir') || 0);
-      if (Date.now() - terakhir < 10 * 60 * 1000) return;
+      if (Date.now() - terakhir < JEDA_BANGUN_MS) return;
       prop.setProperty('pembangunanTerakhir', String(Date.now()));
     }
     ss.deleteSheet(ada);
@@ -766,10 +781,24 @@ function doPost(e) {
   try {
     const body = e.postData ? e.postData.contents : '';
     const data = body ? JSON.parse(body) : {};
-    if (data.ping) return json({ok:true, ping:true});
+    // Ping ikut melaporkan identitas dan jumlah baris. Aplikasi memakainya untuk
+    // menjawab pertanyaan yang muncul tiap kali pengiriman putus di tengah:
+    // "sebenarnya berapa yang sudah mendarat?" — AbortController hanya memutus
+    // sisi browser, Apps Script di sini terus jalan sampai selesai.
+    if (data.ping) {
+      const ssPing = SpreadsheetApp.getActiveSpreadsheet();
+      return json(Object.assign(tujuan(ssPing, getSheet()), {ok:true, ping:true}));
+    }
 
     const rows = Array.isArray(data.rows) ? data.rows : [];
     const hapus = Array.isArray(data.hapus) ? data.hapus.map(String).filter(Boolean) : [];
+    const mintaRapikan = data.rapikan === true;
+    // Payload identitas: hanya hash + label rekening, dipakai untuk menghitung
+    // baris yatim tanpa perlu mengirim ulang seluruh isi pembukuan. Barisnya
+    // TIDAK punya tanggal/nominal, jadi menuliskannya berarti mengosongkan data
+    // asli — karena itu jalur tulis di bawah dijaga eksplisit oleh bendera ini,
+    // bukan disimpulkan dari bentuk payload.
+    const hanyaSelaras = data.hanyaSelaras === true;
 
     // Penyelarasan hanya berlaku bila SEMUA pengaman lolos. Ini operasi yang
     // menghapus data pengguna, jadi kecurigaan sekecil apa pun -> jangan hapus.
@@ -783,6 +812,12 @@ function doPost(e) {
       && Number(data.jumlah) === rows.length;
 
     if (!rows.length && !hapus.length && !mintaSelaras) {
+      if (mintaRapikan) {
+        const ssKosong = SpreadsheetApp.getActiveSpreadsheet();
+        const shKosong = getSheet();
+        rapikanDashboard(ssKosong, shKosong);
+        return json(Object.assign(tujuan(ssKosong, shKosong), {ok:true, inserted:0, updated:0, dihapus:0}));
+      }
       return json({ok:true, inserted:0, updated:0, dihapus:0});
     }
 
@@ -806,7 +841,11 @@ function doPost(e) {
     const sh = getSheet();
     const last = sh.getLastRow();
     const lebar = HEADER.length;
-    const lama = last > 1 ? sh.getRange(2, 1, last - 1, lebar).getValues() : [];
+    // Dari blok data lama yang dibutuhkan hanyalah kolom Hash — dan, saat
+    // menyelaraskan, kolom Bank & No. Rekening. Membaca ke-16 kolomnya berarti
+    // menarik ~16x lebih banyak sel tiap permintaan tanpa satu pun dipakai.
+    const lebarBaca = mintaSelaras ? KOLOM_REKENING_AKHIR : 1;
+    const lama = last > 1 ? sh.getRange(2, 1, last - 1, lebarBaca).getValues() : [];
 
     const nomorBaris = {};
     lama.forEach((r, i) => {
@@ -848,7 +887,10 @@ function doPost(e) {
 
     const tambah = [];
     const perbarui = [];
-    for (const r of dedup.values()) {
+    // Payload identitas tidak memuat isi baris. Menuliskannya akan mengganti
+    // tanggal, nominal, dan kategori yang sudah benar dengan sel kosong — jadi
+    // jalur tulis dilewati seluruhnya, bukan sekadar "kebetulan tidak kena".
+    for (const r of (hanyaSelaras ? [] : dedup.values())) {
       const hash = String(r.hash || '');
       // Saldo sengaja TIDAK dipaksa jadi 0 saat kosong: nol adalah saldo yang
       // sah, sedangkan kosong berarti bank tidak menyebutkannya (transaksi
@@ -860,7 +902,7 @@ function doPost(e) {
       else if (!baris) tambah.push(baru);
     }
 
-    if (perbarui.length) tulisPembaruan(sh, perbarui, last);
+    if (perbarui.length) tulisPembaruan(sh, perbarui);
 
     if (tambah.length) {
       sh.getRange(last+1, 1, tambah.length, lebar).setValues(tambah);
@@ -874,6 +916,11 @@ function doPost(e) {
 
     if (jumlahDibuang) hapusBaris(sh, dibuang);
 
+    // Dashboard dibangun PALING AKHIR dan hanya bila diminta, supaya hiasan
+    // tidak pernah ikut menentukan apakah transaksinya tersimpan — dan supaya
+    // rentetan bongkah backfill tidak membayarnya berulang kali.
+    if (mintaRapikan) rapikanDashboard(ss, sh);
+
     return json(Object.assign(tujuan(ss, sh), {
       ok: true,
       inserted: tambah.length,
@@ -885,6 +932,23 @@ function doPost(e) {
     return json({ok:false, error: String(err && err.message || err)});
   } finally {
     kunci.releaseLock();
+  }
+}
+
+/**
+ * Bangun/segarkan Dashboard tanpa pernah menggagalkan permintaannya.
+ *
+ * Dashboard adalah hiasan; menyimpan transaksi adalah tugas utamanya. Galat di
+ * sini pernah membatalkan seluruh doPost sehingga transaksinya pun tidak
+ * tersimpan — itu tidak boleh terulang, jadi kegagalannya dicatat lalu
+ * dilupakan. Versinya baru dicatat setelah pembangunan berhasil, sehingga
+ * permintaan `rapikan` berikutnya akan mencoba lagi sendiri.
+ */
+function rapikanDashboard(ss, sh) {
+  try {
+    pastikanDashboard(ss, sh.getName());
+  } catch (e) {
+    console.warn('Dashboard gagal dibangun, data tetap disimpan:', e);
   }
 }
 
@@ -930,21 +994,34 @@ const AMBANG_TULIS_BORONG = 20;
  * Untuk pembaruan yang sedikit, menulis per baris paling murah. Tapi "Kirim
  * semua sekarang" memperbarui SELURUH transaksi sekaligus — pada pembukuan
  * dengan ribuan baris itu berarti ribuan penulisan terpisah, yang melewati
- * batas waktu permintaan jauh sebelum selesai. Di atas ambang, seluruh blok
- * data dibaca sekali, diubah di memori, lalu ditulis balik sekali.
+ * batas waktu permintaan jauh sebelum selesai. Di atas ambang, bloknya dibaca
+ * sekali, diubah di memori, lalu ditulis balik sekali.
  *
- * Konsekuensinya: sel yang berisi rumus di kolom A..N akan berubah jadi nilai
- * statis. Tab data ini memang murni tulisan skrip, jadi tidak ada rumus yang
- * hilang; kolom tambahan pengguna di luar A..N tidak tersentuh.
+ * Yang dibaca-tulis hanya JENDELA dari baris terkecil sampai terbesar yang
+ * benar-benar berubah, bukan seluruh tab. Sejak pengiriman dipecah per bongkah,
+ * bedanya besar: satu bongkah 250 baris di pembukuan 2.000 baris menyentuh 250
+ * baris, bukan 2.000 — dan tanpa pembatasan ini backfill justru jadi lebih berat
+ * setelah dipecah, karena tiap bongkah menulis ulang seluruh tab.
+ *
+ * Konsekuensinya: sel yang berisi rumus di dalam jendela itu akan berubah jadi
+ * nilai statis. Tab data ini memang murni tulisan skrip, jadi tidak ada rumus
+ * yang hilang; kolom di luar A..P tidak tersentuh.
  */
-function tulisPembaruan(sh, perbarui, last) {
+function tulisPembaruan(sh, perbarui) {
   if (perbarui.length <= AMBANG_TULIS_BORONG) {
     perbarui.forEach((p) => sh.getRange(p.baris, 1, 1, HEADER.length).setValues([p.nilai]));
     return;
   }
-  const rng = sh.getRange(2, 1, last - 1, HEADER.length);
+  let awal = perbarui[0].baris;
+  let akhir = perbarui[0].baris;
+  perbarui.forEach((p) => {
+    if (p.baris < awal) awal = p.baris;
+    if (p.baris > akhir) akhir = p.baris;
+  });
+
+  const rng = sh.getRange(awal, 1, akhir - awal + 1, HEADER.length);
   const nilai = rng.getValues();
-  perbarui.forEach((p) => { nilai[p.baris - 2] = p.nilai; });
+  perbarui.forEach((p) => { nilai[p.baris - awal] = p.nilai; });
   rng.setValues(nilai);
 }
 
