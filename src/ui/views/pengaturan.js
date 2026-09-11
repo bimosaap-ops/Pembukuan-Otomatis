@@ -423,15 +423,21 @@ async function kartuSheets() {
             const tujuan = r.spreadsheet ? ` ke "${r.spreadsheet}"` : '';
             const rincian = `${r.baru} baru, ${r.diperbarui} diperbarui`
               + (r.dihapus ? `, ${r.dihapus} dihapus` : '');
-            // Setelah penyelarasan, isi Sheet HARUS sama dengan yang dikirim.
-            // Kalau tidak, datanya mendarat di tempat lain — dan itu justru yang
-            // paling perlu dilihat, bukan disembunyikan di balik pesan sukses.
-            if (r.total !== r.dikirim) {
+            // Setelah penyelarasan, isi Sheet harus bisa dijelaskan seluruhnya:
+            // yang baru saja dikirim, ditambah baris milik rekening perangkat
+            // lain yang memang sengaja dipertahankan. Selisih di luar itu berarti
+            // datanya mendarat di tempat lain — dan itu yang perlu dilihat.
+            // Tanpa memperhitungkan `dipertahankan`, setiap pengguna dua perangkat
+            // akan dituduhi salah URL padahal semuanya benar.
+            const seharusnya = r.dikirim + r.dipertahankan;
+            const milikLain = r.dipertahankan
+              ? ` (${r.dipertahankan} baris rekening lain dipertahankan)` : '';
+            if (r.total !== seharusnya) {
               toastGagal(`Terkirim${tujuan} (${rincian}), tapi Sheet berisi ${r.total} baris `
-                + `padahal dikirim ${r.dikirim}. Periksa URL webhook — kemungkinan menunjuk `
+                + `padahal seharusnya ${seharusnya}. Periksa URL webhook — kemungkinan menunjuk `
                 + 'deployment atau spreadsheet lain.');
             } else {
-              toastSukses(`Terkirim${tujuan}: ${rincian} · total ${r.total} baris.`);
+              toastSukses(`Terkirim${tujuan}: ${rincian} · total ${r.total} baris${milikLain}.`);
             }
           } catch (err) {
             await laporkanBackfillGagal(err);

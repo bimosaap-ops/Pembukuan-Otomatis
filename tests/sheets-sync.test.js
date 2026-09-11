@@ -14,7 +14,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  barisUntukSheet, validasiUrlWebhook, post, kirimBaris, UKURAN_BONGKAH,
+  barisUntukSheet, validasiUrlWebhook, post, kirimBaris, kirimHapus, UKURAN_BONGKAH,
 } from '../src/services/sheets-sync.js';
 import { buatTransaksi } from '../src/domain/entities.js';
 
@@ -376,4 +376,58 @@ test('tanpa selaras, Dashboard diminta lewat permintaan terpisah tanpa baris dat
   assert.equal(rapikan.length, 1);
   assert.deepEqual(rapikan[0].rows, [], 'permintaan rapikan tidak membawa data sama sekali');
   assert.ok(!rapikan[0].selaras, 'rapikan tidak boleh ikut menghapus apa pun');
+});
+
+/* ==========================================================================
+   kirimHapus — penghapusan juga harus dipecah
+
+   Menghapus satu rekening mengirim SELURUH hash miliknya. Selama itu muat satu
+   permintaan berbatas 8 detik, menghapus rekening berisi ribuan transaksi tidak
+   pernah bisa selesai — jalur yang tertinggal waktu jalur kirim dipecah.
+   ========================================================================== */
+
+const hashUji = (n) => Array.from({ length: n }, (_, i) => `h${i}`);
+
+test('kirimHapus memecah daftar hash jadi beberapa permintaan', async () => {
+  const { dikirim, pulihkan } = rekamFetch({ ok: true, dihapus: 250, total: 0 });
+  let r;
+  try {
+    r = await kirimHapus('https://x/exec', hashUji(600));
+  } finally { pulihkan(); }
+
+  assert.equal(dikirim.length, 3);
+  for (const p of dikirim) assert.ok(p.hapus.length <= UKURAN_BONGKAH, `${p.hapus.length} > ${UKURAN_BONGKAH}`);
+  assert.deepEqual(dikirim.flatMap((p) => p.hapus), hashUji(600), 'tidak boleh ada hash yang terlewat');
+  assert.deepEqual(r.sisa, []);
+});
+
+test('kirimHapus menyisakan hanya yang belum terkirim, bukan seluruh daftar', async () => {
+  // Mengantrekan ulang bongkah yang server sudah konfirmasi berarti setiap
+  // simpan berikutnya membayar ongkos pekerjaan yang jelas sudah selesai.
+  const { pulihkan } = rekamFetch((p, ke) => (ke > 1
+    ? new Error('Sheets menolak data')
+    : { ok: true, dihapus: p.hapus.length, total: 0 }));
+  let r;
+  try {
+    r = await kirimHapus('https://x/exec', hashUji(600));
+  } finally { pulihkan(); }
+
+  assert.equal(r.dihapus, 250, 'bongkah pertama sudah dikonfirmasi server');
+  assert.equal(r.sisa.length, 350, 'hanya sisanya yang diantrekan lagi');
+  assert.equal(r.sisa[0], 'h250');
+});
+
+test('kirimHapus mengulang bongkah yang kehabisan waktu', async () => {
+  let gagalSekali = false;
+  const { dikirim, pulihkan } = rekamFetch(() => {
+    if (!gagalSekali) { gagalSekali = true; return new Error('Sheets tidak merespons dalam 45 detik'); }
+    return { ok: true, dihapus: 1, total: 0 };
+  });
+  let r;
+  try {
+    r = await kirimHapus('https://x/exec', hashUji(300));
+  } finally { pulihkan(); }
+
+  assert.equal(dikirim.length, 3, '2 bongkah + 1 pengulangan');
+  assert.deepEqual(r.sisa, [], 'tidak ada yang tertinggal');
 });

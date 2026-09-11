@@ -11,9 +11,10 @@ import {
   muatTema, pantauSistem, terapkanTema, temaTersimpan, setTema, modeGelapAktif, TEMA,
 } from './theme.js';
 import { cegahDropDiLuar } from './components/dropzone.js';
-import { toastGagal } from './components/toast.js';
+import { toastGagal, toastSukses } from './components/toast.js';
 import { on, EVENT } from '../core/events.js';
 import { pantauKoneksiSheets } from '../services/sheets-sync.js';
+import { jalankanMigrasi } from '../data/migrasi.js';
 
 /**
  * Header hanya dipakai di layar HP; di layar lebar tempatnya diambil alih
@@ -78,6 +79,18 @@ async function mulai() {
     await siapkanDb();
     await kategoriRepo.semaiBawaan();
     await muatTema();
+
+    // Migrasi dijalankan SEBELUM sinkron. Kalau antrean lama terkirim duluan,
+    // Sheet menerima baris berhash lama yang beberapa detik kemudian jadi yatim.
+    const migrasi = await jalankanMigrasi().catch((e) => {
+      console.error('Migrasi hash gagal:', e);
+      return null;
+    });
+    if (migrasi?.dijalankan) {
+      toastSukses(`${migrasi.jumlah} transaksi diperiksa ulang terhadap duplikat. `
+        + 'Tekan "Kirim semua sekarang" di Pengaturan agar Google Sheet ikut menyesuaikan.');
+    }
+
     // Antrean retry Sheets (kalau ada, dari sesi sebelumnya yang gagal
     // tersinkron) dicoba lagi begitu database siap, dan tiap kali koneksi pulih.
     pantauKoneksiSheets();

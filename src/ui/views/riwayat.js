@@ -9,10 +9,12 @@
 
 import { h, ikon, ganti } from '../../core/dom.js';
 import { tanggalTampil } from '../../core/dates.js';
+import { rupiah } from '../../core/format.js';
 import { on, emit, EVENT } from '../../core/events.js';
 import * as uploadRepo from '../../data/repo/uploads.js';
+import * as trxRepo from '../../data/repo/transactions.js';
 import { hapusDariSheets } from '../../services/sheets-sync.js';
-import { uploadTumpangTindih } from '../../domain/validate.js';
+import { uploadTumpangTindih, transaksiKembarAntarUpload } from '../../domain/validate.js';
 import { STATUS_UPLOAD } from '../../domain/entities.js';
 import { dataView } from '../components/data-view.js';
 import { konfirmasi } from '../components/modal.js';
@@ -44,7 +46,7 @@ export async function mount(wadah) {
   wadah.appendChild(halaman);
 
   async function render() {
-    const daftar = await uploadRepo.daftar();
+    const [daftar, transaksi] = await Promise.all([uploadRepo.daftar(), trxRepo.semua()]);
 
     const totalBerhasil = daftar.reduce((s, u) => s + (u.berhasil || 0), 0);
     const totalDuplikat = daftar.reduce((s, u) => s + (u.duplikat || 0), 0);
@@ -53,6 +55,12 @@ export async function mount(wadah) {
     // diam-diam. Ditandai di sini supaya ketahuan saat kejadian, bukan
     // berbulan-bulan kemudian saat angkanya dibandingkan dengan rekening koran.
     const tumpang = uploadTumpangTindih(daftar);
+    // Periode yang beririsan baru DUGAAN; ini buktinya. Yang dihitung hanya
+    // transaksi kembar yang datang dari berkas berbeda — kembar di dalam satu
+    // statement memang bisa benar-benar terjadi (dua QRIS Rp 20.000 di hari
+    // yang sama), dan menuduhnya ikut salah akan membuat peringatan ini bising
+    // sampai tidak dibaca lagi.
+    const kembar = transaksiKembarAntarUpload(transaksi);
 
     ganti(isi, [
       h('.grid-kpi', null, [
@@ -61,6 +69,19 @@ export async function mount(wadah) {
         kpi('Duplikat Dilewati', String(totalDuplikat)),
         kpi('Perlu Dicek', String(daftar.filter((u) => u.status === STATUS_UPLOAD.SEBAGIAN).length)),
       ]),
+
+      kembar.jumlah
+        ? h('.info-kotak.info-kotak--warning', null, [
+          ikon('peringatan', 18),
+          h('div', null, [
+            h('b', { text: `${kembar.jumlah} transaksi tercatat dua kali dari berkas berbeda ` }),
+            `(senilai ${rupiah(kembar.nilai)}). `,
+            'Ini menggelembungkan pemasukan dan pengeluaran tanpa terlihat mencurigakan. '
+            + 'Cari upload yang periodenya beririsan di bawah, lalu batalkan salah satunya — '
+            + 'transaksi yang terhapus ikut hilang dari Google Sheet.',
+          ]),
+        ])
+        : null,
 
       tumpang.size
         ? h('.info-kotak.info-kotak--warning', null, [

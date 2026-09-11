@@ -4,8 +4,18 @@
  * Dua lapis:
  *   1. Hash isi file. Kalau PDF yang sama persis di-upload ulang, ketahuan
  *      sebelum parsing dimulai.
- *   2. Hash per transaksi dari lima komponen: bank, nomor rekening, tanggal,
- *      deskripsi, dan nominal.
+ *   2. Hash per transaksi dari empat komponen: REKENING, tanggal, deskripsi,
+ *      dan nominal.
+ *
+ * Rekening diwakili `accountId`, bukan teks bank + nomor rekening seperti yang
+ * tertulis di dalam berkas. Itu perbedaan yang menentukan: pencocokan rekening
+ * di seluruh aplikasi sengaja menganggap teks itu tidak mengikat — nol di depan
+ * diabaikan, dan label bank tidak dipakai sama sekali — sehingga satu rekening
+ * yang sama bisa ditulis berbeda di dua berkas. Selama teks itu ikut jadi kunci,
+ * dua berkas yang jelas-jelas rekening yang sama menghasilkan kunci berbeda dan
+ * seluruh transaksi di periode yang beririsan tersimpan dua kali. Memakai
+ * `accountId` juga membuat memindahkan statement ke rekening lain benar-benar
+ * berpengaruh, yang sebelumnya tidak.
  *
  * Kelima komponen itu saja belum cukup: dua transaksi yang memang benar-benar
  * terjadi dua kali (misal dua pembayaran QRIS Rp 20.000 di hari yang sama)
@@ -22,12 +32,11 @@ import { normalisasiDeskripsi } from '../core/format.js';
 
 export const STATUS_BARIS = { BARU: 'baru', DUPLIKAT: 'duplikat' };
 
-/** Teks kunci dari lima komponen. Nominal dibulatkan ke 2 desimal agar stabil. */
-export function kunciDasar({ bank, nomorRekening, tanggal, deskripsi, nominal }) {
+/** Teks kunci dari empat komponen. Nominal dibulatkan ke 2 desimal agar stabil. */
+export function kunciDasar({ accountId, tanggal, deskripsi, nominal }) {
   const nom = Math.round((Number(nominal) || 0) * 100) / 100;
   return [
-    normalisasiDeskripsi(bank),
-    String(nomorRekening ?? '').replace(/\D/g, ''),
+    String(accountId ?? ''),
     String(tanggal ?? ''),
     normalisasiDeskripsi(deskripsi),
     nom.toFixed(2),
@@ -45,14 +54,19 @@ export function hashFinal(baseHash, ordinal) {
 
 /**
  * Menghitung baseHash untuk setiap baris hasil parsing.
- * `akun` menyediakan bank dan nomor rekening yang jadi bagian kunci.
+ *
+ * @param {Array} baris
+ * @param {string} accountId rekening tujuan. Boleh kosong — saat berkas dari
+ *   rekening yang belum pernah ada dibaca, rekeningnya memang belum terbentuk.
+ *   Hash yang dihasilkan bersifat sementara dan hanya dipakai untuk ANGKA
+ *   duplikat di layar Review; `simpanDraft` menghitungnya ulang dengan id yang
+ *   sudah pasti sebelum apa pun disimpan.
  */
-export async function bubuhiBaseHash(baris, akun) {
+export async function bubuhiBaseHash(baris, accountId) {
   return Promise.all(baris.map(async (b) => ({
     ...b,
     baseHash: await hitungBaseHash({
-      bank: akun.bank,
-      nomorRekening: akun.nomorRekening,
+      accountId,
       tanggal: b.tanggal,
       deskripsi: b.deskripsi,
       nominal: b.nominal,

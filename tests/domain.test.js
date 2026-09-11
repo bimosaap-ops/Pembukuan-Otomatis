@@ -4,11 +4,11 @@ import assert from 'node:assert/strict';
 import { kunciDasar, bubuhiBaseHash, tandaiDuplikat, paksaSimpan, ringkasDuplikat } from '../src/domain/dedupe.js';
 import { tentukanKategori, saranPola, tambahPola, KATEGORI_BAWAAN } from '../src/domain/categorize.js';
 import { KATEGORI_LAINNYA_KELUAR, KATEGORI_LAINNYA_MASUK } from '../src/domain/entities.js';
-import { uploadTumpangTindih } from '../src/domain/validate.js';
+import { uploadTumpangTindih, transaksiKembarAntarUpload } from '../src/domain/validate.js';
 import { parseStatement } from '../src/parsers/registry.js';
 import { statementBCA, statementBCAAgustus } from './fixtures/statements.js';
 
-const AKUN = { bank: 'BCA', nomorRekening: '1234567890' };
+const AKUN = 'acc_bca_1';
 
 /** Meniru database: menghitung berapa transaksi tersimpan per baseHash. */
 function petaJumlah(tersimpan) {
@@ -21,13 +21,35 @@ function petaJumlah(tersimpan) {
    Kunci duplikat
    ========================================================================== */
 
-test('kunci duplikat dibentuk dari lima komponen dan tahan beda penulisan', () => {
-  const a = kunciDasar({ bank: 'BCA', nomorRekening: '1234567890', tanggal: '2025-07-02', deskripsi: 'TRSF  E-BANKING cr', nominal: 5000000 });
-  const b = kunciDasar({ bank: 'bca', nomorRekening: '1234-567-890', tanggal: '2025-07-02', deskripsi: 'trsf e-banking CR', nominal: 5000000.0 });
-  assert.equal(a, b, 'spasi ganda, huruf besar-kecil, dan tanda pisah nomor tidak boleh membedakan');
+test('kunci duplikat tahan beda penulisan deskripsi dan pembulatan nominal', () => {
+  const a = kunciDasar({ accountId: AKUN, tanggal: '2025-07-02', deskripsi: 'TRSF  E-BANKING cr', nominal: 5000000 });
+  const b = kunciDasar({ accountId: AKUN, tanggal: '2025-07-02', deskripsi: 'trsf e-banking CR', nominal: 5000000.0 });
+  assert.equal(a, b, 'spasi ganda dan huruf besar-kecil tidak boleh membedakan');
 
-  const beda = kunciDasar({ bank: 'BCA', nomorRekening: '1234567890', tanggal: '2025-07-02', deskripsi: 'TRSF E-BANKING CR', nominal: 5000001 });
+  const beda = kunciDasar({ accountId: AKUN, tanggal: '2025-07-02', deskripsi: 'TRSF E-BANKING CR', nominal: 5000001 });
   assert.notEqual(a, beda, 'nominal berbeda harus menghasilkan kunci berbeda');
+});
+
+test('kunci duplikat memakai rekening, bukan teks bank/nomor dari dalam berkas', async () => {
+  // Inti temuan audit. Dua berkas dari SATU rekening yang sama bisa menuliskan
+  // identitasnya berbeda — label bank berbeda ("Permata" vs "PermataBank"),
+  // nomor ber-nol-depan, atau nomornya tidak terbaca sama sekali di berkas
+  // pertama. Pencocokan rekening sengaja menganggap perbedaan itu tidak
+  // mengikat; selama kunci duplikat TIDAK ikut begitu, seluruh transaksi di
+  // periode yang beririsan tersimpan dua kali.
+  const baris = [{ tanggal: '2025-07-02', deskripsi: 'QRIS ALFAMART', nominal: -15000 }];
+
+  const dariBerkasA = await bubuhiBaseHash(baris, 'acc_permata');
+  const dariBerkasB = await bubuhiBaseHash(baris, 'acc_permata');
+  assert.equal(dariBerkasA[0].baseHash, dariBerkasB[0].baseHash,
+    'rekening sama harus menghasilkan kunci sama, apa pun tulisan di berkasnya');
+
+  // Dan kebalikannya: baris identik di rekening BERBEDA tidak boleh bertabrakan.
+  // Dengan kunci lama ini mustahil dibedakan — memindahkan statement ke rekening
+  // lain sama sekali tidak mengubah kuncinya.
+  const rekeningLain = await bubuhiBaseHash(baris, 'acc_bca');
+  assert.notEqual(dariBerkasA[0].baseHash, rekeningLain[0].baseHash,
+    'rekening berbeda harus terpisah');
 });
 
 /* ==========================================================================
@@ -265,4 +287,46 @@ test('uploadTumpangTindih melewati upload tanpa periode atau tanpa transaksi', (
 
   assert.equal(uploadTumpangTindih([]).size, 0);
   assert.equal(uploadTumpangTindih(undefined).size, 0);
+});
+
+/* ==========================================================================
+   transaksiKembarAntarUpload
+
+   Pembedaan yang menentukan: kembar dari SATU berkas memang bisa asli, kembar
+   dari DUA berkas adalah penggandaan. Kalau keduanya sama-sama ditandai,
+   peringatannya jadi bising sampai tidak dibaca lagi.
+   ========================================================================== */
+
+const kembarUji = (i, uploadedFileId) => ({
+  hash: `b1#${i}`, baseHash: 'b1', uploadedFileId, nominal: -20000,
+});
+
+test('kembar di dalam satu berkas TIDAK ditandai — dua QRIS sehari memang bisa terjadi', () => {
+  const hasil = transaksiKembarAntarUpload([kembarUji(1, 'upl1'), kembarUji(2, 'upl1')]);
+  assert.equal(hasil.jumlah, 0);
+});
+
+test('kembar dari dua berkas ditandai, beserta nilai rupiah kelebihannya', () => {
+  const hasil = transaksiKembarAntarUpload([kembarUji(1, 'upl1'), kembarUji(2, 'upl2')]);
+  assert.equal(hasil.jumlah, 1, 'satu di antaranya memang seharusnya ada; sisanya berlebih');
+  assert.equal(hasil.nilai, 20000);
+  assert.deepEqual(hasil.hash, ['b1#2']);
+});
+
+test('transaksi manual tidak ikut dinilai', () => {
+  // Tanpa uploadedFileId: pengguna memasukkannya sendiri, jadi kembarannya
+  // memang disengaja dan bukan urusan pemeriksaan ini.
+  const hasil = transaksiKembarAntarUpload([
+    { hash: 'm#1', baseHash: 'm', nominal: -5000 },
+    { hash: 'm#2', baseHash: 'm', nominal: -5000 },
+  ]);
+  assert.equal(hasil.jumlah, 0);
+});
+
+test('baseHash berbeda tidak pernah dianggap kembar', () => {
+  const hasil = transaksiKembarAntarUpload([
+    { hash: 'a#1', baseHash: 'a', uploadedFileId: 'upl1', nominal: -1000 },
+    { hash: 'c#1', baseHash: 'c', uploadedFileId: 'upl2', nominal: -1000 },
+  ]);
+  assert.equal(hasil.jumlah, 0);
 });

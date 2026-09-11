@@ -237,7 +237,7 @@ function barisPenuh(i) {
  * mungkin membedakan pembacaan 1 kolom dari pembacaan 16 kolom, dan justru itu
  * yang sedang dijaga di sini.
  */
-function jalankanDoPost({ barisAda = 0, payload }) {
+function jalankanDoPost({ barisAda = 0, payload, kunciMacet = false }) {
   const grid = [HEADER_UJI.slice()];
   for (let i = 0; i < barisAda; i += 1) {
     const b = barisPenuh(i);
@@ -322,7 +322,12 @@ function jalankanDoPost({ barisAda = 0, payload }) {
       getUi: () => new Proxy({}, { get: () => () => ({}) }),
     },
     PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] ?? null, setProperty: (k, v) => { props[k] = v; } }) },
-    LockService: { getScriptLock: () => ({ waitLock: () => {}, releaseLock: () => {} }) },
+    LockService: {
+      getScriptLock: () => ({
+        waitLock: () => { if (kunciMacet) throw new Error('timeout'); },
+        releaseLock: () => {},
+      }),
+    },
     Charts: { ChartType: { PIE: 'PIE', COLUMN: 'COLUMN' } },
     Utilities: { formatDate: (dt) => `${dt.getFullYear()}-01` },
     Session: { getScriptTimeZone: () => 'Asia/Jakarta' },
@@ -443,4 +448,39 @@ test('pembaruan borong hanya menyentuh jendela baris yang berubah, bukan seluruh
   const tulisLebar = h.tulisan.filter((t) => t.sheet === 'Transaksi' && t.lebar === 16 && t.tinggi > 1);
   assert.equal(tulisLebar.length, 1, 'satu penulisan borong');
   assert.equal(tulisLebar[0].tinggi, 250, `menulis ${tulisLebar[0].tinggi} baris untuk 250 perubahan`);
+});
+
+test('arsip membaca satu jendela, bukan satu panggilan per baris yang dihapus', () => {
+  // Menghapus 300 baris dengan satu getRange per baris berarti 300 perjalanan
+  // bolak-balik ke Sheets di dalam permintaan yang waktunya terbatas — pola
+  // yang sama persis dengan yang membuat pengiriman dulu tidak pernah selesai.
+  const rows = Array.from({ length: 700 }, (_, i) => identitas(i));
+  const h = jalankanDoPost({
+    barisAda: 1000,
+    payload: { selaras: true, hanyaSelaras: true, rows, jumlah: rows.length },
+  });
+
+  assert.equal(h.balasan.dihapus, 300);
+  const bacaSatuBaris = h.bacaan.filter((b) => b.sheet === 'Transaksi' && b.baris >= 2 && b.tinggi === 1);
+  assert.ok(bacaSatuBaris.length < 10,
+    `${bacaSatuBaris.length} pembacaan per baris — seharusnya satu jendela`);
+});
+
+test('ping tetap menjawab walau kunci skrip sedang dipegang proses lain', () => {
+  // Aplikasi memakai ping untuk menjawab "berapa yang sudah mendarat?" tepat
+  // sesudah pengiriman putus — yaitu saat kemungkinan besar masih ada
+  // permintaan panjang yang memegang kunci. Kalau ping ikut antre, satu-satunya
+  // saat pertanyaan itu ditanyakan adalah saat ia paling mungkin tak terjawab.
+  const h = jalankanDoPost({ barisAda: 1250, payload: { ping: true }, kunciMacet: true });
+  assert.equal(h.balasan.ok, true);
+  assert.equal(h.balasan.total, 1250);
+});
+
+test('permintaan yang membawa data tetap menghormati kunci', () => {
+  // Kebalikannya harus tetap berlaku: dua perangkat yang menulis bersamaan
+  // masih harus diserialkan, kalau tidak yang satu menimpa hasil yang lain.
+  const rows = Array.from({ length: 10 }, (_, i) => barisPenuh(9000 + i));
+  const h = jalankanDoPost({ barisAda: 10, payload: { rows, jumlah: rows.length }, kunciMacet: true });
+  assert.equal(h.balasan.ok, false);
+  assert.match(h.balasan.error, /sedang dipakai proses lain/);
 });

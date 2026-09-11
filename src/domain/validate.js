@@ -169,3 +169,49 @@ export function uploadTumpangTindih(daftar) {
   }
   return bertanda;
 }
+
+/**
+ * Transaksi kembar yang datang dari BERKAS BERBEDA.
+ *
+ * Dua pembayaran QRIS Rp 20.000 di hari yang sama memang bisa benar-benar
+ * terjadi dua kali — dan keduanya akan berasal dari satu statement yang sama.
+ * Penggandaan karena kunci duplikat yang meleset selalu datang dari dua berkas
+ * berbeda. Pembedaan itulah yang membuat peringatan ini layak ditampilkan:
+ * tanpanya, setiap transaksi kembar yang sah ikut tertuduh dan peringatannya
+ * jadi bising sampai tidak dibaca lagi.
+ *
+ * Transaksi manual (tanpa `uploadedFileId`) tidak ikut dinilai: pengguna
+ * memasukkannya sendiri, jadi kembarannya memang disengaja.
+ *
+ * @param {Array} transaksi
+ * @returns {{jumlah:number, nilai:number, hash:string[]}} baris berlebih —
+ *   yaitu seluruh anggota kelompok DIKURANGI satu yang memang seharusnya ada.
+ */
+export function transaksiKembarAntarUpload(transaksi) {
+  const perBase = new Map();
+  (transaksi || []).forEach((t) => {
+    if (!t || !t.baseHash || !t.uploadedFileId) return;
+    if (!perBase.has(t.baseHash)) perBase.set(t.baseHash, []);
+    perBase.get(t.baseHash).push(t);
+  });
+
+  let jumlah = 0;
+  let nilai = 0;
+  const hash = [];
+
+  perBase.forEach((anggota) => {
+    if (anggota.length < 2) return;
+    const berkas = new Set(anggota.map((t) => t.uploadedFileId));
+    if (berkas.size < 2) return;
+
+    // Satu di antaranya memang seharusnya ada; sisanya berlebih.
+    const berlebih = anggota.slice(1);
+    jumlah += berlebih.length;
+    berlebih.forEach((t) => {
+      nilai += Math.abs(Number(t.nominal) || 0);
+      if (t.hash) hash.push(t.hash);
+    });
+  });
+
+  return { jumlah, nilai, hash };
+}

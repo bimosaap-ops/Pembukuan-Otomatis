@@ -153,7 +153,7 @@ test('PDF ber-password ditolak tanpa password dan terbaca dengan password yang b
 });
 
 test('dua PDF berurutan terakumulasi tanpa menggandakan data', opsi, async () => {
-  const akun = { bank: 'BCA', nomorRekening: '1234567890' };
+  const akun = 'acc_bca_1';
 
   const juli = parseStatement(await potonganDariPdf('bca-juli-2025.pdf'));
   const agustus = parseStatement(await potonganDariPdf('bca-agustus-2025.pdf'));

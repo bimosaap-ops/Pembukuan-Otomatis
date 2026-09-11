@@ -769,6 +769,29 @@ function diagnosaDashboard() {
 }
 
 function doPost(e) {
+  const body = e.postData ? e.postData.contents : '';
+  let data;
+  try {
+    data = body ? JSON.parse(body) : {};
+  } catch (err) {
+    return json({ok:false, error:'Payload bukan JSON yang sah'});
+  }
+
+  // Ping dijawab SEBELUM kunci diambil, dan itu bukan kebetulan: aplikasi
+  // memakainya untuk menjawab "sebenarnya berapa yang sudah mendarat?" tepat
+  // setelah pengiriman putus — saat kemungkinan besar masih ada permintaan
+  // panjang yang memegang kunci. Menunggu kunci di sini berarti satu-satunya
+  // saat pertanyaan itu ditanyakan adalah saat ia paling mungkin tak terjawab.
+  // Aman: ping hanya membaca.
+  if (data.ping) {
+    try {
+      const ssPing = SpreadsheetApp.getActiveSpreadsheet();
+      return json(Object.assign(tujuan(ssPing, getSheet()), {ok:true, ping:true}));
+    } catch (err) {
+      return json({ok:false, error: String(err && err.message || err)});
+    }
+  }
+
   // Dua perangkat yang menyinkron bersamaan sama-sama melakukan baca-ubah-tulis
   // di sheet yang sama; tanpa kunci, yang satu bisa menimpa hasil yang lain.
   const kunci = LockService.getScriptLock();
@@ -779,17 +802,6 @@ function doPost(e) {
   }
 
   try {
-    const body = e.postData ? e.postData.contents : '';
-    const data = body ? JSON.parse(body) : {};
-    // Ping ikut melaporkan identitas dan jumlah baris. Aplikasi memakainya untuk
-    // menjawab pertanyaan yang muncul tiap kali pengiriman putus di tengah:
-    // "sebenarnya berapa yang sudah mendarat?" — AbortController hanya memutus
-    // sisi browser, Apps Script di sini terus jalan sampai selesai.
-    if (data.ping) {
-      const ssPing = SpreadsheetApp.getActiveSpreadsheet();
-      return json(Object.assign(tujuan(ssPing, getSheet()), {ok:true, ping:true}));
-    }
-
     const rows = Array.isArray(data.rows) ? data.rows : [];
     const hapus = Array.isArray(data.hapus) ? data.hapus.map(String).filter(Boolean) : [];
     const mintaRapikan = data.rapikan === true;
@@ -1038,7 +1050,17 @@ function arsipkan(sh, nomor) {
   try {
     const ss = sh.getParent();
     const lebar = HEADER.length;
-    const isi = nomor.map((n) => sh.getRange(n, 1, 1, lebar).getValues()[0]);
+    if (!nomor.length) return;
+
+    // Satu pembacaan untuk jendela baris terkecil..terbesar, bukan satu
+    // pembacaan per baris. Penyelarasan bisa membuang ratusan baris sekaligus,
+    // dan `getRange` per baris berarti ratusan perjalanan bolak-balik ke Sheets
+    // di dalam permintaan yang waktunya terbatas — persis pola yang membuat
+    // pengiriman dulu tidak pernah selesai.
+    const awal = nomor[0];
+    const akhir = nomor[nomor.length - 1];
+    const jendela = sh.getRange(awal, 1, akhir - awal + 1, lebar).getValues();
+    const isi = nomor.map((n) => jendela[n - awal]);
     if (!isi.length) return;
 
     let arsip = ss.getSheetByName(ARSIP_SHEET_NAME);

@@ -16,7 +16,7 @@ import { hashBiner } from '../core/hash.js';
 import { bukaDokumen, ekstrakPotongan, ButuhPassword } from '../parsers/pdf-loader.js';
 import { parseStatement } from '../parsers/registry.js';
 import { validasiBaris, cocokkanRingkasan, periodeDariBaris } from '../domain/validate.js';
-import { bubuhiBaseHash, tandaiDuplikat, ringkasDuplikat } from '../domain/dedupe.js';
+import { bubuhiBaseHash, tandaiDuplikat, ringkasDuplikat, hashFinal } from '../domain/dedupe.js';
 import { kategorikanBanyak } from '../domain/categorize.js';
 import { buatTransaksi, SUMBER, STATUS_UPLOAD } from '../domain/entities.js';
 import * as akunRepo from '../data/repo/accounts.js';
@@ -117,7 +117,12 @@ export async function prosesFile(file, opsi = {}) {
     nomorRekening: hasil.nomorRekening || cocokAkun?.nomorRekening || '',
   };
 
-  const denganHash = await bubuhiBaseHash(barisValid, identitas);
+  // Hash di sini SEMENTARA: rekening tujuan baru pasti setelah pengguna
+  // memilihnya di layar Review, dan untuk berkas dari rekening yang belum
+  // pernah ada, rekeningnya memang belum terbentuk. Angka duplikat yang
+  // ditampilkan memakai tebakan terbaik (rekening yang cocok, kalau ada);
+  // `simpanDraft` menghitung ulang dengan id yang sudah pasti sebelum menyimpan.
+  const denganHash = await bubuhiBaseHash(barisValid, cocokAkun?.id || '');
   const jumlahLama = await trxRepo.hitungPerBaseHash(denganHash.map((b) => b.baseHash));
   const ditandai = tandaiDuplikat(denganHash, jumlahLama);
 
@@ -218,6 +223,38 @@ export async function simpanDraft(draft, pilihan = {}) {
     akun = await akunRepo.simpanAkun({ ...akun, saldoAwal: draft.hasil.saldoAwal });
   }
 
+  // Hash dihitung ULANG di sini, dengan rekening yang sudah pasti.
+  //
+  // Yang dihitung di `prosesFile` hanya tebakan — rekeningnya bisa saja belum
+  // ada saat itu, atau pengguna memindahkannya ke rekening lain di layar
+  // Review. Menyimpan hash tebakan berarti transaksi yang sama bisa masuk dua
+  // kali lewat berkas yang rekeningnya tertulis berbeda, dan itu penyebab
+  // penggelembungan yang paling sulit dilihat karena angkanya tetap tampak wajar.
+  const barisFinal = await bubuhiBaseHash(baris, akun.id);
+  const jumlahLamaFinal = await trxRepo.hitungPerBaseHash(barisFinal.map((b) => b.baseHash));
+  const bernomor = tandaiDuplikat(barisFinal, jumlahLamaFinal);
+
+  // Duplikat yang baru ketahuan SEKARANG (karena rekeningnya baru pasti) tidak
+  // ikut disimpan — itu justru gunanya menghitung ulang. Kecuali baris yang di
+  // layar Review pengguna putuskan "tetap simpan": keputusan itu dihormati, tapi
+  // nomor urutnya harus digeser ke kejadian yang masih kosong. Indeks `hash` di
+  // database bersifat unik, jadi memaksakan nomor yang sudah terpakai bukan
+  // sekadar salah hitung — seluruh penyimpanan akan ditolak.
+  const dipakai = new Set(bernomor.filter((b) => !b.duplikat).map((b) => b.hash));
+  const siapSimpan = [];
+  bernomor.forEach((b, i) => {
+    if (!b.duplikat) { siapSimpan.push(b); return; }
+    if (!baris[i] || !baris[i].dipaksa) return;
+
+    let ordinal = (jumlahLamaFinal.get(b.baseHash) || 0) + 1;
+    while (dipakai.has(hashFinal(b.baseHash, ordinal))) ordinal += 1;
+    const digeser = {
+      ...b, ordinal, hash: hashFinal(b.baseHash, ordinal), duplikat: false, dipaksa: true,
+    };
+    dipakai.add(digeser.hash);
+    siapSimpan.push(digeser);
+  });
+
   const rekaman = await uploadRepo.simpanUpload({
     namaFile: draft.file.nama,
     ukuran: draft.file.ukuran,
@@ -227,14 +264,14 @@ export async function simpanDraft(draft, pilihan = {}) {
     periodeAwal: draft.periodeAwal,
     periodeAkhir: draft.periodeAkhir,
     jumlahTransaksi: draft.baris.length,
-    berhasil: baris.length,
-    duplikat: draft.ringkasDup.duplikat,
+    berhasil: siapSimpan.length,
+    duplikat: draft.baris.length - siapSimpan.length,
     fileHash: draft.fileHash,
-    status: tentukanStatus(draft, baris.length),
+    status: tentukanStatus(draft, siapSimpan.length),
     catatan: (draft.catatan || []).join(' '),
   });
 
-  const transaksi = baris.map((b, i) => buatTransaksi({
+  const transaksi = siapSimpan.map((b, i) => buatTransaksi({
     urutan: i,
     hash: b.hash,
     baseHash: b.baseHash,
@@ -251,7 +288,10 @@ export async function simpanDraft(draft, pilihan = {}) {
   }));
 
   await trxRepo.simpanBanyakTransaksi(transaksi);
-  onLangkah('simpan', 'selesai', `${transaksi.length} transaksi tersimpan`);
+  const tertahan = baris.length - transaksi.length;
+  onLangkah('simpan', 'selesai', tertahan
+    ? `${transaksi.length} transaksi tersimpan · ${tertahan} ternyata sudah ada`
+    : `${transaksi.length} transaksi tersimpan`);
 
   onLangkah('selesai', 'jalan');
   const akunTerbaru = await akunRepo.hitungUlangSaldo(akun.id);
@@ -269,7 +309,7 @@ export async function simpanDraft(draft, pilihan = {}) {
   Promise.all([akunRepo.peta(), kategoriRepo.peta()])
     .then(([akunMap, kategoriMap]) => syncAtauAntri(transaksi, akunMap, kategoriMap))
     .then((r) => {
-      if (r?.ok) onLangkah('selesai', 'selesai', `Saldo diperbarui · ${r.jumlah} baris ke Sheets`);
+      if (r?.ok) onLangkah('selesai', 'selesai', `Saldo diperbarui · ${r.dikirim} baris ke Sheets`);
       else if (r?.queued) onLangkah('selesai', 'selesai', 'Saldo diperbarui · Sheets diantrekan, dicoba lagi otomatis');
     })
     .catch((e) => console.warn('Sheets sync gagal:', e));

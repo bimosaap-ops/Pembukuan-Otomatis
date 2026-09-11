@@ -20,7 +20,7 @@
  * Naikkan CACHE_NAME setiap kali aset berubah agar versi lama dibersihkan.
  */
 
-const CACHE_NAME = 'pembukuan-v17';
+const CACHE_NAME = 'pembukuan-v18';
 
 /** Berapa lama menunggu jaringan sebelum memakai salinan cache. */
 const BATAS_JARINGAN_MS = 2500;
@@ -81,6 +81,7 @@ const ASET = [
   './src/data/repo/uploads.js',
   './src/data/repo/categories.js',
   './src/data/repo/settings.js',
+  './src/data/migrasi.js',
 
   './src/domain/entities.js',
   './src/domain/dedupe.js',

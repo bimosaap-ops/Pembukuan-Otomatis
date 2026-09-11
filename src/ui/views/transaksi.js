@@ -420,12 +420,10 @@ export function bukaFormManual(trx, akun, daftarKategori, selesai) {
     if (!fAkun.value) { toastGagal('Pilih rekening atau kas tujuan.'); return; }
 
     const nominal = fArah.value === 'masuk' ? besar : -besar;
-    const akunTerpilih = akun.find((a) => a.id === fAkun.value);
     const deskripsi = fDeskripsi.value.trim() || (fArah.value === 'masuk' ? 'Pemasukan manual' : 'Pengeluaran manual');
 
     const baseHash = await hitungBaseHash({
-      bank: akunTerpilih?.bank || '',
-      nomorRekening: akunTerpilih?.nomorRekening || '',
+      accountId: fAkun.value,
       tanggal: fTanggal.value,
       deskripsi,
       nominal,

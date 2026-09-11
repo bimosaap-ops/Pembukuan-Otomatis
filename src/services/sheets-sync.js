@@ -240,6 +240,10 @@ function serap(hasil, jawab) {
   hasil.baru += Number(jawab.inserted) || 0;
   hasil.diperbarui += Number(jawab.updated) || 0;
   hasil.dihapus += Number(jawab.dihapus) || 0;
+  // Baris milik rekening yang tidak dikenal pengirim — sah, dan sengaja tidak
+  // dihapus. Tanpa membawanya sampai ke layar, `total` di Sheet akan tampak
+  // lebih besar dari yang dikirim dan aplikasi menuduh webhooknya salah alamat.
+  hasil.dipertahankan += Number(jawab.dipertahankan) || 0;
   // `total` adalah keadaan Sheet SESUDAH permintaan itu, jadi yang berlaku
   // adalah balasan terakhir — bukan penjumlahan seluruh balasan.
   hasil.total = Number(jawab.total) || 0;
@@ -297,7 +301,7 @@ export async function kirimBaris(url, rows, opsi = {}) {
 
   const hasil = {
     ok: true, dikirim: rows.length, baru: 0, diperbarui: 0, dihapus: 0,
-    total: 0, spreadsheet: '', sheet: '',
+    dipertahankan: 0, total: 0, spreadsheet: '', sheet: '',
   };
   let terkirim = 0;
 
@@ -428,14 +432,45 @@ export async function hapusDariSheets(hashes) {
   const gabungan = [...new Set([...tertunda, ...daftar])];
   if (!gabungan.length) return { skipped: true };
 
-  try {
-    await post(url, { hapus: gabungan, dikirimPada: new Date().toISOString() });
-    await tulisAntreanHapus([]);
-    return { ok: true, jumlah: gabungan.length };
-  } catch (e) {
-    await tulisAntreanHapus(gabungan);
-    return { queued: true, jumlah: gabungan.length, error: e.message };
+  const { dihapus, sisa } = await kirimHapus(url, gabungan);
+  // Yang belum sempat terkirim disimpan lagi, bukan seluruhnya: bongkah yang
+  // sudah dikonfirmasi server tidak perlu diulang. Mengulangnya pun tidak
+  // merusak (baris yang sudah hilang tidak akan ketemu lagi), tapi mengantre
+  // pekerjaan yang jelas sudah selesai membuat setiap simpan berikutnya
+  // membayar ongkosnya lagi.
+  await tulisAntreanHapus(sisa);
+  if (!sisa.length) return { ok: true, jumlah: dihapus };
+  return { queued: true, jumlah: sisa.length, dihapus };
+}
+
+/**
+ * Kirim daftar hash yang harus hilang dari Sheet, per bongkah.
+ *
+ * Dipisah dan diekspor karena alasan yang sama dengan `kirimBaris`: bisa diuji
+ * tanpa IndexedDB. Dan dipecah karena alasan yang sama pula — menghapus satu
+ * rekening berarti mengirim SELURUH hash miliknya, yang di pembukuan ribuan
+ * baris tidak mungkin selesai dalam satu permintaan. Ini jalur yang tertinggal
+ * waktu jalur kirim dipecah.
+ */
+export async function kirimHapus(url, hashes, opsi = {}) {
+  const batasMs = opsi.batasMs || BATAS_BONGKAH_MS;
+  const daftar = [...hashes];
+  let dihapus = 0;
+
+  for (let i = 0; i < daftar.length; i += UKURAN_BONGKAH) {
+    const bongkah = daftar.slice(i, i + UKURAN_BONGKAH);
+    try {
+      const jawab = await postUlang(url, {
+        hapus: bongkah,
+        dikirimPada: new Date().toISOString(),
+      }, batasMs);
+      dihapus += Number(jawab.dihapus) || 0;
+    } catch (e) {
+      // Bongkah ini dan seluruh sisanya belum tentu sampai — antrekan lagi.
+      return { dihapus, sisa: daftar.slice(i), error: e.message };
+    }
   }
+  return { dihapus, sisa: [] };
 }
 
 /**
