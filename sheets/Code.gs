@@ -43,7 +43,7 @@ const DASHBOARD_SHEET_NAME = 'Dashboard';
  * perbaikan rumus hanya berlaku untuk Sheet baru, sementara Sheet yang sudah
  * ada tetap memakai rumus lama sampai pengguna ingat membuka menu "Pembukuan".
  */
-const VERSI_DASHBOARD = '4';
+const VERSI_DASHBOARD = '5';
 
 /** Sel rumus kunci di Dashboard — dipantau untuk mendeteksi kerusakan. */
 const SEL_RUMUS = ['A9', 'D10', 'G9', 'A45'];
@@ -99,7 +99,16 @@ function getSheet() {
   if (perluPerbaikanHeader) sh.getRange(1, 1, 1, HEADER.length).setValues([HEADER]);
   if (baru || perluPerbaikanHeader) rapikanTampilan(sh);
 
-  pastikanDashboard(ss, sh.getName());
+  // Dashboard adalah hiasan; menyimpan transaksi adalah tugas utamanya. Kalau
+  // pembangunan Dashboard gagal, doPost TIDAK boleh ikut gagal — sebelumnya
+  // galat di sini membatalkan seluruh permintaan sehingga transaksinya pun
+  // tidak tersimpan. Versinya baru dicatat setelah berhasil, jadi percobaan
+  // berikutnya akan mengulang sendiri.
+  try {
+    pastikanDashboard(ss, sh.getName());
+  } catch (e) {
+    console.warn('Dashboard gagal dibangun, data tetap disimpan:', e);
+  }
   return sh;
 }
 
@@ -248,15 +257,23 @@ function pastikanDashboard(ss, namaSheetData) {
   const KATEGORI = `ARRAYFORMULA(IF(${kol('N')}<>""${S}${kol('N')}${S}`
     + `IF(LEFT(${kol('G')}${S}4)="kat_"${S}PROPER(SUBSTITUTE(MID(${kol('G')}${S}5${S}100)${S}"_"${S}" "))${S}${kol('G')})))`;
 
+  // Matriks kategori x bulan selebar 1 + jumlah bulan. Sheet baru hanya punya
+  // 26 kolom, jadi grid-nya dilebarkan dulu bila perlu — menyetel lebar kolom
+  // yang belum ada membuat Apps Script melempar "Kolom tersebut melampaui batas"
+  // dan membatalkan seluruh pembangunan.
+  const kolomPivot = Math.max(jumlahBulan(ss.getSheetByName(namaSheetData)) + 1, 3);
+  const kolomPerlu = Math.max(kolomPivot + 2, 26);
+  if (d.getMaxColumns() < kolomPerlu) {
+    d.insertColumnsAfter(d.getMaxColumns(), kolomPerlu - d.getMaxColumns());
+  }
+  const AKHIR = hurufKolom(kolomPivot);
+
   d.setHiddenGridlines(true);
   d.setTabColor(BIRU_TUA);
-  d.setColumnWidth(1, 150);
-  d.setColumnWidths(2, 4, 125);
-  d.setColumnWidth(6, 24);
-  d.setColumnWidth(7, 170);
-  d.setColumnWidths(8, 2, 125);
-  d.setColumnWidth(10, 24);
-  d.setColumnWidths(11, 24, 105);
+  // Lebar seragam, tanpa kolom penyela sempit: kolom yang di bagian atas cuma
+  // jarak antar tabel, di bagian pivot adalah kolom bulan yang harus terbaca.
+  d.setColumnWidth(1, 170);
+  d.setColumnWidths(2, d.getMaxColumns() - 1, 120);
 
   /* ---------- Judul ---------- */
   d.getRange('A1:I1').merge()
@@ -326,21 +343,21 @@ function pastikanDashboard(ss, namaSheetData) {
   d.getRange('A43').setValue('RINCIAN PER KATEGORI DAN BULAN')
     .setFontWeight('bold').setFontSize(11).setFontColor(BIRU_TUA);
 
-  pitaSeksi(d, 'A44:I44', 'PENGELUARAN (DEBIT)', MERAH_TUA);
+  pitaSeksi(d, `A44:${AKHIR}44`, 'PENGELUARAN (DEBIT)', MERAH_TUA);
   d.getRange('A45').setFormula(
     `=IFERROR(QUERY({${KATEGORI}${AS}${BULAN}${AS}${kol('E')}}${S}`
     + `"select Col1, sum(Col3) where Col3 > 0 and Col1 <> '' group by Col1 pivot Col2"${S}0)${S}"Belum ada data")`,
   );
-  kepalaTabel(d, 'A45:Z45');
-  d.getRange('B46:Z78').setNumberFormat(RP);
+  kepalaTabel(d, `A45:${AKHIR}45`);
+  d.getRange(`B46:${AKHIR}78`).setNumberFormat(RP);
 
-  pitaSeksi(d, 'A80:I80', 'PEMASUKAN (KREDIT)', BIRU_TUA);
+  pitaSeksi(d, `A80:${AKHIR}80`, 'PEMASUKAN (KREDIT)', BIRU_TUA);
   d.getRange('A81').setFormula(
     `=IFERROR(QUERY({${KATEGORI}${AS}${BULAN}${AS}${kol('F')}}${S}`
     + `"select Col1, sum(Col3) where Col3 > 0 and Col1 <> '' group by Col1 pivot Col2"${S}0)${S}"Belum ada data")`,
   );
-  kepalaTabel(d, 'A81:Z81');
-  d.getRange('B82:Z110').setNumberFormat(RP);
+  kepalaTabel(d, `A81:${AKHIR}81`);
+  d.getRange(`B82:${AKHIR}110`).setNumberFormat(RP);
 
   d.setFrozenRows(2);
 
@@ -380,6 +397,36 @@ function pastikanDashboard(ss, namaSheetData) {
   // pembangunan gagal di tengah jalan, versinya tidak ikut tercatat sehingga
   // POST berikutnya mencoba lagi, bukan menganggap sudah beres.
   prop.setProperty('versiDashboard', VERSI_DASHBOARD);
+}
+
+/**
+ * Berapa bulan berbeda yang ada di tab data. Dipakai menentukan lebar matriks
+ * kategori x bulan: pita seksi dan baris kepalanya harus berhenti tepat di ujung
+ * data, bukan memanjang melintasi kolom kosong.
+ */
+function jumlahBulan(sh) {
+  const last = sh ? sh.getLastRow() : 0;
+  if (last < 2) return 0;
+  const unik = {};
+  sh.getRange(2, 2, last - 1, 1).getValues().forEach(([v]) => {
+    const bulan = v instanceof Date
+      ? Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM')
+      : String(v || '').slice(0, 7);
+    if (bulan) unik[bulan] = true;
+  });
+  return Object.keys(unik).length;
+}
+
+/** Nomor kolom (1) -> huruf kolom ("A"), termasuk untuk kolom di atas Z. */
+function hurufKolom(n) {
+  let hasil = '';
+  let sisa = n;
+  while (sisa > 0) {
+    const mod = (sisa - 1) % 26;
+    hasil = String.fromCharCode(65 + mod) + hasil;
+    sisa = Math.floor((sisa - 1) / 26);
+  }
+  return hasil;
 }
 
 /** Baris kepala tabel: teks putih tebal di atas biru tua. */
