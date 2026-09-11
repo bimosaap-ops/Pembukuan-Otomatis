@@ -2,9 +2,10 @@
  * Code.gs — tempel di Extensions > Apps Script pada Google Sheet tujuan.
  * Deploy: Deploy > New deployment > Web App > Anyone with the link > Copy URL -> tempel di Pengaturan app.
  *
- * Sheet data (nama baku "Transaksi") header baris 1 wajib, berurutan A..N:
+ * Sheet data (nama baku "Transaksi") header baris 1 wajib, berurutan A..O:
  * Hash | Tanggal | Deskripsi | Nominal | Debit | Kredit | ID Kategori | Bank |
- * No. Rekening | Nama Pemilik | Sumber | ID Upload | Dikirim Pada | Kategori
+ * No. Rekening | Nama Pemilik | Sumber | ID Upload | Dikirim Pada | Kategori |
+ * Transfer Internal
  *
  * Upsert berdasarkan hash (kolom A): hash yang sudah ada di Sheet DITIMPA di
  * baris yang sama, bukan dilewati. Ini penting karena kategori sebuah transaksi
@@ -12,18 +13,23 @@
  * di halaman Kategori) — kalau cuma dedupe-skip, koreksi itu tidak akan pernah
  * sampai ke Sheet walau tombol "Kirim semua sekarang" dipakai.
  *
- * Tab "Dashboard" dibuat otomatis sekali, bergaya laporan keuangan: kartu
- * ringkasan, tabel bulanan dengan Net Cash Flow dan status surplus/defisit,
- * pengeluaran per kategori, serta matriks rincian kategori x bulan yang dipisah
- * seksi Pengeluaran dan Pemasukan — semuanya rumus Sheets yang merujuk balik ke
- * tab data, jadi ikut ter-update sendiri tiap ada transaksi baru. Sekali dibuat tab
- * itu tidak ditimpa lagi, KECUALI kalau rusak (rumusnya bernilai galat, atau
- * tabnya tertulisi data transaksi) — keadaan itu disembuhkan sendiri pada POST
- * berikutnya, lihat pastikanDashboard. Menu "Pembukuan" di spreadsheet berisi
- * "Bangun ulang Dashboard" untuk memaksanya sekarang juga, dan "Diagnosa" yang
- * melaporkan lokal, pemisah argumen terdeteksi, dan isi sel rumus kunci.
+ * Tab "Dashboard" dibuat otomatis, bergaya laporan keuangan dan DIPISAH PER
+ * REKENING: kartu gabungan, perbandingan antar rekening, arus bulanan dan
+ * pengeluaran per kategori dalam matriks berkolom rekening, lalu satu blok
+ * rinci untuk tiap rekening. Semuanya rumus Sheets yang merujuk balik ke tab
+ * data, jadi ikut ter-update sendiri tiap ada transaksi baru.
  *
- * Dua hal yang pernah bikin kacau dan sengaja dijaga di sini:
+ * Angka GABUNGAN mengecualikan transfer internal (kolom O) supaya pindah dana
+ * antar rekening sendiri tidak terhitung dua kali; angka PER REKENING tetap
+ * menghitungnya, karena uangnya memang keluar/masuk di rekening itu.
+ *
+ * Dashboard dibangun ulang sendiri bila VERSI_DASHBOARD berubah, bila bentuk
+ * data berubah (rekening baru, data memanjang — lihat sidikData), atau bila
+ * rusak. Menu "Pembukuan" berisi "Bangun ulang Dashboard" untuk memaksanya
+ * sekarang juga, dan "Diagnosa" yang melaporkan lokal, pemisah argumen
+ * terdeteksi, dan isi sel rumus kunci.
+ *
+ * Tiga hal yang pernah bikin kacau dan sengaja dijaga di sini:
  *
  *   1. Dashboard disisipkan di posisi TERAKHIR, bukan pertama. Kode versi lama
  *      (yang mungkin masih terpasang di deployment lain) mencari sheet data
@@ -33,6 +39,11 @@
  *      Di lokal Indonesia pemisahnya ";" dan pemisah kolom array literal "\",
  *      bukan ",". Rumus bertanda koma di sheet berlokal Indonesia gagal parse
  *      jadi #ERROR! — dan #ERROR! tidak bisa ditangkap IFERROR.
+ *   3. Grid dilebarkan/ditinggikan SEBELUM sel mana pun disentuh. Mengakses sel
+ *      di luar grid melempar "Kolom tersebut melampaui batas" dan membatalkan
+ *      seluruh pembangunan. Label rekening juga tidak pernah disisipkan ke dalam
+ *      string QUERY — nama ber-apostrof akan memecah rumusnya; penyaringan
+ *      memakai kolom bendera yang membandingkan dengan sel judul blok.
  */
 const SHEET_NAME = ''; // kosong = deteksi/migrasi otomatis (lihat sheetData)
 const DATA_SHEET_NAME = 'Transaksi';
@@ -43,13 +54,18 @@ const DASHBOARD_SHEET_NAME = 'Dashboard';
  * perbaikan rumus hanya berlaku untuk Sheet baru, sementara Sheet yang sudah
  * ada tetap memakai rumus lama sampai pengguna ingat membuka menu "Pembukuan".
  */
-const VERSI_DASHBOARD = '5';
+const VERSI_DASHBOARD = '6';
 
-/** Sel rumus kunci di Dashboard — dipantau untuk mendeteksi kerusakan. */
+/**
+ * Sel rumus yang dipantau untuk mendeteksi Dashboard rusak. Tata letaknya kini
+ * dinamis (tinggi tiap blok bergantung jumlah rekening, bulan, dan kategori),
+ * jadi daftar sebenarnya dicatat saat build ke ScriptProperties. Nilai ini cuma
+ * cadangan untuk Dashboard yang dibangun versi lama.
+ */
 const SEL_RUMUS = ['A9', 'D10', 'G9', 'A45'];
 
-const HEADER = ['Hash','Tanggal','Deskripsi','Nominal','Debit','Kredit','ID Kategori','Bank','No. Rekening','Nama Pemilik','Sumber','ID Upload','Dikirim Pada','Kategori'];
-const LEBAR_KOLOM = [110, 95, 300, 120, 120, 120, 130, 90, 130, 150, 80, 110, 140, 150];
+const HEADER = ['Hash','Tanggal','Deskripsi','Nominal','Debit','Kredit','ID Kategori','Bank','No. Rekening','Nama Pemilik','Sumber','ID Upload','Dikirim Pada','Kategori','Transfer Internal'];
+const LEBAR_KOLOM = [110, 95, 300, 120, 120, 120, 130, 90, 130, 150, 80, 110, 140, 150, 130];
 const KOLOM_RP = [4, 5, 6];      // Nominal, Debit, Kredit
 const KOLOM_WAKTU = 13;          // Dikirim Pada
 const KOLOM_SEMBUNYI = [1, 7, 12]; // Hash, ID Kategori, ID Upload — dipakai mesin, bukan mata
@@ -57,10 +73,9 @@ const KOLOM_SEMBUNYI = [1, 7, 12]; // Hash, ID Kategori, ID Upload — dipakai m
 const RP = '"Rp "#,##0;[RED]-"Rp "#,##0';
 const FORMAT_WAKTU = 'dd/mm/yyyy HH:mm';
 
-/* Palet laporan keuangan: kepala tabel biru tua berteks putih, angka surplus
-   hijau, defisit merah, pita seksi pengeluaran merah tua. */
+/* Palet laporan keuangan: kepala tabel dan pita seksi biru tua berteks putih,
+   angka surplus hijau, defisit merah. */
 const BIRU_TUA = '#1f4e79';
-const MERAH_TUA = '#922b21';
 const HIJAU = '#006600';
 const MERAH = '#cc0000';
 
@@ -90,6 +105,12 @@ function getSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = sheetData(ss);
   if (!SHEET_NAME && sh.getName() !== DATA_SHEET_NAME) sh.setName(DATA_SHEET_NAME);
+
+  // Grid harus cukup lebar SEBELUM header ditulis: sheet yang lebih sempit dari
+  // HEADER membuat getRange melempar "Kolom tersebut melampaui batas".
+  if (sh.getMaxColumns() < HEADER.length) {
+    sh.insertColumnsAfter(sh.getMaxColumns(), HEADER.length - sh.getMaxColumns());
+  }
 
   const baru = sh.getLastRow() === 0;
   if (baru) sh.appendRow(HEADER);
@@ -211,7 +232,24 @@ function pisahArgumen(ss) {
 function dashboardRusak(d) {
   const judul = String(d.getRange('A1').getValue()).trim().toLowerCase();
   if (judul === HEADER[0].toLowerCase() || judul === 'hash') return true;
-  return SEL_RUMUS.some((a) => String(d.getRange(a).getValue()).charAt(0) === '#');
+  return jangkarRumus().some((a) => String(d.getRange(a).getValue()).charAt(0) === '#');
+}
+
+/**
+ * Sel rumus yang dipantau: daftar yang dicatat saat build, atau `SEL_RUMUS`
+ * bila belum ada (Dashboard bawaan versi lama). Daftar dinamis ini yang membuat
+ * luapan array — QUERY yang tumbuh melewati cadangan barisnya lalu menghasilkan
+ * #REF!, galat yang TIDAK tertangkap IFERROR — bisa tersembuhkan sendiri lewat
+ * jalur "rusak" yang sudah ada.
+ */
+function jangkarRumus() {
+  try {
+    const tersimpan = JSON.parse(
+      PropertiesService.getScriptProperties().getProperty('selRumusDashboard') || '[]',
+    );
+    if (Array.isArray(tersimpan) && tersimpan.length) return tersimpan;
+  } catch (e) { /* catatannya rusak — pakai cadangan */ }
+  return SEL_RUMUS;
 }
 
 /**
@@ -228,17 +266,21 @@ function dashboardRusak(d) {
  */
 function pastikanDashboard(ss, namaSheetData) {
   const prop = PropertiesService.getScriptProperties();
+  const stat = statistikData(ss.getSheetByName(namaSheetData));
+  const sidik = sidikData(stat);
+
   const ada = ss.getSheetByName(DASHBOARD_SHEET_NAME);
   if (ada) {
-    const perluUpgrade = prop.getProperty('versiDashboard') !== VERSI_DASHBOARD;
-    if (!perluUpgrade && !dashboardRusak(ada)) return;
-    if (!perluUpgrade) {
-      // Jalur "rusak" dibatasi sekali per jam: kalau pembangunan ulang ternyata
-      // tidak menyembuhkan, jangan diulang tiap POST — mahal dan boros kuota.
-      // Jalur upgrade versi tidak dibatasi: itu sekali jalan dan memang diminta.
-      const terakhir = Number(prop.getProperty('perbaikanTerakhir') || 0);
-      if (Date.now() - terakhir < 60 * 60 * 1000) return;
-      prop.setProperty('perbaikanTerakhir', String(Date.now()));
+    const versiBeda = prop.getProperty('versiDashboard') !== VERSI_DASHBOARD;
+    const sidikBeda = prop.getProperty('sidikDashboard') !== sidik;
+    if (!versiBeda && !sidikBeda && !dashboardRusak(ada)) return;
+    // Jalur versi berbeda tidak dibatasi: itu sekali jalan dan memang diminta.
+    // Jalur sidik/rusak dibatasi supaya pembangunan ulang yang ternyata tidak
+    // menyembuhkan tidak diulang tiap POST — mahal dan boros kuota.
+    if (!versiBeda) {
+      const terakhir = Number(prop.getProperty('pembangunanTerakhir') || 0);
+      if (Date.now() - terakhir < 10 * 60 * 1000) return;
+      prop.setProperty('pembangunanTerakhir', String(Date.now()));
     }
     ss.deleteSheet(ada);
   }
@@ -249,46 +291,73 @@ function pastikanDashboard(ss, namaSheetData) {
   const d = ss.insertSheet(DASHBOARD_SHEET_NAME, ss.getNumSheets());
   const kol = (huruf) => `'${namaSheetData}'!${huruf}2:${huruf}`;
 
+  /* ---------- Kolom maya, dirakit sekali ---------- */
   const BULAN = `ARRAYFORMULA(LEFT(${kol('B')}${S}7))`;
+  const REK = `ARRAYFORMULA(IF(${kol('H')}=""${S}""${S}TRIM(${kol('H')}&" "&${kol('I')})))`;
   // Nama kategori dipakai kalau ada. Kalau kosong (baris yang terunggah sebelum
   // kolom Kategori ada), ID-nya dijadikan terbaca: "kat_transfer_keluar" ->
   // "Transfer Keluar". Kategori buatan sendiri ber-ID acak tetap tidak terbaca;
   // hanya "Kirim semua sekarang" yang bisa memberi nama aslinya.
   const KATEGORI = `ARRAYFORMULA(IF(${kol('N')}<>""${S}${kol('N')}${S}`
     + `IF(LEFT(${kol('G')}${S}4)="kat_"${S}PROPER(SUBSTITUTE(MID(${kol('G')}${S}5${S}100)${S}"_"${S}" "))${S}${kol('G')})))`;
+  const NETTO = `ARRAYFORMULA(N(${kol('F')})-N(${kol('E')}))`;
 
-  // Matriks kategori x bulan selebar 1 + jumlah bulan. Sheet baru hanya punya
-  // 26 kolom, jadi grid-nya dilebarkan dulu bila perlu — menyetel lebar kolom
-  // yang belum ada membuat Apps Script melempar "Kolom tersebut melampaui batas"
-  // dan membatalkan seluruh pembangunan.
-  const kolomPivot = Math.max(jumlahBulan(ss.getSheetByName(namaSheetData)) + 1, 3);
-  const kolomPerlu = Math.max(kolomPivot + 2, 26);
+  // Cadangan baris menahan tabrakan ketika QUERY tumbuh setelah dibangun.
+  const cadangan = (n) => Math.max(4, Math.ceil(n * 0.3));
+  const nBulan = Math.max(stat.bulan.length, 1);
+  const nRek = Math.max(stat.rekening.length, 1);
+  const nKat = Math.max(stat.katKeluar, 1);
+
+  /* ---------- Anggaran kolom dan baris ---------- */
+  // Grid harus cukup besar SEBELUM sel mana pun disentuh. Menyetel lebar kolom
+  // atau mengakses sel di luar grid membuat Apps Script melempar "Kolom
+  // tersebut melampaui batas" dan membatalkan seluruh pembangunan — dan blok
+  // per rekening membuat tata letak ini bisa memanjang jauh ke bawah.
+  const lebarRek = Math.max(1 + stat.rekening.length, 2);
+  const lebarMaks = Math.max(7, lebarRek, 1 + nBulan);
+  const kolomPerlu = Math.max(lebarMaks + 4, 26);
   if (d.getMaxColumns() < kolomPerlu) {
     d.insertColumnsAfter(d.getMaxColumns(), kolomPerlu - d.getMaxColumns());
   }
-  const AKHIR = hurufKolom(kolomPivot);
+  const tinggiBlokBulan = nBulan + cadangan(nBulan);
+  const barisPerlu = 10
+    + (nRek + cadangan(nRek) + 4)
+    + (tinggiBlokBulan + 4)
+    + (nKat + cadangan(nKat) + 4)
+    + stat.rekening.length * (tinggiBlokBulan + 8)
+    + 20;
+  if (d.getMaxRows() < barisPerlu) {
+    d.insertRowsAfter(d.getMaxRows(), barisPerlu - d.getMaxRows());
+  }
+  const kolomGrafik = Math.min(lebarMaks + 2, d.getMaxColumns());
 
   d.setHiddenGridlines(true);
   d.setTabColor(BIRU_TUA);
-  // Lebar seragam, tanpa kolom penyela sempit: kolom yang di bagian atas cuma
-  // jarak antar tabel, di bagian pivot adalah kolom bulan yang harus terbaca.
-  d.setColumnWidth(1, 170);
+  d.setColumnWidth(1, 190);
   d.setColumnWidths(2, d.getMaxColumns() - 1, 120);
+
+  // Jangkar sel rumus dicatat selagi dibangun lalu disimpan: tata letaknya
+  // dinamis, jadi daftar sel yang dipantau dashboardRusak tidak bisa tetap.
+  const jangkar = [];
+  const pasangRumus = (a1, rumus) => { d.getRange(a1).setFormula(rumus); jangkar.push(a1); };
 
   /* ---------- Judul ---------- */
   d.getRange('A1:I1').merge()
-    .setValue('LAPORAN KEUANGAN — RINGKASAN OTOMATIS')
+    .setValue('LAPORAN KEUANGAN PER REKENING')
     .setFontSize(14).setFontWeight('bold').setFontColor(BIRU_TUA)
     .setVerticalAlignment('middle');
   d.setRowHeight(1, 34);
   d.getRange('A2:I2').merge()
-    .setValue(`Dihitung otomatis dari sheet "${namaSheetData}" — tidak perlu diperbarui manual.`)
+    .setValue('Angka gabungan tidak menghitung pindah dana antar rekening sendiri; angka per rekening menghitungnya.')
     .setFontStyle('italic').setFontColor('#5f6368').setFontSize(10);
 
-  /* ---------- Kartu ringkasan ---------- */
+  /* ---------- Kartu gabungan (tanpa transfer internal) ---------- */
+  // SUMIF berkriteria FALSE tidak cocok dengan sel kosong milik baris lama,
+  // jadi transfer internal dikurangkan, bukan disaring.
+  const tanpaTransfer = (huruf) => `=SUM(${kol(huruf)})-SUMIF(${kol('O')}${S}TRUE${S}${kol(huruf)})`;
   const KARTU = [
-    { kol: 'A', label: 'TOTAL PEMASUKAN', formula: `=SUM(${kol('F')})`, bg: '#e6f4ea', fg: HIJAU, format: RP },
-    { kol: 'C', label: 'TOTAL PENGELUARAN', formula: `=SUM(${kol('E')})`, bg: '#fce8e6', fg: MERAH, format: RP },
+    { kol: 'A', label: 'TOTAL PEMASUKAN', formula: tanpaTransfer('F'), bg: '#e6f4ea', fg: HIJAU, format: RP },
+    { kol: 'C', label: 'TOTAL PENGELUARAN', formula: tanpaTransfer('E'), bg: '#fce8e6', fg: MERAH, format: RP },
     { kol: 'E', label: 'SALDO BERSIH', formula: '=A5-C5', bg: '#e8f0fe', fg: BIRU_TUA, format: RP },
     { kol: 'G', label: 'JUMLAH TRANSAKSI', formula: `=COUNTA(${kol('A')})`, bg: '#f1f3f4', fg: '#3c4043', format: '#,##0' },
   ];
@@ -304,65 +373,137 @@ function pastikanDashboard(ss, namaSheetData) {
   });
   d.setRowHeights(5, 2, 30);
 
-  /* ---------- Ringkasan bulanan (A8:E40) ---------- */
-  d.getRange('A8').setValue('RINGKASAN BULANAN').setFontWeight('bold').setFontSize(11).setFontColor(BIRU_TUA);
-  d.getRange('A9').setFormula(
-    `=IFERROR(QUERY({${BULAN}${AS}${kol('F')}${AS}${kol('E')}}${S}`
-    + `"select Col1, sum(Col2), sum(Col3) where Col1 <> '' group by Col1 order by Col1 asc `
-    + `label Col1 'Bulan', sum(Col2) 'Total Masuk', sum(Col3) 'Total Keluar'"${S}0)${S}"Belum ada data")`,
-  );
-  d.getRange('D9').setValue('Net Cash Flow');
-  d.getRange('E9').setValue('Status');
-  d.getRange('D10').setFormula(
-    `=IFERROR(ARRAYFORMULA(IF(A10:A40=""${S}""${S}B10:B40-C10:C40))${S}"")`,
-  );
-  d.getRange('E10').setFormula(
-    `=IFERROR(ARRAYFORMULA(IF(A10:A40=""${S}""${S}IF(B10:B40-C10:C40>=0${S}"✅ Surplus"${S}"⚠️ Defisit")))${S}"")`,
-  );
-  kepalaTabel(d, 'A9:E9');
-  d.getRange('B10:D40').setNumberFormat(RP);
-  d.getRange('A10:A40').setHorizontalAlignment('center');
-  d.getRange('E10:E40').setHorizontalAlignment('center');
+  let r = 8;             // kursor baris berjalan; tidak ada jangkar hardcoded
+  const rentang = [];    // rentang baris tiap blok, dipakai menguji tabrakan
+  const rentangNet = []; // kolom Net, untuk pewarnaan bersyarat
 
-  /* ---------- Pengeluaran per kategori (G8:I40) ---------- */
-  d.getRange('G8').setValue('PENGELUARAN PER KATEGORI').setFontWeight('bold').setFontSize(11).setFontColor(BIRU_TUA);
-  d.getRange('G9').setFormula(
-    `=IFERROR(QUERY({${KATEGORI}${AS}${kol('E')}}${S}`
-    + `"select Col1, sum(Col2) where Col2 > 0 and Col1 <> '' group by Col1 order by sum(Col2) desc `
-    + `label Col1 'Kategori', sum(Col2) 'Total'"${S}0)${S}"Belum ada data pengeluaran")`,
-  );
-  d.getRange('I9').setValue('% Pengeluaran');
-  d.getRange('I10').setFormula(
-    `=IFERROR(ARRAYFORMULA(IF(H10:H40=""${S}""${S}H10:H40/$C$5))${S}"")`,
-  );
-  kepalaTabel(d, 'G9:I9');
-  d.getRange('H10:H40').setNumberFormat(RP);
-  d.getRange('I10:I40').setNumberFormat('0.0%');
+  const judulSeksi = (teks) => {
+    d.getRange(r, 1).setValue(teks).setFontWeight('bold').setFontSize(11).setFontColor(BIRU_TUA);
+    r += 1;
+  };
 
-  /* ---------- Rincian kategori per bulan ---------- */
-  d.getRange('A43').setValue('RINCIAN PER KATEGORI DAN BULAN')
-    .setFontWeight('bold').setFontSize(11).setFontColor(BIRU_TUA);
+  /* ---------- Perbandingan antar rekening ---------- */
+  const mulaiBanding = r;
+  judulSeksi('PERBANDINGAN ANTAR REKENING');
+  const kepalaBanding = r;
+  pasangRumus(`A${r}`,
+    `=IFERROR(QUERY({${REK}${AS}${kol('F')}${AS}${kol('E')}${AS}${kol('A')}}${S}`
+    + `"select Col1, sum(Col2), sum(Col3), count(Col4) where Col1 <> '' group by Col1 order by Col1 asc `
+    + `label Col1 'Rekening', sum(Col2) 'Total Masuk', sum(Col3) 'Total Keluar', count(Col4) 'Jml Transaksi'"${S}0)${S}"Belum ada data")`);
+  d.getRange(kepalaBanding, 5).setValue('Net Cash Flow');
+  d.getRange(kepalaBanding, 6).setValue('Status');
+  const isiBanding = kepalaBanding + 1;
+  const akhirBanding = kepalaBanding + nRek + cadangan(nRek);
+  pasangRumus(`E${isiBanding}`,
+    `=IFERROR(ARRAYFORMULA(IF(A${isiBanding}:A${akhirBanding}=""${S}""${S}`
+    + `B${isiBanding}:B${akhirBanding}-C${isiBanding}:C${akhirBanding}))${S}"")`);
+  pasangRumus(`F${isiBanding}`,
+    `=IFERROR(ARRAYFORMULA(IF(A${isiBanding}:A${akhirBanding}=""${S}""${S}`
+    + `IF(B${isiBanding}:B${akhirBanding}-C${isiBanding}:C${akhirBanding}>=0${S}"✅ Surplus"${S}"⚠️ Defisit")))${S}"")`);
+  kepalaTabel(d, `A${kepalaBanding}:F${kepalaBanding}`);
+  d.getRange(`B${isiBanding}:C${akhirBanding}`).setNumberFormat(RP);
+  d.getRange(`E${isiBanding}:E${akhirBanding}`).setNumberFormat(RP);
+  d.getRange(`F${isiBanding}:F${akhirBanding}`).setHorizontalAlignment('center');
+  rentangNet.push(d.getRange(`E${isiBanding}:E${akhirBanding}`));
+  rentang.push([mulaiBanding, akhirBanding]);
+  r = akhirBanding + 2;
 
-  pitaSeksi(d, `A44:${AKHIR}44`, 'PENGELUARAN (DEBIT)', MERAH_TUA);
-  d.getRange('A45').setFormula(
-    `=IFERROR(QUERY({${KATEGORI}${AS}${BULAN}${AS}${kol('E')}}${S}`
-    + `"select Col1, sum(Col3) where Col3 > 0 and Col1 <> '' group by Col1 pivot Col2"${S}0)${S}"Belum ada data")`,
-  );
-  kepalaTabel(d, `A45:${AKHIR}45`);
-  d.getRange(`B46:${AKHIR}78`).setNumberFormat(RP);
+  /* ---------- Arus bulanan per rekening ---------- */
+  const mulaiArus = r;
+  judulSeksi('ARUS BULANAN PER REKENING (NET)');
+  const kepalaArus = r;
+  pasangRumus(`A${r}`,
+    `=IFERROR(QUERY({${BULAN}${AS}${REK}${AS}${NETTO}}${S}`
+    + `"select Col1, sum(Col3) where Col1 <> '' and Col2 <> '' group by Col1 pivot Col2"${S}0)${S}"Belum ada data")`);
+  kepalaTabel(d, `A${kepalaArus}:${hurufKolom(lebarRek)}${kepalaArus}`);
+  const akhirArus = kepalaArus + nBulan + cadangan(nBulan);
+  d.getRange(`B${kepalaArus + 1}:${hurufKolom(lebarRek)}${akhirArus}`).setNumberFormat(RP);
+  rentang.push([mulaiArus, akhirArus]);
+  r = akhirArus + 2;
 
-  pitaSeksi(d, `A80:${AKHIR}80`, 'PEMASUKAN (KREDIT)', BIRU_TUA);
-  d.getRange('A81').setFormula(
-    `=IFERROR(QUERY({${KATEGORI}${AS}${BULAN}${AS}${kol('F')}}${S}`
-    + `"select Col1, sum(Col3) where Col3 > 0 and Col1 <> '' group by Col1 pivot Col2"${S}0)${S}"Belum ada data")`,
-  );
-  kepalaTabel(d, `A81:${AKHIR}81`);
-  d.getRange(`B82:${AKHIR}110`).setNumberFormat(RP);
+  /* ---------- Pengeluaran per kategori per rekening ---------- */
+  const mulaiKat = r;
+  judulSeksi('PENGELUARAN PER KATEGORI PER REKENING');
+  const kepalaKat = r;
+  pasangRumus(`A${r}`,
+    `=IFERROR(QUERY({${KATEGORI}${AS}${REK}${AS}${kol('E')}}${S}`
+    + `"select Col1, sum(Col3) where Col3 > 0 and Col1 <> '' and Col2 <> '' group by Col1 pivot Col2"${S}0)${S}"Belum ada data")`);
+  kepalaTabel(d, `A${kepalaKat}:${hurufKolom(lebarRek)}${kepalaKat}`);
+  const akhirKat = kepalaKat + nKat + cadangan(nKat);
+  d.getRange(`B${kepalaKat + 1}:${hurufKolom(lebarRek)}${akhirKat}`).setNumberFormat(RP);
+  rentang.push([mulaiKat, akhirKat]);
+  r = akhirKat + 2;
+
+  /* ---------- Blok tiap rekening ---------- */
+  stat.rekening.forEach((label) => {
+    const mulaiBlok = r;
+
+    // Label ditulis apa adanya ke sel pita, TIDAK disisipkan ke dalam string
+    // QUERY: nama bank ber-apostrof akan memecah rumusnya. Penyaringan memakai
+    // kolom bendera yang membandingkan kolom maya rekening dengan sel ini.
+    const selLabel = `$A$${r}`;
+    pitaSeksi(d, `A${r}:F${r}`, label, BIRU_TUA);
+    r += 1;
+
+    const bendera = `ARRAYFORMULA(IF(${REK}=${selLabel}${S}1${S}0))`;
+
+    const barisKepalaKartu = r;
+    const barisNilaiKartu = r + 1;
+    r += 3;
+
+    const kepalaTabelBulan = r;
+    pasangRumus(`A${r}`,
+      `=IFERROR(QUERY({${BULAN}${AS}${kol('F')}${AS}${kol('E')}${AS}${bendera}}${S}`
+      + `"select Col1, sum(Col2), sum(Col3) where Col4 = 1 and Col1 <> '' group by Col1 order by Col1 asc `
+      + `label Col1 'Bulan', sum(Col2) 'Masuk', sum(Col3) 'Keluar'"${S}0)${S}"Belum ada data")`);
+    d.getRange(kepalaTabelBulan, 4).setValue('Net Cash Flow');
+    d.getRange(kepalaTabelBulan, 5).setValue('Status');
+    const isiBulan = kepalaTabelBulan + 1;
+    const akhirBulan = kepalaTabelBulan + nBulan + cadangan(nBulan);
+    pasangRumus(`D${isiBulan}`,
+      `=IFERROR(ARRAYFORMULA(IF(A${isiBulan}:A${akhirBulan}=""${S}""${S}`
+      + `B${isiBulan}:B${akhirBulan}-C${isiBulan}:C${akhirBulan}))${S}"")`);
+    pasangRumus(`E${isiBulan}`,
+      `=IFERROR(ARRAYFORMULA(IF(A${isiBulan}:A${akhirBulan}=""${S}""${S}`
+      + `IF(B${isiBulan}:B${akhirBulan}-C${isiBulan}:C${akhirBulan}>=0${S}"✅ Surplus"${S}"⚠️ Defisit")))${S}"")`);
+    kepalaTabel(d, `A${kepalaTabelBulan}:E${kepalaTabelBulan}`);
+    d.getRange(`B${isiBulan}:D${akhirBulan}`).setNumberFormat(RP);
+    d.getRange(`A${isiBulan}:A${akhirBulan}`).setHorizontalAlignment('center');
+    d.getRange(`E${isiBulan}:E${akhirBulan}`).setHorizontalAlignment('center');
+    rentangNet.push(d.getRange(`D${isiBulan}:D${akhirBulan}`));
+
+    // Kartu mini menjumlah tabel bulanan di bawahnya, bukan menyaring ulang tab
+    // data: hasilnya dijamin konsisten dengan tabelnya sendiri, dan tidak perlu
+    // mencocokkan label rekening untuk kedua kalinya.
+    const KARTU_BLOK = [
+      { kol: 'A', label: 'Masuk', sumber: 'B', fg: HIJAU, bg: '#e6f4ea' },
+      { kol: 'C', label: 'Keluar', sumber: 'C', fg: MERAH, bg: '#fce8e6' },
+    ];
+    KARTU_BLOK.forEach((k) => {
+      const akhirKol = String.fromCharCode(k.kol.charCodeAt(0) + 1);
+      d.getRange(`${k.kol}${barisKepalaKartu}:${akhirKol}${barisKepalaKartu}`).merge().setValue(k.label)
+        .setFontWeight('bold').setFontSize(9).setFontColor(k.fg).setBackground(k.bg)
+        .setHorizontalAlignment('center');
+      d.getRange(`${k.kol}${barisNilaiKartu}:${akhirKol}${barisNilaiKartu}`).merge()
+        .setFormula(`=SUM(${k.sumber}${isiBulan}:${k.sumber}${akhirBulan})`)
+        .setFontSize(14).setFontWeight('bold').setFontColor(k.fg).setBackground(k.bg)
+        .setHorizontalAlignment('center').setNumberFormat(RP);
+    });
+    d.getRange(`E${barisKepalaKartu}:F${barisKepalaKartu}`).merge().setValue('Net')
+      .setFontWeight('bold').setFontSize(9).setFontColor(BIRU_TUA).setBackground('#e8f0fe')
+      .setHorizontalAlignment('center');
+    d.getRange(`E${barisNilaiKartu}:F${barisNilaiKartu}`).merge()
+      .setFormula(`=A${barisNilaiKartu}-C${barisNilaiKartu}`)
+      .setFontSize(14).setFontWeight('bold').setFontColor(BIRU_TUA).setBackground('#e8f0fe')
+      .setHorizontalAlignment('center').setNumberFormat(RP);
+
+    rentang.push([mulaiBlok, akhirBulan]);
+    r = akhirBulan + 2;
+  });
 
   d.setFrozenRows(2);
 
-  /* ---------- Net Cash Flow: hijau kalau surplus, merah kalau defisit ---------- */
-  const rentangNet = [d.getRange('D10:D40')];
+  /* ---------- Net: hijau kalau surplus, merah kalau defisit ---------- */
   d.setConditionalFormatRules([
     SpreadsheetApp.newConditionalFormatRule()
       .whenNumberGreaterThan(0).setFontColor(HIJAU).setBold(true).setRanges(rentangNet).build(),
@@ -370,51 +511,107 @@ function pastikanDashboard(ss, namaSheetData) {
       .whenNumberLessThan(0).setFontColor(MERAH).setBold(true).setRanges(rentangNet).build(),
   ]);
 
-  /* ---------- Grafik ---------- */
+  /* ---------- Grafik (jumlahnya tetap, tidak ikut bertambah per rekening) ---------- */
+  // Dua rentang terpisah: label rekening (A) dan total keluar (C). Kolom B
+  // sengaja dilewati supaya donatnya hanya menggambar pengeluaran.
   const donat = d.newChart()
     .setChartType(Charts.ChartType.PIE)
-    .addRange(d.getRange('G9:H40'))
-    .setPosition(4, 11, 0, 0)
-    .setOption('title', 'Pengeluaran per Kategori')
+    .addRange(d.getRange(`A${kepalaBanding}:A${akhirBanding}`))
+    .addRange(d.getRange(`C${kepalaBanding}:C${akhirBanding}`))
+    .setPosition(4, kolomGrafik, 0, 0)
+    .setOption('title', 'Pengeluaran per Rekening')
     .setOption('pieHole', 0.45)
     .setOption('legend', { position: 'right' })
-    .setOption('width', 560).setOption('height', 340)
+    .setOption('width', 520).setOption('height', 320)
     .build();
   d.insertChart(donat);
 
-  const tren = d.newChart()
+  const batang = d.newChart()
     .setChartType(Charts.ChartType.COLUMN)
-    .addRange(d.getRange('A9:C40'))
-    .setPosition(23, 11, 0, 0)
-    .setOption('title', 'Pemasukan vs Pengeluaran per Bulan')
+    .addRange(d.getRange(`A${kepalaArus}:${hurufKolom(lebarRek)}${akhirArus}`))
+    .setPosition(22, kolomGrafik, 0, 0)
+    .setOption('title', 'Net Bulanan per Rekening')
     .setOption('legend', { position: 'top' })
-    .setOption('width', 560).setOption('height', 340)
-    .setOption('colors', [HIJAU, MERAH])
+    .setOption('width', 520).setOption('height', 320)
     .build();
-  d.insertChart(tren);
+  d.insertChart(batang);
 
   // Dicatat paling akhir, setelah semuanya benar-benar terpasang: kalau
-  // pembangunan gagal di tengah jalan, versinya tidak ikut tercatat sehingga
-  // POST berikutnya mencoba lagi, bukan menganggap sudah beres.
+  // pembangunan gagal di tengah jalan, versi dan sidiknya tidak ikut tercatat
+  // sehingga percobaan berikutnya mengulang, bukan menganggap sudah beres.
+  prop.setProperty('selRumusDashboard', JSON.stringify(jangkar));
+  prop.setProperty('rentangBlokDashboard', JSON.stringify(rentang));
+  prop.setProperty('sidikDashboard', sidik);
   prop.setProperty('versiDashboard', VERSI_DASHBOARD);
 }
 
 /**
- * Berapa bulan berbeda yang ada di tab data. Dipakai menentukan lebar matriks
- * kategori x bulan: pita seksi dan baris kepalanya harus berhenti tepat di ujung
- * data, bukan memanjang melintasi kolom kosong.
+ * Ukur tab data satu kali untuk seluruh kebutuhan tata letak Dashboard: daftar
+ * rekening, jumlah bulan, dan jumlah kategori. Dibaca sekali dalam satu range
+ * — Dashboard menumpuk banyak blok yang tingginya bergantung angka-angka ini,
+ * dan membacanya berulang kali per blok jauh lebih mahal.
+ *
+ * Label rekening dirangkai dari Bank + No. Rekening, sama seperti label yang
+ * dipakai aplikasi. Itu wakil terbaik yang tersedia: accountId tidak ikut
+ * dikirim ke Sheet.
  */
-function jumlahBulan(sh) {
+function statistikData(sh) {
+  const kosong = { bulan: [], rekening: [], katKeluar: 0, katMasuk: 0, bulanTerbanyak: 0 };
   const last = sh ? sh.getLastRow() : 0;
-  if (last < 2) return 0;
-  const unik = {};
-  sh.getRange(2, 2, last - 1, 1).getValues().forEach(([v]) => {
-    const bulan = v instanceof Date
-      ? Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM')
-      : String(v || '').slice(0, 7);
-    if (bulan) unik[bulan] = true;
+  if (last < 2) return kosong;
+
+  const nilai = sh.getRange(2, 1, last - 1, HEADER.length).getValues();
+  const bulan = {}, rekening = {}, katKeluar = {}, katMasuk = {}, bulanPerRekening = {};
+
+  nilai.forEach((r) => {
+    const tgl = r[1];
+    const b = tgl instanceof Date
+      ? Utilities.formatDate(tgl, Session.getScriptTimeZone(), 'yyyy-MM')
+      : String(tgl || '').slice(0, 7);
+    const label = `${String(r[7] || '').trim()} ${String(r[8] || '').trim()}`.trim();
+    const kategori = String(r[13] || r[6] || '').trim();
+
+    if (b) bulan[b] = true;
+    if (label) {
+      rekening[label] = true;
+      if (b) {
+        if (!bulanPerRekening[label]) bulanPerRekening[label] = {};
+        bulanPerRekening[label][b] = true;
+      }
+    }
+    if (kategori) {
+      if (Number(r[4]) > 0) katKeluar[kategori] = true;
+      if (Number(r[5]) > 0) katMasuk[kategori] = true;
+    }
   });
-  return Object.keys(unik).length;
+
+  const daftarRekening = Object.keys(rekening).sort();
+  const terbanyak = daftarRekening.reduce(
+    (maks, label) => Math.max(maks, Object.keys(bulanPerRekening[label] || {}).length), 0,
+  );
+
+  return {
+    bulan: Object.keys(bulan).sort(),
+    rekening: daftarRekening,
+    katKeluar: Object.keys(katKeluar).length,
+    katMasuk: Object.keys(katMasuk).length,
+    bulanTerbanyak: terbanyak,
+  };
+}
+
+/**
+ * Sidik bentuk data — bukan isinya. Dashboard membangun blok per rekening saat
+ * build, jadi ia jadi basi kalau ada rekening baru atau data memanjang melewati
+ * cadangan baris. Jumlah kategori sengaja dibulatkan per 5 supaya pertumbuhan
+ * kecil yang masih muat di cadangan tidak memicu pembangunan ulang terus-menerus.
+ */
+function sidikData(stat) {
+  return [
+    stat.rekening.join('|'),
+    stat.bulan.length,
+    Math.ceil(stat.katKeluar / 5),
+    Math.ceil(stat.katMasuk / 5),
+  ].join('::');
 }
 
 /** Nomor kolom (1) -> huruf kolom ("A"), termasuk untuk kolom di atas Z. */
@@ -491,7 +688,7 @@ function diagnosaDashboard() {
   ];
   if (d) {
     baris.push(`Dianggap rusak    : ${dashboardRusak(d) ? 'ya' : 'tidak'}`, '');
-    ['A1'].concat(SEL_RUMUS).forEach((a) => {
+    ['A1'].concat(jangkarRumus().slice(0, 8)).forEach((a) => {
       baris.push(`${a} = ${String(d.getRange(a).getDisplayValue()).slice(0, 70)}`);
     });
   }
@@ -535,7 +732,7 @@ function doPost(e) {
     const perbarui = [];
     for (const r of dedup.values()) {
       const hash = String(r.hash || '');
-      const baru = [hash, r.tanggal||'', r.deskripsi||'', Number(r.nominal)||0, Number(r.debit)||0, Number(r.kredit)||0, r.kategoriId||'', r.bank||'', r.nomorRekening||'', r.namaPemilik||'', r.sumber||'', r.uploadedFileId||'', ts, r.kategoriNama||''];
+      const baru = [hash, r.tanggal||'', r.deskripsi||'', Number(r.nominal)||0, Number(r.debit)||0, Number(r.kredit)||0, r.kategoriId||'', r.bank||'', r.nomorRekening||'', r.namaPemilik||'', r.sumber||'', r.uploadedFileId||'', ts, r.kategoriNama||'', r.transferInternal === true];
       const baris = hash ? nomorBaris[hash] : null;
       if (baris) perbarui.push({ baris, nilai: baru });
       else tambah.push(baru);

@@ -103,6 +103,12 @@ export function barisUntukSheet(t, akunMap, kategoriMap) {
     namaPemilik: akun?.namaPemilik || '',
     sumber: t.sumber || '',
     uploadedFileId: t.uploadedFileId || '',
+    // Pindah dana antar rekening sendiri. Dikirim supaya Dashboard di Sheet
+    // bisa mengecualikannya dari total gabungan — tanpa penanda ini satu
+    // perpindahan terhitung dua kali (keluar di satu rekening, masuk di
+    // rekening lain), persis yang sudah dihindari `tanpaTransferInternal`
+    // di domain/analytics.js untuk tampilan di dalam aplikasi.
+    transferInternal: Boolean(t.transferInternal),
   };
 }
 

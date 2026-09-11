@@ -87,6 +87,23 @@ test('barisUntukSheet mengisi kategoriNama string kosong bila kategoriId tidak a
   assert.doesNotThrow(() => barisUntukSheet(t, new Map(), undefined));
 });
 
+test('barisUntukSheet mengirim penanda transfer internal, dan defaultnya false', () => {
+  const pindah = buatTransaksi({
+    hash: 'h8', tanggal: '2025-07-06', deskripsi: 'TRF KE REKENING SENDIRI',
+    nominal: -5000000, transferInternal: true,
+  });
+  assert.equal(barisUntukSheet(pindah, new Map()).transferInternal, true);
+
+  // Transaksi biasa tidak boleh ikut tertandai: kalau ini bocor jadi true,
+  // Dashboard akan membuang transaksi asli dari total gabungan.
+  const biasa = buatTransaksi({ hash: 'h9', tanggal: '2025-07-06', deskripsi: 'ALFAMART', nominal: -15000 });
+  assert.equal(barisUntukSheet(biasa, new Map()).transferInternal, false);
+
+  // Nilai yang tidak pernah diisi harus jadi false, bukan undefined — sel
+  // kosong di Sheet tidak bisa dibedakan dari "bukan transfer".
+  assert.equal(typeof barisUntukSheet(biasa, new Map()).transferInternal, 'boolean');
+});
+
 /* ==========================================================================
    validasiUrlWebhook
    ========================================================================== */
