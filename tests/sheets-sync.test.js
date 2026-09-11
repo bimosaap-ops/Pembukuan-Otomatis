@@ -13,7 +13,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { barisUntukSheet, validasiUrlWebhook } from '../src/services/sheets-sync.js';
+import { barisUntukSheet, validasiUrlWebhook, post } from '../src/services/sheets-sync.js';
 import { buatTransaksi } from '../src/domain/entities.js';
 
 /* ==========================================================================
@@ -131,4 +131,67 @@ test('validasiUrlWebhook menolak URL Sheet biasa dan mengarahkan ke Web App', ()
 test('validasiUrlWebhook menerima URL Web App yang benar dan merapikan spasi', () => {
   const url = validasiUrlWebhook('  https://script.google.com/macros/s/AKfycb.../exec  ');
   assert.equal(url, 'https://script.google.com/macros/s/AKfycb.../exec');
+});
+
+/* ==========================================================================
+   post — menilai apakah webhook benar-benar menerima data
+
+   Salah menilai di sini pernah membuat aplikasi melaporkan "Terkirim 1938
+   baris" padahal tab Sheet-nya kosong: balasan yang tidak bisa diurai dulu
+   dibiarkan lolos sebagai sukses.
+   ========================================================================== */
+
+function palsukanFetch(balasan) {
+  const asli = globalThis.fetch;
+  globalThis.fetch = async () => balasan;
+  return () => { globalThis.fetch = asli; };
+}
+
+const balasanTeks = (teks, ok = true, status = 200) => ({
+  ok, status, text: async () => teks,
+});
+
+test('post menolak balasan HTML, tidak menganggapnya sukses', async () => {
+  // Web App yang tidak dapat diakses publik membalas halaman login: status 200,
+  // isinya HTML. Ini persis kegagalan yang menyamar jadi keberhasilan.
+  const pulihkan = palsukanFetch(balasanTeks('<!DOCTYPE html><html>Sign in</html>'));
+  try {
+    await assert.rejects(
+      () => post('https://script.google.com/x/exec', { rows: [] }),
+      /tidak membalas JSON/i,
+    );
+  } finally { pulihkan(); }
+});
+
+test('post menolak balasan kosong', async () => {
+  const pulihkan = palsukanFetch(balasanTeks(''));
+  try {
+    await assert.rejects(() => post('https://x/exec', {}), /tidak membalas JSON/i);
+  } finally { pulihkan(); }
+});
+
+test('post meneruskan pesan galat dari server', async () => {
+  const pulihkan = palsukanFetch(balasanTeks(JSON.stringify({ ok: false, error: 'Sheet sedang dipakai' })));
+  try {
+    await assert.rejects(() => post('https://x/exec', {}), /Sheet sedang dipakai/);
+  } finally { pulihkan(); }
+});
+
+test('post mengembalikan hitungan dan identitas tujuan dari server apa adanya', async () => {
+  const pulihkan = palsukanFetch(balasanTeks(JSON.stringify({
+    ok: true, inserted: 5, updated: 2, dihapus: 1, total: 7, spreadsheet: 'catatan keuangan',
+  })));
+  try {
+    const j = await post('https://x/exec', {});
+    assert.equal(j.inserted, 5);
+    assert.equal(j.total, 7);
+    assert.equal(j.spreadsheet, 'catatan keuangan');
+  } finally { pulihkan(); }
+});
+
+test('post menolak status HTTP yang bukan sukses', async () => {
+  const pulihkan = palsukanFetch(balasanTeks('Not Found', false, 404));
+  try {
+    await assert.rejects(() => post('https://x/exec', {}), /404/);
+  } finally { pulihkan(); }
 });

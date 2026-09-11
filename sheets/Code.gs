@@ -48,6 +48,8 @@
 const SHEET_NAME = ''; // kosong = deteksi/migrasi otomatis (lihat sheetData)
 const DATA_SHEET_NAME = 'Transaksi';
 const DASHBOARD_SHEET_NAME = 'Dashboard';
+/** Tab tersembunyi berisi salinan baris yang pernah dihapus, lihat arsipkan(). */
+const ARSIP_SHEET_NAME = '_Arsip';
 /**
  * Dinaikkan setiap kali tata letak/rumus Dashboard berubah. Dashboard yang
  * dibangun versi lama otomatis dibangun ulang saat POST berikutnya — tanpa ini,
@@ -97,7 +99,11 @@ function sheetData(ss) {
   if (SHEET_NAME) return ss.getSheetByName(SHEET_NAME);
   const adaNama = ss.getSheetByName(DATA_SHEET_NAME);
   if (adaNama) return adaNama;
-  const lain = ss.getSheets().filter((s) => s.getName() !== DASHBOARD_SHEET_NAME);
+  // Tab bawaan skrip tidak boleh ikut terpilih sebagai sheet data — Dashboard
+  // maupun arsip berisi hal lain sama sekali, dan menuliskan transaksi ke sana
+  // adalah persis kekacauan yang pernah terjadi.
+  const bawaan = [DASHBOARD_SHEET_NAME, ARSIP_SHEET_NAME];
+  const lain = ss.getSheets().filter((s) => bawaan.indexOf(s.getName()) === -1);
   return lain.length ? lain[0] : ss.insertSheet(DATA_SHEET_NAME, 0);
 }
 
@@ -728,6 +734,11 @@ function diagnosaDashboard() {
   const d = ss.getSheetByName(DASHBOARD_SHEET_NAME);
 
   const baris = [
+    // Nama dan ID ditampilkan supaya bisa dicocokkan dengan spreadsheet yang
+    // sedang dibuka: URL webhook yang menunjuk deployment lama bisa menulis ke
+    // salinan spreadsheet yang berbeda, dan itu tampak persis seperti sukses.
+    `Spreadsheet       : ${ss.getName()}`,
+    `ID                : ${ss.getId()}`,
     `Lokal spreadsheet : ${ss.getSpreadsheetLocale()}`,
     `Pemisah argumen   : "${pisahArgumen(ss)}"`,
     `Sheet data        : ${sh ? `${sh.getName()} (posisi ${sh.getIndex()}, ${Math.max(sh.getLastRow() - 1, 0)} baris)` : '(tidak ketemu)'}`,
@@ -791,6 +802,7 @@ function doPost(e) {
       if (label) rekeningPengirim[label] = true;
     });
 
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sh = getSheet();
     const last = sh.getLastRow();
     const lebar = HEADER.length;
@@ -820,10 +832,10 @@ function doPost(e) {
     // Pratinjau: hanya melapor, tidak menyentuh apa pun. Dipakai dialog
     // konfirmasi supaya pengguna melihat angka sebenarnya sebelum menghapus.
     if (data.praTinjau === true) {
-      return json({
+      return json(Object.assign(tujuan(ss, sh), {
         ok: true, praTinjau: true,
         akanDihapus: jumlahDibuang, dipertahankan: dipertahankan, total: last > 1 ? last - 1 : 0,
-      });
+      }));
     }
 
     // Ditulis sebagai Date sungguhan, bukan teks ISO, supaya tampil sebagai
@@ -862,13 +874,13 @@ function doPost(e) {
 
     if (jumlahDibuang) hapusBaris(sh, dibuang);
 
-    return json({
+    return json(Object.assign(tujuan(ss, sh), {
       ok: true,
       inserted: tambah.length,
       updated: perbarui.length,
       dihapus: jumlahDibuang,
       dipertahankan: dipertahankan,
-    });
+    }));
   } catch (err) {
     return json({ok:false, error: String(err && err.message || err)});
   } finally {
@@ -890,6 +902,8 @@ function hapusBaris(sh, dibuang) {
   if (last < 2) return;
   const nomor = Object.keys(dibuang).map(Number).sort((a, b) => a - b);
   if (!nomor.length) return;
+
+  arsipkan(sh, nomor);
 
   if (nomor.length <= AMBANG_TULIS_BORONG) {
     // Menurun, supaya penghapusan satu baris tidak menggeser nomor berikutnya.
@@ -932,6 +946,58 @@ function tulisPembaruan(sh, perbarui, last) {
   const nilai = rng.getValues();
   perbarui.forEach((p) => { nilai[p.baris - 2] = p.nilai; });
   rng.setValues(nilai);
+}
+
+/**
+ * Salin baris yang akan dihapus ke tab arsip sebelum dibuang.
+ *
+ * Penghapusan di sini dipicu dari jarak jauh oleh aplikasi, dan riwayat versi
+ * Google Sheet bukan jaring pengaman yang nyaman untuk memulihkan seratusan
+ * baris tertentu. Satu penulisan blok ke tab arsip hampir tidak menambah biaya
+ * dibanding penghapusannya sendiri, dan membuat operasi yang merusak selalu
+ * punya jalan pulang. Tab-nya disembunyikan supaya tidak mengganggu.
+ */
+function arsipkan(sh, nomor) {
+  try {
+    const ss = sh.getParent();
+    const lebar = HEADER.length;
+    const isi = nomor.map((n) => sh.getRange(n, 1, 1, lebar).getValues()[0]);
+    if (!isi.length) return;
+
+    let arsip = ss.getSheetByName(ARSIP_SHEET_NAME);
+    if (!arsip) {
+      arsip = ss.insertSheet(ARSIP_SHEET_NAME, ss.getNumSheets());
+      arsip.appendRow(['Dihapus Pada'].concat(HEADER));
+      arsip.setFrozenRows(1);
+      arsip.hideSheet();
+    }
+    const cap = new Date();
+    const baris = isi.map((r) => [cap].concat(r));
+    arsip.getRange(arsip.getLastRow() + 1, 1, baris.length, lebar + 1).setValues(baris);
+  } catch (e) {
+    // Arsip adalah jaring pengaman, bukan syarat. Kegagalannya tidak boleh
+    // membatalkan penghapusan yang sudah diminta dan sudah dikonfirmasi.
+    console.warn('Gagal mengarsipkan baris:', e);
+  }
+}
+
+/**
+ * Identitas tujuan penulisan, disertakan di setiap balasan.
+ *
+ * Tanpa ini, aplikasi tidak punya cara membuktikan datanya mendarat di mana —
+ * dan URL webhook yang menunjuk deployment lama (yang bisa saja terikat ke
+ * salinan spreadsheet yang berbeda) tampak persis seperti pengiriman yang
+ * berhasil. `total` adalah jumlah baris data SETELAH operasi, jadi aplikasi
+ * bisa membandingkannya dengan yang baru saja dikirim.
+ */
+function tujuan(ss, sh) {
+  const last = sh.getLastRow();
+  return {
+    spreadsheet: ss.getName(),
+    spreadsheetId: ss.getId(),
+    sheet: sh.getName(),
+    total: last > 1 ? last - 1 : 0,
+  };
 }
 
 function doGet() { return json({ok:true, usage:'POST {rows:[...]}'}); }

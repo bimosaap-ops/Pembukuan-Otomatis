@@ -132,7 +132,13 @@ export function barisUntukSheet(t, akunMap, kategoriMap) {
   };
 }
 
-async function post(url, payload, batasMs = BATAS_MS) {
+/**
+ * Diekspor supaya bisa diuji langsung: fungsi ini satu-satunya yang menilai
+ * apakah webhook benar-benar menerima data, dan salah menilainya pernah membuat
+ * aplikasi melaporkan "Terkirim" padahal tidak ada yang sampai. Tidak menyentuh
+ * database, jadi bisa diuji hanya dengan memalsukan `fetch`.
+ */
+export async function post(url, payload, batasMs = BATAS_MS) {
   const kontrol = new AbortController();
   const batas = setTimeout(() => kontrol.abort(), batasMs);
   let res;
@@ -157,10 +163,23 @@ async function post(url, payload, batasMs = BATAS_MS) {
     const teks = await res.text().catch(() => '');
     throw new Error(`Sheets ${res.status} ${teks.slice(0, 200)}`);
   }
-  // Apps Script biasanya balas JSON {ok:true}
+  // Balasan WAJIB berupa JSON {ok:true}. Sebelumnya balasan yang tidak bisa
+  // diurai dibiarkan lolos sebagai sukses — dan justru itu yang menyembunyikan
+  // kegagalan paling membingungkan: aplikasi melaporkan "Terkirim" padahal
+  // tidak ada satu baris pun yang sampai. Web App yang tidak dapat diakses
+  // publik, atau URL yang menunjuk sesuatu selain Apps Script, membalas HTML
+  // dengan status 200 dan akan terbaca sebagai sukses kalau tidak dijaga.
+  const teks = await res.text().catch(() => '');
   let j = null;
-  try { j = await res.json(); } catch { /* text/plain ok */ }
-  if (j && j.ok === false) throw new Error(j.error || 'Sheets menolak data');
+  try { j = JSON.parse(teks); } catch { /* ditangani di bawah */ }
+
+  if (!j || typeof j !== 'object') {
+    throw new Error(
+      'Webhook tidak membalas JSON. Biasanya berarti URL-nya bukan Web App Apps Script, '
+      + 'atau deployment-nya tidak disetel "Anyone with the link".',
+    );
+  }
+  if (j.ok !== true) throw new Error(j.error || 'Sheets menolak data');
   return j;
 }
 
@@ -190,7 +209,19 @@ export async function syncKeSheets(transaksi, akunMap, kategoriMap, opsi = {}) {
     selaras: opsi.selaras === true,
   };
   const jawab = await post(url, payload, opsi.batasMs);
-  return { ok: true, jumlah: rows.length, dihapus: jawab?.dihapus || 0 };
+  // Yang dilaporkan adalah apa yang DIKERJAKAN server, bukan berapa yang kita
+  // kirim. Keduanya bisa berbeda jauh — dan kalau berbeda, justru itu yang perlu
+  // dilihat pengguna, bukan disembunyikan di balik hitungan lokal yang optimis.
+  return {
+    ok: true,
+    dikirim: rows.length,
+    baru: Number(jawab.inserted) || 0,
+    diperbarui: Number(jawab.updated) || 0,
+    dihapus: Number(jawab.dihapus) || 0,
+    total: Number(jawab.total) || 0,
+    spreadsheet: jawab.spreadsheet || '',
+    sheet: jawab.sheet || '',
+  };
 }
 
 /**
@@ -212,9 +243,10 @@ export async function praTinjauSelaras(transaksi, akunMap, kategoriMap) {
   }, 60000);
   return {
     ok: true,
-    akanDihapus: jawab?.akanDihapus || 0,
-    dipertahankan: jawab?.dipertahankan || 0,
-    total: jawab?.total || 0,
+    akanDihapus: Number(jawab.akanDihapus) || 0,
+    dipertahankan: Number(jawab.dipertahankan) || 0,
+    total: Number(jawab.total) || 0,
+    spreadsheet: jawab.spreadsheet || '',
   };
 }
 

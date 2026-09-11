@@ -384,8 +384,21 @@ async function kartuSheets() {
             // beberapa detik sendiri. Batas 30 detik terlalu mepet dan membuat
             // pengiriman yang sebenarnya berhasil terlihat gagal.
             const r = await syncKeSheets(trx, akun, kategori, { batasMs: 60000, selaras: true });
-            if (r?.skipped) toastGagal('Aktifkan Sheets & isi URL dulu');
-            else toastSukses(`Terkirim ${r.jumlah} baris${r.dihapus ? `, ${r.dihapus} baris yatim dihapus` : ''}.`);
+            if (r?.skipped) { toastGagal('Aktifkan Sheets & isi URL dulu'); return; }
+
+            const tujuan = r.spreadsheet ? ` ke "${r.spreadsheet}"` : '';
+            const rincian = `${r.baru} baru, ${r.diperbarui} diperbarui`
+              + (r.dihapus ? `, ${r.dihapus} dihapus` : '');
+            // Setelah penyelarasan, isi Sheet HARUS sama dengan yang dikirim.
+            // Kalau tidak, datanya mendarat di tempat lain — dan itu justru yang
+            // paling perlu dilihat, bukan disembunyikan di balik pesan sukses.
+            if (r.total !== r.dikirim) {
+              toastGagal(`Terkirim${tujuan} (${rincian}), tapi Sheet berisi ${r.total} baris `
+                + `padahal dikirim ${r.dikirim}. Periksa URL webhook — kemungkinan menunjuk `
+                + 'deployment atau spreadsheet lain.');
+            } else {
+              toastSukses(`Terkirim${tujuan}: ${rincian} · total ${r.total} baris.`);
+            }
           } catch (err) { toastGagal(err.message); } finally { b.disabled = false; }
         } }, 'Kirim semua sekarang'),
       ]),
