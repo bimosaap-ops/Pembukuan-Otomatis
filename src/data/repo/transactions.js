@@ -91,16 +91,22 @@ export async function hapusTransaksi(id) {
   return hapus(STORE.TRANSACTIONS, id);
 }
 
+/**
+ * Hash ikut dikembalikan, bukan cuma jumlahnya: Google Sheet mengenali baris
+ * lewat hash, dan setelah transaksinya terhapus hash itu tidak bisa dicari lagi
+ * dari mana pun. Yang memanggil jaringan tetap lapisan tampilan — repo tidak
+ * menyentuh jaringan.
+ */
 export async function hapusPerFileUpload(uploadedFileId) {
   const rows = await perFileUpload(uploadedFileId);
   await hapusBanyak(STORE.TRANSACTIONS, rows.map((r) => r.id));
-  return rows.length;
+  return { jumlah: rows.length, hash: rows.map((r) => r.hash).filter(Boolean) };
 }
 
 export async function hapusPerAkun(accountId) {
   const rows = await perAkun(accountId);
   await hapusBanyak(STORE.TRANSACTIONS, rows.map((r) => r.id));
-  return rows.length;
+  return { jumlah: rows.length, hash: rows.map((r) => r.hash).filter(Boolean) };
 }
 
 /**

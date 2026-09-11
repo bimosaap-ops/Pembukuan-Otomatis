@@ -2,10 +2,10 @@
  * Code.gs — tempel di Extensions > Apps Script pada Google Sheet tujuan.
  * Deploy: Deploy > New deployment > Web App > Anyone with the link > Copy URL -> tempel di Pengaturan app.
  *
- * Sheet data (nama baku "Transaksi") header baris 1 wajib, berurutan A..O:
+ * Sheet data (nama baku "Transaksi") header baris 1 wajib, berurutan A..P:
  * Hash | Tanggal | Deskripsi | Nominal | Debit | Kredit | ID Kategori | Bank |
  * No. Rekening | Nama Pemilik | Sumber | ID Upload | Dikirim Pada | Kategori |
- * Transfer Internal
+ * Transfer Internal | Saldo
  *
  * Upsert berdasarkan hash (kolom A): hash yang sudah ada di Sheet DITIMPA di
  * baris yang sama, bukan dilewati. Ini penting karena kategori sebuah transaksi
@@ -54,7 +54,7 @@ const DASHBOARD_SHEET_NAME = 'Dashboard';
  * perbaikan rumus hanya berlaku untuk Sheet baru, sementara Sheet yang sudah
  * ada tetap memakai rumus lama sampai pengguna ingat membuka menu "Pembukuan".
  */
-const VERSI_DASHBOARD = '6';
+const VERSI_DASHBOARD = '7';
 
 /**
  * Sel rumus yang dipantau untuk mendeteksi Dashboard rusak. Tata letaknya kini
@@ -64,9 +64,9 @@ const VERSI_DASHBOARD = '6';
  */
 const SEL_RUMUS = ['A9', 'D10', 'G9', 'A45'];
 
-const HEADER = ['Hash','Tanggal','Deskripsi','Nominal','Debit','Kredit','ID Kategori','Bank','No. Rekening','Nama Pemilik','Sumber','ID Upload','Dikirim Pada','Kategori','Transfer Internal'];
-const LEBAR_KOLOM = [110, 95, 300, 120, 120, 120, 130, 90, 130, 150, 80, 110, 140, 150, 130];
-const KOLOM_RP = [4, 5, 6];      // Nominal, Debit, Kredit
+const HEADER = ['Hash','Tanggal','Deskripsi','Nominal','Debit','Kredit','ID Kategori','Bank','No. Rekening','Nama Pemilik','Sumber','ID Upload','Dikirim Pada','Kategori','Transfer Internal','Saldo'];
+const LEBAR_KOLOM = [110, 95, 300, 120, 120, 120, 130, 90, 130, 150, 80, 110, 140, 150, 130, 130];
+const KOLOM_RP = [4, 5, 6, 16];  // Nominal, Debit, Kredit, Saldo
 const KOLOM_WAKTU = 13;          // Dikirim Pada
 const KOLOM_SEMBUNYI = [1, 7, 12]; // Hash, ID Kategori, ID Upload — dipakai mesin, bukan mata
 
@@ -375,7 +375,8 @@ function pastikanDashboard(ss, namaSheetData) {
 
   let r = 8;             // kursor baris berjalan; tidak ada jangkar hardcoded
   const rentang = [];    // rentang baris tiap blok, dipakai menguji tabrakan
-  const rentangNet = []; // kolom Net, untuk pewarnaan bersyarat
+  const rentangNet = [];     // kolom Net, untuk pewarnaan bersyarat
+  const rentangSelisih = []; // kolom Selisih, ditandai merah bila bukan nol
 
   const judulSeksi = (teks) => {
     d.getRange(r, 1).setValue(teks).setFontWeight('bold').setFontSize(11).setFontColor(BIRU_TUA);
@@ -442,7 +443,7 @@ function pastikanDashboard(ss, namaSheetData) {
     // QUERY: nama bank ber-apostrof akan memecah rumusnya. Penyaringan memakai
     // kolom bendera yang membandingkan kolom maya rekening dengan sel ini.
     const selLabel = `$A$${r}`;
-    pitaSeksi(d, `A${r}:F${r}`, label, BIRU_TUA);
+    pitaSeksi(d, `A${r}:G${r}`, label, BIRU_TUA);
     r += 1;
 
     const bendera = `ARRAYFORMULA(IF(${REK}=${selLabel}${S}1${S}0))`;
@@ -466,11 +467,37 @@ function pastikanDashboard(ss, namaSheetData) {
     pasangRumus(`E${isiBulan}`,
       `=IFERROR(ARRAYFORMULA(IF(A${isiBulan}:A${akhirBulan}=""${S}""${S}`
       + `IF(B${isiBulan}:B${akhirBulan}-C${isiBulan}:C${akhirBulan}>=0${S}"✅ Surplus"${S}"⚠️ Defisit")))${S}"")`);
-    kepalaTabel(d, `A${kepalaTabelBulan}:E${kepalaTabelBulan}`);
+    // Saldo Bank = saldo berjalan pada transaksi TERAKHIR MENURUT TANGGAL di
+    // bulan itu. Bukan "baris terakhir di tab data": urutan baris di sana adalah
+    // urutan kedatangan POST, yang teracak oleh antrean retry, upload yang tidak
+    // urut, dan penyelarasan penuh — mengambil yang terakhir menurut posisi akan
+    // memberi saldo yang salah tanpa tanda apa pun. Baris tanpa saldo (transaksi
+    // manual) disaring keluar supaya tidak menang sebagai "terakhir".
+    // Ditulis per baris, bukan ARRAYFORMULA: SORT/FILTER tidak bisa divektorkan.
+    d.getRange(kepalaTabelBulan, 6).setValue('Saldo Bank');
+    d.getRange(kepalaTabelBulan, 7).setValue('Selisih');
+    const rumusSaldo = [];
+    for (let baris = isiBulan; baris <= akhirBulan; baris += 1) {
+      const saldoBulan = `IFERROR(INDEX(SORT(FILTER({${kol('P')}${AS}${kol('B')}}${S}`
+        + `(${BULAN}=A${baris})*(${REK}=${selLabel})*(${kol('P')}<>""))${S}2${S}FALSE)${S}1${S}1)${S}"")`;
+      // Selisih memakai Saldo Bank bulan sebelumnya dari baris di ATASNYA:
+      // tabelnya sudah urut naik, jadi tidak perlu pencarian kedua. Identitas
+      // "perubahan saldo = jumlah mutasi" tetap berlaku walau ada bulan bolong.
+      const selisih = baris === isiBulan
+        ? '=""'
+        : `=IF(OR(A${baris}=""${S}F${baris}=""${S}F${baris - 1}="")${S}""${S}F${baris}-F${baris - 1}-D${baris})`;
+      rumusSaldo.push([`=IF(A${baris}=""${S}""${S}${saldoBulan})`, selisih]);
+    }
+    d.getRange(isiBulan, 6, rumusSaldo.length, 2).setFormulas(rumusSaldo);
+
+    kepalaTabel(d, `A${kepalaTabelBulan}:G${kepalaTabelBulan}`);
     d.getRange(`B${isiBulan}:D${akhirBulan}`).setNumberFormat(RP);
+    d.getRange(`F${isiBulan}:G${akhirBulan}`).setNumberFormat(RP);
     d.getRange(`A${isiBulan}:A${akhirBulan}`).setHorizontalAlignment('center');
     d.getRange(`E${isiBulan}:E${akhirBulan}`).setHorizontalAlignment('center');
     rentangNet.push(d.getRange(`D${isiBulan}:D${akhirBulan}`));
+    // Selisih bukan-nol berarti bulan itu kehilangan atau kelebihan baris.
+    rentangSelisih.push(d.getRange(`G${isiBulan}:G${akhirBulan}`));
 
     // Kartu mini menjumlah tabel bulanan di bawahnya, bukan menyaring ulang tab
     // data: hasilnya dijamin konsisten dengan tabelnya sendiri, dan tidak perlu
@@ -504,12 +531,20 @@ function pastikanDashboard(ss, namaSheetData) {
   d.setFrozenRows(2);
 
   /* ---------- Net: hijau kalau surplus, merah kalau defisit ---------- */
-  d.setConditionalFormatRules([
+  const aturan = [
     SpreadsheetApp.newConditionalFormatRule()
       .whenNumberGreaterThan(0).setFontColor(HIJAU).setBold(true).setRanges(rentangNet).build(),
     SpreadsheetApp.newConditionalFormatRule()
       .whenNumberLessThan(0).setFontColor(MERAH).setBold(true).setRanges(rentangNet).build(),
-  ]);
+  ];
+  // Selisih bukan nol = bulan itu kehilangan atau kelebihan transaksi. Ditandai
+  // mencolok karena justru itu gunanya kolom ini ada.
+  if (rentangSelisih.length) {
+    aturan.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenNumberNotEqualTo(0).setBackground('#fce8e6').setFontColor(MERAH).setBold(true)
+      .setRanges(rentangSelisih).build());
+  }
+  d.setConditionalFormatRules(aturan);
 
   /* ---------- Grafik (jumlahnya tetap, tidak ikut bertambah per rekening) ---------- */
   // Dua rentang terpisah: label rekening (A) dan total keluar (C). Kolom B
@@ -696,12 +731,37 @@ function diagnosaDashboard() {
 }
 
 function doPost(e) {
+  // Dua perangkat yang menyinkron bersamaan sama-sama melakukan baca-ubah-tulis
+  // di sheet yang sama; tanpa kunci, yang satu bisa menimpa hasil yang lain.
+  const kunci = LockService.getScriptLock();
+  try {
+    kunci.waitLock(30000);
+  } catch (err) {
+    return json({ok:false, error:'Sheet sedang dipakai proses lain, coba lagi sebentar'});
+  }
+
   try {
     const body = e.postData ? e.postData.contents : '';
     const data = body ? JSON.parse(body) : {};
     if (data.ping) return json({ok:true, ping:true});
+
     const rows = Array.isArray(data.rows) ? data.rows : [];
-    if (!rows.length) return json({ok:true, inserted:0, updated:0});
+    const hapus = Array.isArray(data.hapus) ? data.hapus.map(String).filter(Boolean) : [];
+
+    // Penyelarasan hanya berlaku bila SEMUA pengaman lolos. Ini operasi yang
+    // menghapus data pengguna, jadi kecurigaan sekecil apa pun -> jangan hapus.
+    //   - `selaras` harus disebut eksplisit; payload biasa tidak pernah menghapus.
+    //   - payload kosong tidak pernah berarti "kosongkan Sheet".
+    //   - `jumlah` dari pengirim harus cocok dengan rows.length: JSON yang
+    //     terpotong di tengah jalan akan tampak seperti daftar yang sah tapi
+    //     pendek, dan itu berarti menghapus baris yang sebenarnya masih ada.
+    const mintaSelaras = data.selaras === true
+      && rows.length > 0
+      && Number(data.jumlah) === rows.length;
+
+    if (!rows.length && !hapus.length && !mintaSelaras) {
+      return json({ok:true, inserted:0, updated:0, dihapus:0});
+    }
 
     // Payload tidak seharusnya pernah berisi hash ganda (hash unik di database
     // aplikasi), tapi tetap dijaga di sini: kejadian terakhir yang dipakai.
@@ -709,15 +769,48 @@ function doPost(e) {
     let anon = 0;
     rows.forEach((r) => { dedup.set(r.hash ? String(r.hash) : `__anon${anon++}`, r); });
 
+    // Rekening yang diketahui pengirim. Penyelarasan hanya boleh menyentuh
+    // rekening ini: data aplikasi tersimpan per perangkat, jadi perangkat lain
+    // bisa memiliki rekening yang tidak dikenal payload ini — barisnya harus
+    // dipertahankan, bukan dianggap yatim.
+    const rekeningPengirim = {};
+    rows.forEach((r) => {
+      const label = `${String(r.bank || '').trim()} ${String(r.nomorRekening || '').trim()}`.trim();
+      if (label) rekeningPengirim[label] = true;
+    });
+
     const sh = getSheet();
     const last = sh.getLastRow();
-    // hash (kolom A) -> nomor baris tersimpan, dipakai menentukan upsert-nya
-    // menimpa baris yang mana.
+    const lebar = HEADER.length;
+    const lama = last > 1 ? sh.getRange(2, 1, last - 1, lebar).getValues() : [];
+
     const nomorBaris = {};
-    if (last > 1) {
-      sh.getRange(2,1,last-1,1).getValues().forEach((r, i) => {
+    lama.forEach((r, i) => {
+      const h = String(r[0] || '');
+      if (h) nomorBaris[h] = i + 2; // +2: baris 1 header, array mulai dari 0
+    });
+
+    // Baris mana yang harus hilang dari Sheet.
+    const dibuang = {};
+    hapus.forEach((h) => { if (nomorBaris[h]) dibuang[nomorBaris[h]] = true; });
+    let dipertahankan = 0;
+    if (mintaSelaras) {
+      lama.forEach((r, i) => {
         const h = String(r[0] || '');
-        if (h) nomorBaris[h] = i + 2; // +2: baris 1 header, array mulai dari 0
+        if (!h || dedup.has(h)) return;
+        const label = `${String(r[7] || '').trim()} ${String(r[8] || '').trim()}`.trim();
+        if (label && !rekeningPengirim[label]) { dipertahankan += 1; return; }
+        dibuang[i + 2] = true;
+      });
+    }
+    const jumlahDibuang = Object.keys(dibuang).length;
+
+    // Pratinjau: hanya melapor, tidak menyentuh apa pun. Dipakai dialog
+    // konfirmasi supaya pengguna melihat angka sebenarnya sebelum menghapus.
+    if (data.praTinjau === true) {
+      return json({
+        ok: true, praTinjau: true,
+        akanDihapus: jumlahDibuang, dipertahankan: dipertahankan, total: last > 1 ? last - 1 : 0,
       });
     }
 
@@ -728,18 +821,25 @@ function doPost(e) {
       const t = new Date(data.dikirimPada);
       if (!isNaN(t.getTime())) ts = t;
     }
+
     const tambah = [];
     const perbarui = [];
     for (const r of dedup.values()) {
       const hash = String(r.hash || '');
-      const baru = [hash, r.tanggal||'', r.deskripsi||'', Number(r.nominal)||0, Number(r.debit)||0, Number(r.kredit)||0, r.kategoriId||'', r.bank||'', r.nomorRekening||'', r.namaPemilik||'', r.sumber||'', r.uploadedFileId||'', ts, r.kategoriNama||'', r.transferInternal === true];
+      // Saldo sengaja TIDAK dipaksa jadi 0 saat kosong: nol adalah saldo yang
+      // sah, sedangkan kosong berarti bank tidak menyebutkannya (transaksi
+      // manual). Dashboard membedakan keduanya saat memeriksa kelengkapan bulan.
+      const saldo = r.saldo === '' || r.saldo === null || r.saldo === undefined ? '' : Number(r.saldo);
+      const baru = [hash, r.tanggal||'', r.deskripsi||'', Number(r.nominal)||0, Number(r.debit)||0, Number(r.kredit)||0, r.kategoriId||'', r.bank||'', r.nomorRekening||'', r.namaPemilik||'', r.sumber||'', r.uploadedFileId||'', ts, r.kategoriNama||'', r.transferInternal === true, saldo];
       const baris = hash ? nomorBaris[hash] : null;
-      if (baris) perbarui.push({ baris, nilai: baru });
-      else tambah.push(baru);
+      if (baris && !dibuang[baris]) perbarui.push({ baris, nilai: baru });
+      else if (!baris) tambah.push(baru);
     }
+
     if (perbarui.length) tulisPembaruan(sh, perbarui, last);
+
     if (tambah.length) {
-      sh.getRange(last+1, 1, tambah.length, HEADER.length).setValues(tambah);
+      sh.getRange(last+1, 1, tambah.length, lebar).setValues(tambah);
       // Baris yang menambah tinggi grid tidak mewarisi format kolom di atasnya,
       // jadi formatnya dipasang langsung di sini — tanpa ini transaksi baru
       // tampil "56000" sementara yang lama "Rp 56.000". Baris hasil upsert tidak
@@ -747,10 +847,50 @@ function doPost(e) {
       KOLOM_RP.forEach((k) => sh.getRange(last+1, k, tambah.length, 1).setNumberFormat(RP));
       sh.getRange(last+1, KOLOM_WAKTU, tambah.length, 1).setNumberFormat(FORMAT_WAKTU);
     }
-    return json({ok:true, inserted: tambah.length, updated: perbarui.length});
+
+    if (jumlahDibuang) hapusBaris(sh, dibuang);
+
+    return json({
+      ok: true,
+      inserted: tambah.length,
+      updated: perbarui.length,
+      dihapus: jumlahDibuang,
+      dipertahankan: dipertahankan,
+    });
   } catch (err) {
     return json({ok:false, error: String(err && err.message || err)});
+  } finally {
+    kunci.releaseLock();
   }
+}
+
+/**
+ * Buang baris-baris yang nomornya ada di `dibuang`.
+ *
+ * Sama seperti `tulisPembaruan`: untuk jumlah kecil, operasi per baris paling
+ * murah — tapi penyelarasan bisa membuang ratusan baris sekaligus, dan
+ * `deleteRow` satu per satu jauh lebih mahal daripada penulisan biasa. Di atas
+ * ambang, seluruh blok yang tersisa ditulis ulang sekali lalu ekornya dipangkas
+ * dalam satu operasi.
+ */
+function hapusBaris(sh, dibuang) {
+  const last = sh.getLastRow();
+  if (last < 2) return;
+  const nomor = Object.keys(dibuang).map(Number).sort((a, b) => a - b);
+  if (!nomor.length) return;
+
+  if (nomor.length <= AMBANG_TULIS_BORONG) {
+    // Menurun, supaya penghapusan satu baris tidak menggeser nomor berikutnya.
+    for (let i = nomor.length - 1; i >= 0; i -= 1) sh.deleteRow(nomor[i]);
+    return;
+  }
+
+  const lebar = HEADER.length;
+  const rng = sh.getRange(2, 1, last - 1, lebar);
+  const sisa = rng.getValues().filter((_, i) => !dibuang[i + 2]);
+  if (sisa.length) sh.getRange(2, 1, sisa.length, lebar).setValues(sisa);
+  const ekor = (last - 1) - sisa.length;
+  if (ekor > 0) sh.deleteRows(2 + sisa.length, ekor);
 }
 
 /** Di atas jumlah ini, menulis baris satu per satu lebih mahal daripada

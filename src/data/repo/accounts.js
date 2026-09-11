@@ -111,7 +111,7 @@ export async function hitungUlangSemua() {
 
 /** Menghapus rekening beserta seluruh transaksinya. */
 export async function hapusAkun(id) {
-  const jumlah = await trxRepo.hapusPerAkun(id);
+  const { jumlah, hash } = await trxRepo.hapusPerAkun(id);
   const upload = await ambilSemua(STORE.UPLOADED_FILES);
   const milik = upload.filter((u) => u.accountId === id).map((u) => u.id);
   if (milik.length) {
@@ -120,5 +120,5 @@ export async function hapusAkun(id) {
     });
   }
   await hapus(STORE.ACCOUNTS, id);
-  return { transaksiTerhapus: jumlah, uploadTerhapus: milik.length };
+  return { transaksiTerhapus: jumlah, uploadTerhapus: milik.length, hash };
 }

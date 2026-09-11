@@ -18,7 +18,7 @@ import { buatTransaksi, SUMBER, JENIS_AKUN } from '../../domain/entities.js';
 import { hitungBaseHash, hashFinal } from '../../domain/dedupe.js';
 import { saranPola, tambahPola, tentukanKategori } from '../../domain/categorize.js';
 import { ringkasArus } from '../../domain/analytics.js';
-import { syncAtauAntri } from '../../services/sheets-sync.js';
+import { syncAtauAntri, hapusDariSheets } from '../../services/sheets-sync.js';
 import { dataView } from '../components/data-view.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
 import { toastSukses, toastGagal } from '../components/toast.js';
@@ -337,6 +337,9 @@ async function hapus(trx, render) {
   if (!ya) return;
 
   await trxRepo.hapusTransaksi(trx.id);
+  // Sheet mengenali baris lewat hash; tanpa pemberitahuan ini barisnya tetap
+  // duduk di sana dan terus ikut dijumlahkan. Latar belakang, tidak ditunggu.
+  hapusDariSheets([trx.hash]).catch((e) => console.warn('Hapus di Sheets gagal:', e));
   await akunRepo.hitungUlangSaldo(trx.accountId);
   toastSukses('Transaksi dihapus.');
   emit(EVENT.DATA_BERUBAH, { sumber: 'hapus-transaksi' });

@@ -15,7 +15,7 @@ import { setTema, temaTersimpan, TEMA } from '../theme.js';
 import { versiBerjalan, periksaPembaruan } from '../versi.js';
 import { unduhBackup, pulihkanBackup, dukunganPilihFolder } from '../../services/export.js';
 import {
-  bacaKonfigSheets, simpanKonfigSheets, testWebhook, syncKeSheets, jumlahAntrean,
+  bacaKonfigSheets, simpanKonfigSheets, testWebhook, syncKeSheets, jumlahAntrean, praTinjauSelaras,
 } from '../../services/sheets-sync.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
 import { toastSukses, toastGagal } from '../components/toast.js';
@@ -247,7 +247,8 @@ async function mulaiRestore(file, render) {
           try {
             const hasil = await pulihkanBackup(backup, mode);
             m.tutup();
-            toastSukses(`Pulih: ${hasil.transaksi} transaksi, ${hasil.rekening} rekening.`);
+            toastSukses(`Pulih: ${hasil.transaksi} transaksi, ${hasil.rekening} rekening.`
+              + ' Tekan "Kirim semua sekarang" agar Google Sheet ikut menyesuaikan.');
             emit(EVENT.DATA_BERUBAH, { sumber: 'restore' });
             render();
           } catch (e) {
@@ -280,7 +281,11 @@ async function hapusSemua(render) {
   kategoriRepo.kosongkanCache();
   await pengaturanRepo.hapusKunci(pengaturanRepo.KUNCI.KATEGORI_TERSEMAI);
   await kategoriRepo.semaiBawaan();
-  toastSukses('Semua data dihapus. Kategori bawaan dipasang kembali.');
+  // Sheet TIDAK ikut dikosongkan, dan penyelarasan pun tidak bisa
+  // membereskannya: pengamannya menolak payload kosong, justru supaya database
+  // yang kebetulan kosong tidak pernah menghapus isi Sheet. Katakan apa adanya
+  // daripada membiarkan pengguna mengira keduanya sudah bersih.
+  toastSukses('Semua data dihapus. Kategori bawaan dipasang kembali. Isi Google Sheet tidak ikut dihapus.');
   emit(EVENT.DATA_BERUBAH, { sumber: 'reset' });
   render();
 }
@@ -352,14 +357,35 @@ async function kartuSheets() {
           try {
             const [trx, akun, kategori] = await Promise.all([trxRepo.semua(), akunRepo.peta(), kategoriRepo.peta()]);
             if (!trx.length) { toastGagal('Belum ada transaksi'); return; }
+
+            // Dihitung dulu, baru ditanyakan. Menghapus data pengguna tanpa
+            // menyebut berapa banyak bukan pilihan — dan angka yang jauh dari
+            // dugaan justru tanda ada yang salah, sehingga masih bisa dibatalkan.
+            const tinjau = await praTinjauSelaras(trx, akun, kategori);
+            if (tinjau?.skipped) { toastGagal('Aktifkan Sheets & isi URL dulu'); return; }
+
+            if (tinjau.akanDihapus > 0) {
+              const ya = await konfirmasi({
+                judul: 'Samakan Sheet dengan perangkat ini?',
+                pesan: `${tinjau.akanDihapus} baris di Sheet tidak ada lagi di perangkat ini dan akan DIHAPUS `
+                  + `(biasanya sisa upload yang pernah dibatalkan). ${trx.length} transaksi akan dikirim ulang.`
+                  + (tinjau.dipertahankan
+                    ? ` ${tinjau.dipertahankan} baris milik rekening lain tetap dipertahankan.`
+                    : ' Catatan: data pembukuan tersimpan per perangkat, jadi jalankan ini dari perangkat yang datanya paling lengkap.'),
+                tombolYa: 'Ya, samakan',
+                bahaya: true,
+              });
+              if (!ya) return;
+            }
+
             // Batas waktu dinaikkan jauh: backfill mengirim SELURUH transaksi
             // dalam satu permintaan — pada pembukuan ribuan baris itu berarti
             // payload ratusan KB, ditambah cold start Apps Script yang bisa
             // beberapa detik sendiri. Batas 30 detik terlalu mepet dan membuat
             // pengiriman yang sebenarnya berhasil terlihat gagal.
-            const r = await syncKeSheets(trx, akun, kategori, { batasMs: 60000 });
+            const r = await syncKeSheets(trx, akun, kategori, { batasMs: 60000, selaras: true });
             if (r?.skipped) toastGagal('Aktifkan Sheets & isi URL dulu');
-            else toastSukses(`Terkirim ${r.jumlah} baris ke Sheets`);
+            else toastSukses(`Terkirim ${r.jumlah} baris${r.dihapus ? `, ${r.dihapus} baris yatim dihapus` : ''}.`);
           } catch (err) { toastGagal(err.message); } finally { b.disabled = false; }
         } }, 'Kirim semua sekarang'),
       ]),

@@ -11,6 +11,7 @@ import { h, ikon, ganti } from '../../core/dom.js';
 import { tanggalTampil } from '../../core/dates.js';
 import { on, emit, EVENT } from '../../core/events.js';
 import * as uploadRepo from '../../data/repo/uploads.js';
+import { hapusDariSheets } from '../../services/sheets-sync.js';
 import { STATUS_UPLOAD } from '../../domain/entities.js';
 import { dataView } from '../components/data-view.js';
 import { konfirmasi } from '../components/modal.js';
@@ -131,6 +132,9 @@ async function batalkan(upload, selesai) {
   if (!ya) return;
 
   const hasil = await uploadRepo.hapusUpload(upload.id);
+  // Membatalkan upload adalah penyebab paling sering Sheet jadi melenceng:
+  // e-statement yang dibaca ulang meninggalkan baris lamanya di sana.
+  hapusDariSheets(hasil.hash).catch((e) => console.warn('Hapus di Sheets gagal:', e));
   toastSukses(`${hasil.transaksiTerhapus} transaksi dihapus.`);
   emit(EVENT.DATA_BERUBAH, { sumber: 'riwayat' });
   selesai?.();

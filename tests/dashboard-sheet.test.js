@@ -27,6 +27,9 @@ function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
         barisData.push([
           `hash${iR}_${b}_${k}`, `${bln}-05`, 'Uji', -1000, 1000, 0,
           `kat_uji_${k}`, bank, nomor, 'Pemilik', 'pdf', '', new Date(), `Kategori ${k}`, false,
+          // Sebagian baris tanpa saldo, seperti transaksi manual: rumus Saldo
+          // Bank harus menyaringnya keluar, bukan memperlakukannya sebagai nol.
+          k % 3 === 0 ? '' : 1000000 - (b * 1000) - k,
         ]);
       }
     }
@@ -45,6 +48,15 @@ function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
       let proxy;
       const t = {
         setFormula(f) { rumus[a1] = f; return proxy; },
+        // setFormulas (jamak) dipakai blok saldo per rekening. Tanpa dicatat di
+        // sini, rumus-rumus itu lolos dari SELURUH pemeriksaan di bawah —
+        // termasuk pemeriksaan pemisah argumen lokal Indonesia.
+        setFormulas(matriks) {
+          matriks.forEach((baris, i) => baris.forEach((f, j) => {
+            if (f) rumus[`${a1}#${i}_${j}`] = f;
+          }));
+          return proxy;
+        },
         setValue: () => proxy,
         getValue: () => (pakaiKoma ? 3 : 1.2),
         getValues: () => (nama === 'Transaksi' ? barisData.map((r) => r.slice()) : [[]]),
@@ -85,7 +97,7 @@ function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
     return new Proxy(sh, { get: (o, k) => (k in o ? o[k] : () => o) });
   }
 
-  const lembar = { Transaksi: buatSheet('Transaksi', 15, 5000) };
+  const lembar = { Transaksi: buatSheet('Transaksi', 16, 5000) };
   const ss = {
     getSheetByName: (n) => lembar[n] || null,
     insertSheet: (n) => { dibuat.push(n); lembar[n] = buatSheet(n); return lembar[n]; },

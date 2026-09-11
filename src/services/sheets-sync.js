@@ -25,6 +25,7 @@ export const KUNCI_SHEETS = {
   URL: 'sheetsWebhookUrl',
   AKTIF: 'sheetsAktif',
   ANTREAN: 'sheetsAntrean',
+  ANTREAN_HAPUS: 'sheetsAntreanHapus',
 };
 
 /** Berapa lama menunggu jawaban webhook sebelum dianggap gagal dan diantrekan. */
@@ -78,9 +79,23 @@ async function tulisAntrean(ids) {
   await pengaturanRepo.tulis(KUNCI_SHEETS.ANTREAN, [...new Set(ids)].filter(Boolean));
 }
 
+/**
+ * Antrean hapus menyimpan HASH, bukan ID seperti antrean kirim. Antrean kirim
+ * bisa menyimpan ID karena isinya dibaca ulang dari database saat dikirim —
+ * untuk penghapusan itu mustahil, barisnya sudah tidak ada di database.
+ */
+export async function bacaAntreanHapus() {
+  const hashes = await pengaturanRepo.baca(KUNCI_SHEETS.ANTREAN_HAPUS, []);
+  return Array.isArray(hashes) ? hashes : [];
+}
+
+async function tulisAntreanHapus(hashes) {
+  await pengaturanRepo.tulis(KUNCI_SHEETS.ANTREAN_HAPUS, [...new Set(hashes)].filter(Boolean));
+}
+
 export async function jumlahAntrean() {
-  const ids = await bacaAntrean();
-  return ids.length;
+  const [ids, hapus] = await Promise.all([bacaAntrean(), bacaAntreanHapus()]);
+  return ids.length + hapus.length;
 }
 
 /* ==========================================================================
@@ -109,6 +124,11 @@ export function barisUntukSheet(t, akunMap, kategoriMap) {
     // rekening lain), persis yang sudah dihindari `tanpaTransferInternal`
     // di domain/analytics.js untuk tampilan di dalam aplikasi.
     transferInternal: Boolean(t.transferInternal),
+    // Saldo berjalan menurut e-statement. Kosong untuk transaksi manual — biarkan
+    // kosong, jangan dipaksa nol: nol adalah saldo yang sah, sedangkan kosong
+    // berarti "bank tidak menyebutkan", dan Dashboard membedakan keduanya untuk
+    // memeriksa kelengkapan data tiap bulan.
+    saldo: t.saldo === null || t.saldo === undefined || t.saldo === '' ? '' : Number(t.saldo),
   };
 }
 
@@ -160,9 +180,69 @@ export async function syncKeSheets(transaksi, akunMap, kategoriMap, opsi = {}) {
   const { url, aktif } = await bacaKonfigSheets();
   if (!aktif || !url || !transaksi?.length) return { skipped: true };
   const rows = transaksi.map((t) => barisUntukSheet(t, akunMap, kategoriMap));
-  const payload = { rows, dikirimPada: new Date().toISOString(), jumlah: rows.length };
-  await post(url, payload, opsi.batasMs);
-  return { ok: true, jumlah: rows.length };
+  const payload = {
+    rows,
+    dikirimPada: new Date().toISOString(),
+    // `jumlah` dibandingkan dengan rows.length di sisi Apps Script untuk
+    // mendeteksi JSON yang terpotong di tengah jalan — penting justru pada mode
+    // selaras, karena payload cacat di sana berarti penghapusan yang salah.
+    jumlah: rows.length,
+    selaras: opsi.selaras === true,
+  };
+  const jawab = await post(url, payload, opsi.batasMs);
+  return { ok: true, jumlah: rows.length, dihapus: jawab?.dihapus || 0 };
+}
+
+/**
+ * Hitung berapa baris yatim yang AKAN dihapus penyelarasan, tanpa mengubah
+ * apa pun. Dipakai untuk menyebut angka sebenarnya di dialog konfirmasi:
+ * menghapus data pengguna tanpa memberitahu berapa banyak bukan pilihan.
+ */
+export async function praTinjauSelaras(transaksi, akunMap, kategoriMap) {
+  const { url, aktif } = await bacaKonfigSheets();
+  if (!aktif || !url || !transaksi?.length) return { skipped: true };
+  const rows = transaksi.map((t) => barisUntukSheet(t, akunMap, kategoriMap));
+  const jawab = await post(url, {
+    praTinjau: true,
+    selaras: true,
+    dikirimPada: new Date().toISOString(),
+    jumlah: rows.length,
+    // Pratinjau cukup mengirim identitasnya saja, bukan seluruh isi baris.
+    rows: rows.map((r) => ({ hash: r.hash, bank: r.bank, nomorRekening: r.nomorRekening })),
+  }, 60000);
+  return {
+    ok: true,
+    akanDihapus: jawab?.akanDihapus || 0,
+    dipertahankan: jawab?.dipertahankan || 0,
+    total: jawab?.total || 0,
+  };
+}
+
+/**
+ * Beri tahu Sheet bahwa transaksi-transaksi ini sudah dihapus di aplikasi.
+ *
+ * Tanpa ini, baris yang dihapus tetap duduk di Sheet dan terus ikut dijumlahkan
+ * selamanya — penyebab angka Dashboard melenceng jauh dari angka aplikasi.
+ * Sama seperti jalur kirim: latar belakang, tidak pernah ditunggu pemanggil,
+ * dan yang gagal masuk antrean untuk dicoba lagi.
+ */
+export async function hapusDariSheets(hashes) {
+  const daftar = [...new Set((hashes || []).filter(Boolean))];
+  const { url, aktif } = await bacaKonfigSheets();
+  if (!aktif || !url) return { skipped: true };
+
+  const tertunda = await bacaAntreanHapus();
+  const gabungan = [...new Set([...tertunda, ...daftar])];
+  if (!gabungan.length) return { skipped: true };
+
+  try {
+    await post(url, { hapus: gabungan, dikirimPada: new Date().toISOString() });
+    await tulisAntreanHapus([]);
+    return { ok: true, jumlah: gabungan.length };
+  } catch (e) {
+    await tulisAntreanHapus(gabungan);
+    return { queued: true, jumlah: gabungan.length, error: e.message };
+  }
 }
 
 /**
@@ -183,6 +263,12 @@ export async function syncKeSheets(transaksi, akunMap, kategoriMap, opsi = {}) {
 export async function syncAtauAntri(transaksiBaru, akunMap, kategoriMap) {
   const { url, aktif } = await bacaKonfigSheets();
   if (!aktif || !url) return { skipped: true };
+
+  // Antrean hapus disiram lebih dulu supaya penghapusan yang tertunda ikut
+  // terkirim oleh pemicu yang sama (simpan baru, aplikasi dibuka, koneksi
+  // pulih) tanpa perlu pemantau sendiri.
+  const hapusTertunda = await bacaAntreanHapus();
+  if (hapusTertunda.length) await hapusDariSheets([]).catch(() => {});
 
   const antreanLama = await bacaAntrean();
   const idBaru = new Set((transaksiBaru || []).map((t) => t.id));
