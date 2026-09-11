@@ -131,3 +131,41 @@ export function periodeDariBaris(daftar) {
   const tanggal = daftar.map((b) => b.tanggal).filter(Boolean).sort();
   return { periodeAwal: tanggal[0] || '', periodeAkhir: tanggal[tanggal.length - 1] || '' };
 }
+
+/**
+ * Upload mana yang periodenya beririsan dengan upload lain pada rekening yang
+ * sama — tanda satu e-statement ter-upload dua kali.
+ *
+ * Ini kesalahan yang mahal justru karena tidak terlihat: transaksinya masuk
+ * semua dengan hash berbeda (hasil baca ulang bisa sedikit berbeda), jadi
+ * dedupe tidak menangkapnya, dan pembukuan menggelembung diam-diam sampai
+ * ketahuan berbulan-bulan kemudian saat angkanya dibandingkan dengan rekening
+ * koran. Menandainya di Riwayat membuatnya ketahuan saat kejadian.
+ *
+ * Tanggal ISO ("2025-08-01") dibandingkan langsung sebagai teks: urutan
+ * leksikalnya sama dengan urutan kronologisnya.
+ *
+ * @param {Array} daftar rekaman upload (butuh accountId, periodeAwal, periodeAkhir)
+ * @returns {Set<string>} id upload yang beririsan dengan setidaknya satu upload lain
+ */
+export function uploadTumpangTindih(daftar) {
+  const bertanda = new Set();
+  // Upload yang tidak menghasilkan transaksi tidak menambah apa pun ke
+  // pembukuan, jadi tidak mungkin jadi sumber penggelembungan.
+  const layak = (daftar || []).filter(
+    (u) => u && u.accountId && u.periodeAwal && u.periodeAkhir && (u.berhasil || 0) > 0,
+  );
+
+  for (let i = 0; i < layak.length; i += 1) {
+    for (let j = i + 1; j < layak.length; j += 1) {
+      const a = layak[i];
+      const b = layak[j];
+      if (a.accountId !== b.accountId) continue;
+      if (a.periodeAwal <= b.periodeAkhir && b.periodeAwal <= a.periodeAkhir) {
+        bertanda.add(a.id);
+        bertanda.add(b.id);
+      }
+    }
+  }
+  return bertanda;
+}

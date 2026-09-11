@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { kunciDasar, bubuhiBaseHash, tandaiDuplikat, paksaSimpan, ringkasDuplikat } from '../src/domain/dedupe.js';
 import { tentukanKategori, saranPola, tambahPola, KATEGORI_BAWAAN } from '../src/domain/categorize.js';
 import { KATEGORI_LAINNYA_KELUAR, KATEGORI_LAINNYA_MASUK } from '../src/domain/entities.js';
+import { uploadTumpangTindih } from '../src/domain/validate.js';
 import { parseStatement } from '../src/parsers/registry.js';
 import { statementBCA, statementBCAAgustus } from './fixtures/statements.js';
 
@@ -204,4 +205,64 @@ test('kata kunci tetap cocok walau kode referensi menempel tanpa spasi ke nama m
   // Proteksi lama tidak boleh melonggar: transisi huruf-ke-huruf tetap ditolak.
   assert.equal(tentukanKategori('PB KE GIANI SAFITRI 1238840550 Permata ME', -107100, KATEGORI_BAWAAN), 'kat_transfer_keluar');
   assert.equal(tentukanKategori('TRF DARI BESTINDO BANK DANAMON Dana Dimuka', 5730000, KATEGORI_BAWAAN), 'kat_transfer_masuk');
+});
+
+/* ==========================================================================
+   uploadTumpangTindih — deteksi e-statement yang ter-upload dua kali
+   ========================================================================== */
+
+const upl = (id, accountId, awal, akhir, berhasil = 10) => ({
+  id, accountId, periodeAwal: awal, periodeAkhir: akhir, berhasil,
+});
+
+test('uploadTumpangTindih menandai dua upload untuk bulan yang sama pada rekening sama', () => {
+  // Persis kasus nyata yang ditemukan saat audit: Agustus ter-upload dua kali
+  // di satu rekening, hash-nya berbeda sehingga dedupe tidak menangkapnya.
+  const hasil = uploadTumpangTindih([
+    upl('a', 'acc1', '2025-07-01', '2025-07-31'),
+    upl('b', 'acc1', '2025-08-01', '2025-08-31'),
+    upl('c', 'acc1', '2025-08-01', '2025-08-31'),
+  ]);
+  assert.deepEqual([...hasil].sort(), ['b', 'c']);
+});
+
+test('uploadTumpangTindih tidak menandai rekening yang berbeda', () => {
+  const hasil = uploadTumpangTindih([
+    upl('a', 'acc1', '2025-08-01', '2025-08-31'),
+    upl('b', 'acc2', '2025-08-01', '2025-08-31'),
+  ]);
+  assert.equal(hasil.size, 0);
+});
+
+test('uploadTumpangTindih tidak menandai periode yang bersambung tapi tidak beririsan', () => {
+  const hasil = uploadTumpangTindih([
+    upl('a', 'acc1', '2025-07-01', '2025-07-31'),
+    upl('b', 'acc1', '2025-08-01', '2025-08-31'),
+  ]);
+  assert.equal(hasil.size, 0);
+});
+
+test('uploadTumpangTindih menandai irisan sebagian, bukan cuma periode identik', () => {
+  const hasil = uploadTumpangTindih([
+    upl('a', 'acc1', '2025-07-15', '2025-08-14'),
+    upl('b', 'acc1', '2025-08-01', '2025-08-31'),
+  ]);
+  assert.deepEqual([...hasil].sort(), ['a', 'b']);
+});
+
+test('uploadTumpangTindih melewati upload tanpa periode atau tanpa transaksi', () => {
+  // Periode kosong tidak bisa dibandingkan, dan upload yang gagal total tidak
+  // menambah apa pun ke pembukuan sehingga tidak mungkin menggelembungkannya.
+  assert.equal(uploadTumpangTindih([
+    upl('a', 'acc1', '', ''),
+    upl('b', 'acc1', '2025-08-01', '2025-08-31'),
+  ]).size, 0);
+
+  assert.equal(uploadTumpangTindih([
+    upl('a', 'acc1', '2025-08-01', '2025-08-31', 0),
+    upl('b', 'acc1', '2025-08-01', '2025-08-31'),
+  ]).size, 0);
+
+  assert.equal(uploadTumpangTindih([]).size, 0);
+  assert.equal(uploadTumpangTindih(undefined).size, 0);
 });

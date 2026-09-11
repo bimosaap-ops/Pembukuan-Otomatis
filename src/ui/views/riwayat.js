@@ -12,6 +12,7 @@ import { tanggalTampil } from '../../core/dates.js';
 import { on, emit, EVENT } from '../../core/events.js';
 import * as uploadRepo from '../../data/repo/uploads.js';
 import { hapusDariSheets } from '../../services/sheets-sync.js';
+import { uploadTumpangTindih } from '../../domain/validate.js';
 import { STATUS_UPLOAD } from '../../domain/entities.js';
 import { dataView } from '../components/data-view.js';
 import { konfirmasi } from '../components/modal.js';
@@ -47,6 +48,11 @@ export async function mount(wadah) {
 
     const totalBerhasil = daftar.reduce((s, u) => s + (u.berhasil || 0), 0);
     const totalDuplikat = daftar.reduce((s, u) => s + (u.duplikat || 0), 0);
+    // Satu e-statement yang ter-upload dua kali tidak tertangkap dedupe (hasil
+    // baca ulang menghasilkan hash berbeda), jadi pembukuan menggelembung
+    // diam-diam. Ditandai di sini supaya ketahuan saat kejadian, bukan
+    // berbulan-bulan kemudian saat angkanya dibandingkan dengan rekening koran.
+    const tumpang = uploadTumpangTindih(daftar);
 
     ganti(isi, [
       h('.grid-kpi', null, [
@@ -56,15 +62,37 @@ export async function mount(wadah) {
         kpi('Perlu Dicek', String(daftar.filter((u) => u.status === STATUS_UPLOAD.SEBAGIAN).length)),
       ]),
 
+      tumpang.size
+        ? h('.info-kotak.info-kotak--warning', null, [
+          ikon('peringatan', 18),
+          h('div', null, [
+            h('b', { text: `${tumpang.size} upload punya periode yang beririsan. ` }),
+            'Satu e-statement yang ter-upload dua kali membuat transaksinya terhitung ganda '
+            + 'dan tidak tertangkap pemeriksaan duplikat. Periksa baris bertanda di bawah, '
+            + 'lalu batalkan salah satunya.',
+          ]),
+        ])
+        : null,
+
       dataView({
         kolom: [
           { kunci: 'namaFile', judul: 'Nama File', kartu: 'utama', render: (u) => h('div.putus', { text: u.namaFile }) },
           { kunci: 'bank', judul: 'Bank', lebar: '120px', render: (u) => `${u.bank || '—'}${u.nomorRekening ? ` · ${u.nomorRekening}` : ''}` },
           {
             kunci: 'periode', judul: 'Periode', lebar: '190px',
-            render: (u) => (u.periodeAwal
-              ? `${tanggalTampil(u.periodeAwal)} – ${tanggalTampil(u.periodeAkhir || u.periodeAwal)}`
-              : '—'),
+            render: (u) => {
+              const teks = u.periodeAwal
+                ? `${tanggalTampil(u.periodeAwal)} – ${tanggalTampil(u.periodeAkhir || u.periodeAwal)}`
+                : '—';
+              if (!tumpang.has(u.id)) return teks;
+              return h('div.baris', { style: { gap: '6px', alignItems: 'center' } }, [
+                h('span', { text: teks }),
+                h('span.lencana.lencana--warning', {
+                  text: 'beririsan',
+                  title: 'Periode ini beririsan dengan upload lain di rekening yang sama — kemungkinan e-statement yang sama ter-upload dua kali.',
+                }),
+              ]);
+            },
           },
           {
             kunci: 'tanggalUpload', judul: 'Tanggal Upload', lebar: '140px',

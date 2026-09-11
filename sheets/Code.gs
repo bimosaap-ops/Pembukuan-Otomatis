@@ -54,7 +54,7 @@ const DASHBOARD_SHEET_NAME = 'Dashboard';
  * perbaikan rumus hanya berlaku untuk Sheet baru, sementara Sheet yang sudah
  * ada tetap memakai rumus lama sampai pengguna ingat membuka menu "Pembukuan".
  */
-const VERSI_DASHBOARD = '7';
+const VERSI_DASHBOARD = '8';
 
 /**
  * Sel rumus yang dipantau untuk mendeteksi Dashboard rusak. Tata letaknya kini
@@ -153,10 +153,15 @@ function rapikanTampilan(sh) {
 
   KOLOM_RP.forEach((k) => sh.getRange(2, k, isi, 1).setNumberFormat(RP));
   sh.getRange(2, KOLOM_WAKTU, isi, 1).setNumberFormat(FORMAT_WAKTU);
-  // Tanggal sengaja dibiarkan teks ISO ("2025-07-01"): urutannya sudah benar
-  // secara leksikal, dan tabel Tren Bulanan mengambil bulannya lewat LEFT(B,7)
-  // yang hanya bekerja pada teks.
-  sh.getRange(2, 2, isi, 1).setHorizontalAlignment('center');
+  // Tanggal dikirim sebagai teks ISO, tapi setValues mengubahnya jadi TIPE
+  // TANGGAL. Formatnya dipaku di sini supaya tampilannya konsisten; rumus bulan
+  // di Dashboard sengaja tidak lagi bergantung pada format ini (lihat BULAN).
+  sh.getRange(2, 2, isi, 1).setNumberFormat('yyyy-mm-dd').setHorizontalAlignment('center');
+  // No. Rekening dipaksa teks: setValues mengubah "4997913646" jadi bilangan,
+  // dan nomor berawalan nol akan kehilangan nolnya sehingga label rekening tidak
+  // lagi cocok dengan nomor aslinya. Baris lama tidak dimigrasi — nol yang sudah
+  // hilang tidak bisa dikembalikan, dan penggabungan string tetap sama hasilnya.
+  sh.getRange(2, 9, isi, 1).setNumberFormat('@');
   normalkanWaktu(sh);
 
   // Kolom teknis tetap ditulis dan tetap dipakai upsert, hanya disembunyikan
@@ -292,7 +297,14 @@ function pastikanDashboard(ss, namaSheetData) {
   const kol = (huruf) => `'${namaSheetData}'!${huruf}2:${huruf}`;
 
   /* ---------- Kolom maya, dirakit sekali ---------- */
-  const BULAN = `ARRAYFORMULA(LEFT(${kol('B')}${S}7))`;
+  // Tanggal tersimpan sebagai TIPE TANGGAL, bukan teks: setValues mengubah
+  // string ISO jadi tanggal saat menulis. LEFT(tanggal;7) kebetulan masih benar
+  // selama format tampilannya "yyyy-mm-dd" — tapi begitu format itu berubah
+  // (ganti locale, kolom diformat ulang), hasilnya jadi potongan seperti
+  // "01/12/2" dan SELURUH pengelompokan bulan rusak tanpa satu pun pesan galat.
+  // TEXT tidak bergantung format tampilan; cabang LEFT dipertahankan untuk baris
+  // yang tanggalnya memang masih berupa teks.
+  const BULAN = `ARRAYFORMULA(IF(ISNUMBER(${kol('B')})${S}TEXT(${kol('B')}${S}"yyyy-mm")${S}LEFT(${kol('B')}${S}7)))`;
   const REK = `ARRAYFORMULA(IF(${kol('H')}=""${S}""${S}TRIM(${kol('H')}&" "&${kol('I')})))`;
   // Nama kategori dipakai kalau ada. Kalau kosong (baris yang terunggah sebelum
   // kolom Kategori ada), ID-nya dijadikan terbaca: "kat_transfer_keluar" ->

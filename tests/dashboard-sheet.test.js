@@ -188,6 +188,18 @@ for (const susunan of SUSUNAN) {
         }
       }
 
+      // Pengelompokan bulan harus menangani tanggal bertipe tanggal MAUPUN teks.
+      // Tanpa asersi ini, kembalinya ke LEFT saja akan lolos diam-diam — dan
+      // LEFT pada tanggal hanya benar selama format tampilannya kebetulan
+      // "yyyy-mm-dd".
+      const berbulan = Object.values(h.rumus).filter((f) => /LEFT\(/.test(f) || /TEXT\(/.test(f));
+      assert.ok(berbulan.length > 0, 'harus ada rumus yang mengambil bulan');
+      for (const f of berbulan) {
+        if (!/'Transaksi'!B2:B/.test(f)) continue;
+        assert.ok(/ISNUMBER\(/.test(f) && /TEXT\(/.test(f),
+          `rumus bulan harus punya cabang ISNUMBER/TEXT untuk tanggal bertipe tanggal: ${f.slice(0, 90)}`);
+      }
+
       assert.equal(h.charts.length, 2, 'harus 2 grafik');
       assert.equal(h.props.versiDashboard, h.api.VERSI_DASHBOARD, 'versi harus tercatat');
       assert.ok(h.props.sidikDashboard, 'sidik data harus tercatat');
