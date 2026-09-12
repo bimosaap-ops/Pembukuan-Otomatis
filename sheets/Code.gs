@@ -96,6 +96,15 @@ const KONFIGURASI_EMAIL_SHEET_NAME = 'Konfigurasi Email';
  */
 const EMAIL_MASUK_SHEET_NAME = '_EmailMasuk';
 const HEADER_EMAIL_MASUK = ['Gmail Message ID', 'Perkiraan Bank', 'Dari', 'Subjek', 'Diterima Pada', 'Isi Dipotong', 'Berhasil Diparse', 'Pesan Error', 'Dibuat Pada'];
+/**
+ * Tab transit hasil parse email transaksi — lihat pastikanTransaksiEmail()/
+ * parseEmailBerdasarkanBank(). Ditarik PWA lewat doPost{tarikTransaksiEmail}
+ * (fase berikutnya) lalu boleh diarsip/dipangkas berkala seperti _Arsip;
+ * rekonsiliasi/kategorisasi berjalan di PWA, BUKAN di sini — lihat rencana
+ * implementasi soal kenapa IndexedDB tetap satu-satunya source of truth.
+ */
+const TRANSAKSI_EMAIL_SHEET_NAME = 'Transaksi Email';
+const HEADER_TRANSAKSI_EMAIL = ['Gmail Message ID', 'Bank', 'Waktu Transaksi', 'Nominal', 'Arah', 'Merchant Mentah', 'Jenis Transaksi', 'Acquirer', 'Lokasi', 'RRN', 'Nomor Referensi', 'Versi Parser', 'Confidence', 'Dibuat Pada'];
 /** Batas potong isi email mentah yang disimpan (karakter) — lihat PRD §12. */
 const BATAS_ISI_EMAIL = 2000;
 /** Label Gmail penanda "sudah diperiksa" — dasar idempotensi pollEmailTransaksi(). */
@@ -176,7 +185,7 @@ function sheetData(ss) {
   const bawaan = [
     DASHBOARD_SHEET_NAME, DASHBOARD_FULL_SHEET_NAME,
     ANGGARAN_SHEET_NAME, CARI_TRANSAKSI_SHEET_NAME, ARSIP_SHEET_NAME,
-    KONFIGURASI_EMAIL_SHEET_NAME, EMAIL_MASUK_SHEET_NAME,
+    KONFIGURASI_EMAIL_SHEET_NAME, EMAIL_MASUK_SHEET_NAME, TRANSAKSI_EMAIL_SHEET_NAME,
   ];
   const lain = ss.getSheets().filter((s) => bawaan.indexOf(s.getName()) === -1);
   return lain.length ? lain[0] : ss.insertSheet(DATA_SHEET_NAME, 0);
@@ -398,6 +407,7 @@ function pastikanSemuaTab(ss, namaSheetData) {
   pastikanCariTransaksi(ss);
   pastikanKonfigurasiEmail(ss);
   pastikanEmailMasuk(ss);
+  pastikanTransaksiEmail(ss);
 
   const anggaranSh = ss.getSheetByName(ANGGARAN_SHEET_NAME);
   const anggaranBaris = anggaranSh ? Math.max(anggaranSh.getLastRow() - 1, 0) : 0;
@@ -1187,6 +1197,186 @@ function pastikanEmailMasuk(ss) {
 }
 
 /**
+ * Tab transit hasil parse email transaksi. Dibuat sekali; ditulis terus
+ * lewat pollEmailTransaksi(), tidak ada kolom yang diketik manual pengguna
+ * di sini (beda dari Anggaran/Konfigurasi Email) jadi tidak perlu penjaga
+ * non-destruktif — cukup create-once seperti _EmailMasuk.
+ */
+function pastikanTransaksiEmail(ss) {
+  let t = ss.getSheetByName(TRANSAKSI_EMAIL_SHEET_NAME);
+  if (!t) {
+    t = ss.insertSheet(TRANSAKSI_EMAIL_SHEET_NAME, ss.getNumSheets());
+    t.appendRow(HEADER_TRANSAKSI_EMAIL);
+    t.setFrozenRows(1);
+    t.getRange(1, 1, 1, HEADER_TRANSAKSI_EMAIL.length)
+      .setFontWeight('bold').setFontColor('#ffffff').setBackground(BIRU_TUA)
+      .setVerticalAlignment('middle');
+    t.setTabColor('#0b8043');
+  }
+  return t;
+}
+
+/**
+ * Peta nama bulan ke indeks 0-11 — memuat SINGKATAN INDONESIA dan INGGRIS
+ * sekaligus (mis. "Agu"/"Aug", "Okt"/"Oct", "Des"/"Dec") karena sample email
+ * BCA dan Permata yang jadi acuan parser ini masing-masing memakai singkatan
+ * yang berbeda ("11 Sep 2026" vs "24 Aug 2026") — tidak bisa diasumsikan
+ * satu bank selalu satu bahasa.
+ */
+const BULAN_MAP = {
+  JAN: 0, FEB: 1, MAR: 2, APR: 3, MEI: 4, MAY: 4, JUN: 5, JUL: 6,
+  AGU: 7, AUG: 7, SEP: 8, OKT: 9, OCT: 9, NOV: 10, DES: 11, DEC: 11,
+};
+
+/**
+ * Ambil nilai satu field "Label : Nilai" dari isi email. Dicari lewat
+ * regex per-label (bukan pemisahan baris generik) supaya tahan terhadap
+ * spasi/perataan yang mungkin berubah saat HTML email dikonversi jadi teks
+ * polos oleh getPlainBody() — hal yang tidak bisa dipastikan persis dari
+ * tangkapan layar saja. `\s*` sengaja dipakai di kedua sisi ":" (bukan satu
+ * spasi tetap), dan value cuma berhenti di batas baris supaya "Jam : 10:13:35"
+ * (nilai yang sendiri memuat ":") tidak ikut terpotong di titik dua pertama.
+ *
+ * FUNGSI MURNI — string masuk, string keluar, tidak menyentuh GmailApp.
+ */
+function ekstrakField(body, label) {
+  const labelAman = String(label).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(labelAman + '\\s*:\\s*([^\\r\\n]*)', 'i');
+  const m = String(body || '').match(re);
+  return m ? m[1].trim() : '';
+}
+
+/** "IDR 99,000.00" / "IDR 11,000,000" -> 99000 / 11000000 (integer rupiah). */
+function parseNominalIDR(teks) {
+  const bersih = String(teks || '').replace(/[^0-9.,]/g, '').replace(/,/g, '');
+  if (!bersih) return null;
+  const angka = parseFloat(bersih);
+  return isNaN(angka) ? null : Math.round(angka);
+}
+
+/** "11 Sep 2026 13:53:28" (tanggal+jam dalam satu field) -> Date, atau null. */
+function parseTanggalJamGabungan(teks) {
+  const m = String(teks || '').match(/(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})/);
+  if (!m) return null;
+  const bulan = BULAN_MAP[m[2].toUpperCase().slice(0, 3)];
+  if (bulan === undefined) return null;
+  return new Date(Number(m[3]), bulan, Number(m[1]), Number(m[4]), Number(m[5]), Number(m[6]));
+}
+
+/** Tanggal ("24 Aug 2026") dan jam ("10:13:35") di field terpisah -> Date, atau null. */
+function parseTanggalJamTerpisah(tgl, jam) {
+  const m = String(tgl || '').match(/(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})/);
+  if (!m) return null;
+  const bulan = BULAN_MAP[m[2].toUpperCase().slice(0, 3)];
+  if (bulan === undefined) return null;
+  const j = String(jam || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  const jj = j ? Number(j[1]) : 0;
+  const mm = j ? Number(j[2]) : 0;
+  const ss = j && j[3] ? Number(j[3]) : 0;
+  return new Date(Number(m[3]), bulan, Number(m[1]), jj, mm, ss);
+}
+
+/** Versi parser dicatat per hasil parse — lihat HEADER_TRANSAKSI_EMAIL. */
+const PARSER_VERSION_BCA = 'bca-v1';
+const PARSER_VERSION_PERMATA = 'permata-v1';
+
+/**
+ * Parser email "Internet Transaction Journal" BCA (notifikasi transaksi
+ * myBCA/kartu, mis. pembayaran QRIS). Dibangun dari SAMPLE ASLI pengguna,
+ * bukan tebakan format. Cakupan MVP: template notifikasi pembayaran
+ * (uang keluar) sesuai contoh — template BCA lain (transfer masuk, dsb.)
+ * belum tentu punya field yang sama dan akan gagal parse sampai sample-nya
+ * tersedia (parsedOk:false, bukan hasil yang salah tebak).
+ *
+ * FUNGSI MURNI.
+ */
+function parseEmailBCA(bodyText) {
+  const body = String(bodyText || '');
+  const tanggalTransaksi = ekstrakField(body, 'Tanggal Transaksi');
+  const jenisTransaksi = ekstrakField(body, 'Jenis Transaksi');
+  const pembayaranKe = ekstrakField(body, 'Pembayaran Ke');
+  const lokasiMerchant = ekstrakField(body, 'Lokasi Merchant');
+  const pengakuisisi = ekstrakField(body, 'Pengakuisisi');
+  const totalBayar = ekstrakField(body, 'Total Bayar');
+  const rrn = ekstrakField(body, 'RRN');
+  const nomorReferensi = ekstrakField(body, 'Nomor Referensi');
+
+  const eventTime = parseTanggalJamGabungan(tanggalTransaksi);
+  const amount = parseNominalIDR(totalBayar);
+
+  // PRD §11.6: jangan hasilkan transaksi "valid" kalau field minimumnya
+  // sendiri tidak ketemu -- lebih baik parsedOk:false yang jelas daripada
+  // baris setengah terisi yang terlihat sah.
+  if (!eventTime || !amount || !pembayaranKe) {
+    return { parsedOk: false, error: 'Field minimum (tanggal transaksi/nominal/merchant) tidak ditemukan di isi email' };
+  }
+
+  return {
+    parsedOk: true,
+    bank: 'BCA',
+    eventTime,
+    amount,
+    direction: 'debit', // template ini khusus notifikasi pembayaran (uang keluar)
+    merchantRaw: pembayaranKe.replace(/,\s*$/, ''),
+    jenisTransaksi: jenisTransaksi || null,
+    acquirer: pengakuisisi || null,
+    location: lokasiMerchant || null,
+    rrn: rrn || null,
+    refNo: nomorReferensi || null,
+    parserVersion: PARSER_VERSION_BCA,
+    confidence: 'high',
+  };
+}
+
+/**
+ * Parser email "Transfer - Other Bank BI-FAST" Permata ME. Dibangun dari
+ * SAMPLE ASLI pengguna. Cakupan MVP: template transfer KELUAR antar bank
+ * lewat BI-FAST sesuai contoh -- template Permata lain (transfer sesama
+ * bank, notifikasi masuk, dsb.) belum tentu berbagi field yang sama.
+ *
+ * FUNGSI MURNI.
+ */
+function parseEmailPermata(bodyText) {
+  const body = String(bodyText || '');
+  const tanggal = ekstrakField(body, 'Tanggal');
+  const jam = ekstrakField(body, 'Jam');
+  const kategori = ekstrakField(body, 'Kategori');
+  const namaPenerima = ekstrakField(body, 'Nama Penerima');
+  const nominal = ekstrakField(body, 'Nominal');
+  const nomorReferensi = ekstrakField(body, 'Nomor referensi transaksi');
+
+  const eventTime = parseTanggalJamTerpisah(tanggal, jam);
+  const amount = parseNominalIDR(nominal);
+
+  if (!eventTime || !amount) {
+    return { parsedOk: false, error: 'Field minimum (tanggal/jam/nominal) tidak ditemukan di isi email' };
+  }
+
+  return {
+    parsedOk: true,
+    bank: 'Permata',
+    eventTime,
+    amount,
+    direction: 'debit', // template ini khusus transfer KELUAR (Rekening Asal -> Rekening Tujuan)
+    merchantRaw: namaPenerima || null,
+    jenisTransaksi: kategori || null,
+    acquirer: null,
+    location: null,
+    rrn: null,
+    refNo: nomorReferensi || null,
+    parserVersion: PARSER_VERSION_PERMATA,
+    confidence: 'high',
+  };
+}
+
+/** Dispatch parser berdasarkan nama bank dari Konfigurasi Email. */
+function parseEmailBerdasarkanBank(bank, bodyText) {
+  if (bank === 'BCA') return parseEmailBCA(bodyText);
+  if (bank === 'Permata') return parseEmailPermata(bodyText);
+  return { parsedOk: false, error: `Parser untuk bank "${bank}" belum tersedia` };
+}
+
+/**
  * Klasifikasi satu email: transaction_email (cocok pola aktif di
  * Konfigurasi Email), non_transaction (subjek memuat kata kecuali — PRD
  * §10.2), atau unknown (tidak cocok pola mana pun, mungkin format bank yang
@@ -1257,16 +1447,23 @@ function bacaKonfigurasiEmail(ss) {
  * ikut terjaring run berikutnya (dibatasi JENDELA_PENCARIAN_EMAIL_HARI,
  * bukan retensi tanpa batas).
  *
- * @returns {{diproses:number, ditemukan:number, alasan:?string}}
+ * Sejak Fase 2, email yang lolos klasifikasi juga langsung diparse
+ * (parseEmailBerdasarkanBank) dan hasilnya ditulis ke dua tempat: baris
+ * mentah + status parse di "_EmailMasuk" (audit trail, PRD §11.6 — email
+ * TETAP tersimpan walau parsing gagal), dan baris terstruktur di
+ * "Transaksi Email" HANYA kalau parsing berhasil.
+ *
+ * @returns {{diproses:number, ditemukan:number, diparsing:number, alasan:?string}}
  */
 function pollEmailTransaksi() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   pastikanKonfigurasiEmail(ss);
   const emailMasuk = pastikanEmailMasuk(ss);
+  const transaksiEmail = pastikanTransaksiEmail(ss);
 
   const konfigurasi = bacaKonfigurasiEmail(ss);
   if (!konfigurasi.length) {
-    return { diproses: 0, ditemukan: 0, alasan: 'Konfigurasi Email masih kosong — isi pola pengirim/subjek dulu.' };
+    return { diproses: 0, ditemukan: 0, diparsing: 0, alasan: 'Konfigurasi Email masih kosong — isi pola pengirim/subjek dulu.' };
   }
 
   let label = GmailApp.getUserLabelByName(LABEL_EMAIL_DIPROSES);
@@ -1281,8 +1478,10 @@ function pollEmailTransaksi() {
   const query = `-label:"${LABEL_EMAIL_DIPROSES}" newer_than:${JENDELA_PENCARIAN_EMAIL_HARI}d`;
   const threads = GmailApp.search(query, 0, MAKS_THREAD_EMAIL_PER_JALAN);
 
-  const barisBaru = [];
+  const barisEmailMasuk = [];
+  const barisTransaksiEmail = [];
   let diproses = 0;
+  let diparsing = 0;
   threads.forEach((thread) => {
     let semuaTuntas = true;
     thread.getMessages().forEach((msg) => {
@@ -1291,10 +1490,26 @@ function pollEmailTransaksi() {
 
       const hasil = klasifikasikanEmail(msg.getFrom(), msg.getSubject(), konfigurasi);
       if (hasil.outcome === 'transaction_email') {
-        const isi = msg.getPlainBody().slice(0, BATAS_ISI_EMAIL);
-        barisBaru.push([id, hasil.bank || '', msg.getFrom(), msg.getSubject(), msg.getDate(), isi, '', '', new Date()]);
+        const isiPenuh = msg.getPlainBody();
+        const isiDipotong = isiPenuh.slice(0, BATAS_ISI_EMAIL);
+        const parsed = parseEmailBerdasarkanBank(hasil.bank, isiPenuh);
+
+        barisEmailMasuk.push([
+          id, hasil.bank || '', msg.getFrom(), msg.getSubject(), msg.getDate(), isiDipotong,
+          parsed.parsedOk, parsed.parsedOk ? '' : (parsed.error || 'Gagal diparse'), new Date(),
+        ]);
         idSudahAda.add(id);
         diproses += 1;
+
+        if (parsed.parsedOk) {
+          barisTransaksiEmail.push([
+            id, parsed.bank, parsed.eventTime, parsed.amount, parsed.direction,
+            parsed.merchantRaw || '', parsed.jenisTransaksi || '', parsed.acquirer || '',
+            parsed.location || '', parsed.rrn || '', parsed.refNo || '',
+            parsed.parserVersion || '', parsed.confidence || '', new Date(),
+          ]);
+          diparsing += 1;
+        }
       } else if (hasil.outcome === 'unknown') {
         semuaTuntas = false;
       }
@@ -1303,12 +1518,16 @@ function pollEmailTransaksi() {
     if (semuaTuntas) thread.addLabel(label);
   });
 
-  if (barisBaru.length) {
-    emailMasuk.getRange(emailMasuk.getLastRow() + 1, 1, barisBaru.length, HEADER_EMAIL_MASUK.length)
-      .setValues(barisBaru);
+  if (barisEmailMasuk.length) {
+    emailMasuk.getRange(emailMasuk.getLastRow() + 1, 1, barisEmailMasuk.length, HEADER_EMAIL_MASUK.length)
+      .setValues(barisEmailMasuk);
+  }
+  if (barisTransaksiEmail.length) {
+    transaksiEmail.getRange(transaksiEmail.getLastRow() + 1, 1, barisTransaksiEmail.length, HEADER_TRANSAKSI_EMAIL.length)
+      .setValues(barisTransaksiEmail);
   }
 
-  return { diproses, ditemukan: threads.length, alasan: null };
+  return { diproses, ditemukan: threads.length, diparsing, alasan: null };
 }
 
 /** Menu "Proses Email Transaksi Sekarang" — jalan manual, laporkan hasilnya. */
@@ -1317,7 +1536,8 @@ function prosesEmailSekarang() {
   const ui = SpreadsheetApp.getUi();
   const pesan = hasil.alasan
     ? hasil.alasan
-    : `${hasil.diproses} email transaksi baru disimpan ke tab "_EmailMasuk" (dari ${hasil.ditemukan} thread diperiksa).`;
+    : `${hasil.diproses} email transaksi baru disimpan ke tab "_EmailMasuk" (dari ${hasil.ditemukan} thread diperiksa), `
+      + `${hasil.diparsing} berhasil diparse ke tab "Transaksi Email".`;
   ui.alert('Proses Email Transaksi', pesan, ui.ButtonSet.OK);
 }
 
