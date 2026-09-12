@@ -1226,9 +1226,18 @@ function pastikanTransaksiEmail(ss) {
   // dipasang saat pembuatan TIDAK PERNAH sampai ke tab yang sudah telanjur
   // ada -- persis kesalahan yang sama yang pernah terjadi pada bendera
   // migrasi kata kunci kategori (lihat migrasiKataKunciBawaanV2 di
-  // src/data/migrasi.js). Dipanggil ulang di sini murah (satu setNumberFormat)
-  // dan aman diulang setiap pemanggilan.
-  t.getRange(2, 10, Math.max(t.getMaxRows() - 1, 1), 2).setNumberFormat('@');
+  // src/data/migrasi.js).
+  //
+  // Rentangnya dibatasi ke BARIS TERISI SEKARANG (getLastRow), BUKAN
+  // getMaxRows() -- percobaan pertama memakai getMaxRows() dan langsung
+  // memformat ~1000 baris kosong tiap kali fungsi ini dipanggil, yang
+  // artinya tab ini tampak berisi ~1000 baris begitu dibuka padahal
+  // datanya cuma segelintir. Baris yang baru ditambahkan SETELAH
+  // pemanggilan ini (dalam siklus poll yang sama) baru ikut diformat pada
+  // pemanggilan berikutnya -- jeda kosmetik satu putaran, bukan soal
+  // kebenaran data (terbukti dari data produksi: nilai yang sempat jadi
+  // Number kembali jadi teks begitu putaran berikutnya berjalan).
+  t.getRange(2, 10, Math.max(t.getLastRow() - 1, 1), 2).setNumberFormat('@');
   return t;
 }
 
@@ -1322,7 +1331,12 @@ function parseEmailBCA(bodyText) {
 function parseEmailBCAPembayaran(body) {
   const tanggalTransaksi = ekstrakField(body, 'Tanggal Transaksi');
   const jenisTransaksi = ekstrakField(body, 'Jenis Transaksi');
-  const pembayaranKe = ekstrakField(body, 'Pembayaran Ke');
+  // "Pembayaran Ke" dipakai template QRIS/kartu; template Transfer ke BCA
+  // Virtual Account (mis. top-up GoPay) tidak punya field itu sama sekali,
+  // tapi punya "Nama Perusahaan/Produk" yang secara konsep sama -- siapa
+  // yang menerima dana. Ditemukan lewat verifikasi produksi (email VA
+  // GoPay Topup gagal parse karena "Pembayaran Ke" memang tidak ada).
+  const pembayaranKe = ekstrakField(body, 'Pembayaran Ke') || ekstrakField(body, 'Nama Perusahaan/Produk');
   const lokasiMerchant = ekstrakField(body, 'Lokasi Merchant');
   const pengakuisisi = ekstrakField(body, 'Pengakuisisi');
   const totalBayar = ekstrakField(body, 'Total Bayar');

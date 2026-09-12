@@ -177,3 +177,31 @@ test('pastikanTransaksiEmail: format teks kolom RRN/Nomor Referensi terpasang me
   api.pastikanTransaksiEmail(ss); // panggilan kedua: tab SUDAH ada
   assert.ok(dipanggil > 0, 'setNumberFormat harus tetap terpanggil walau tab sudah ada dari sebelumnya');
 });
+
+test('pastikanTransaksiEmail: rentang format kolom RRN/Nomor Referensi mengikuti baris terisi, bukan kapasitas sheet penuh', () => {
+  // Regresi terhadap percobaan pertama: memformat getMaxRows() (~1000) tiap
+  // kali fungsi ini dipanggil membuat tab tampak berisi ~1000 baris begitu
+  // dibuka di Sheets, padahal datanya cuma segelintir -- ditemukan lewat
+  // verifikasi produksi (Transaksi Email melompat dari 9 jadi 999 baris).
+  const ss = buatSpreadsheetTiruan();
+  const api = muatApi(ss);
+  api.pastikanTransaksiEmail(ss);
+
+  const t = ss.getSheetByName('Transaksi Email');
+  t.appendRow(['msg_1', 'BCA', new Date(), 1000, 'debit', 'A', 'B', '', '', '1', 'ref1', 'bca-v1', 'high', new Date()]);
+  t.appendRow(['msg_2', 'BCA', new Date(), 2000, 'debit', 'C', 'D', '', '', '2', 'ref2', 'bca-v1', 'high', new Date()]);
+
+  const nRowsTerpanggil = [];
+  const asli = t.getRange.bind(t);
+  t.getRange = (r, c, nRows, nCols) => {
+    if (c === 10) nRowsTerpanggil.push(nRows);
+    return asli(r, c, nRows, nCols);
+  };
+
+  api.pastikanTransaksiEmail(ss); // tab sudah ada, 2 baris data (+ header)
+
+  assert.ok(nRowsTerpanggil.length > 0, 'harus ada pemanggilan getRange di kolom J (RRN)');
+  nRowsTerpanggil.forEach((n) => {
+    assert.ok(n <= 5, `rentang format (${n} baris) harus mengikuti baris terisi (2), bukan kapasitas sheet penuh (mock ini getMaxRows()=1000)`);
+  });
+});
