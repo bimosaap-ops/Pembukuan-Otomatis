@@ -14,7 +14,7 @@ import { cegahDropDiLuar } from './components/dropzone.js';
 import { toastGagal, toastSukses } from './components/toast.js';
 import { on, EVENT } from '../core/events.js';
 import { pantauKoneksiSheets } from '../services/sheets-sync.js';
-import { jalankanMigrasi, migrasiKataKunciBawaan } from '../data/migrasi.js';
+import { jalankanMigrasi, migrasiKataKunciBawaan, migrasiKategoriInvestasi } from '../data/migrasi.js';
 
 /**
  * Header hanya dipakai di layar HP; di layar lebar tempatnya diambil alih
@@ -105,6 +105,18 @@ async function mulai() {
       toastSukses(`${migrasiKataKunci.jumlahKataKunci} kata kunci baru ditambahkan ke `
         + `${migrasiKataKunci.jumlahKategori} kategori bawaan. Buka halaman Kategori dan tekan `
         + '"Kelompokkan ulang semua transaksi" agar transaksi lama ikut terkoreksi.');
+    }
+
+    // Kategori "Investasi" baru ditambahkan ke KATEGORI_BAWAAN setelah
+    // pengguna lama menjalankan semaiBawaan() — migrasi terpisah ini
+    // menyisipkannya bila belum ada (lihat migrasiKategoriInvestasi).
+    const migrasiInvestasi = await migrasiKategoriInvestasi().catch((e) => {
+      console.error('Migrasi kategori Investasi gagal:', e);
+      return null;
+    });
+    if (migrasiInvestasi?.dijalankan && migrasiInvestasi.jumlahKategori) {
+      toastSukses('Kategori "Investasi" ditambahkan. Buka halaman Kategori dan tekan '
+        + '"Kelompokkan ulang semua transaksi" agar transaksi reksa dana lama ikut terkoreksi.');
     }
 
     // Antrean retry Sheets (kalau ada, dari sesi sebelumnya yang gagal

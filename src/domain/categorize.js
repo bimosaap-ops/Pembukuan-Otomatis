@@ -27,6 +27,11 @@ export const KATEGORI_BAWAAN = [
     polaKataKunci: ['BUNGA', 'BAGI HASIL', 'JASA GIRO', 'DEPOSITO', 'CASHBACK'] },
   { id: 'kat_refund', nama: 'Refund & Pengembalian', tipe: PEMASUKAN, ikon: '↩️', warna: 'var(--c9)', prioritas: 72,
     polaKataKunci: ['REFUND', 'RETUR', 'PENGEMBALIAN', 'REVERSAL', 'KOREKSI', 'PENGGANTIAN'] },
+  { id: 'kat_investasi', nama: 'Investasi', tipe: PEMASUKAN, ikon: '📈', warna: 'var(--c7)', prioritas: 73,
+    // "BANK JAGO" dipastikan pengguna sendiri sebagai rekening reksa dananya —
+    // aman dijadikan kata kunci di sini karena kategorisasi ini khusus untuk
+    // pembukuan pribadi pengguna, bukan aturan umum.
+    polaKataKunci: ['REKSA DANA', 'REKSADANA', 'BANK JAGO'] },
   { id: 'kat_setoran', nama: 'Setoran Tunai', tipe: PEMASUKAN, ikon: '💵', warna: 'var(--c12)', prioritas: 68,
     polaKataKunci: ['SETORAN TUNAI', 'SETORAN', 'CASH DEPOSIT', 'STR TUNAI'] },
   { id: 'kat_transfer_masuk', nama: 'Transfer Masuk', tipe: PEMASUKAN, ikon: '⬇️', warna: 'var(--c1)', prioritas: 10,
@@ -49,10 +54,11 @@ export const KATEGORI_BAWAAN = [
       // bukan "AYAM" berdiri sendiri) supaya tidak menelan transaksi tak terkait
       // yang kebetulan memuat kata umum yang sama.
       'BAKSO', 'SATE', 'SOTO', 'NASI GORENG', 'NASI UDUK', 'NASI BEBEK', 'PECEL LELE', 'PECEL',
-      'AYAM BAKAR', 'AYAM GORENG', 'AYAM PENYET', 'AYAM GEPREK', 'MIE AYAM', 'MIE ACEH', 'IGA BAKAR'] },
+      'AYAM BAKAR', 'AYAM GORENG', 'AYAM PENYET', 'AYAM GEPREK', 'MIE AYAM', 'MIE ACEH', 'IGA BAKAR',
+      'HAKA'] },
   { id: 'kat_belanja', nama: 'Belanja Harian', tipe: PENGELUARAN, ikon: '🛒', warna: 'var(--c4)', prioritas: 72,
     polaKataKunci: ['ALFAMART', 'ALFAMIDI', 'MIDI', 'INDOMARET', 'SUPERINDO', 'HYPERMART', 'TRANSMART', 'CARREFOUR',
-      'GIANT', 'LOTTE', 'RANCH MARKET', 'HERO', 'YOGYA', 'PASAR', 'GROSIR', 'AEON'] },
+      'GIANT', 'LOTTE', 'RANCH MARKET', 'HERO', 'YOGYA', 'PASAR', 'GROSIR', 'AEON', 'XENDIT'] },
   { id: 'kat_belanja_online', nama: 'Belanja Online', tipe: PENGELUARAN, ikon: '📦', warna: 'var(--c5)', prioritas: 74,
     polaKataKunci: ['TOKOPEDIA', 'SHOPEE', 'LAZADA', 'BUKALAPAK', 'BLIBLI', 'TIKTOK', 'ZALORA', 'AMAZON', 'IKEA'] },
   { id: 'kat_transport', nama: 'Transportasi & BBM', tipe: PENGELUARAN, ikon: '🚗', warna: 'var(--c8)', prioritas: 70,
@@ -85,7 +91,8 @@ export const KATEGORI_BAWAAN = [
     polaKataKunci: ['QRIS', 'QR PAYMENT', 'GOPAY', 'GO-PAY', 'OVO', 'SHOPEEPAY', 'LINKAJA', 'E-WALLET', 'ISI SALDO',
       'SALDO DANA', 'DANA WALLET', 'TOPUP'] },
   { id: 'kat_cicilan', nama: 'Cicilan & Pinjaman', tipe: PENGELUARAN, ikon: '📉', warna: 'var(--c5)', prioritas: 76,
-    polaKataKunci: ['ANGSURAN', 'CICILAN', 'INSTALLMENT', 'KPR', 'LEASING', 'ADIRA', 'FIF', 'BAF', 'PINJAMAN', 'KARTU KREDIT'] },
+    polaKataKunci: ['ANGSURAN', 'CICILAN', 'INSTALLMENT', 'KPR', 'LEASING', 'ADIRA', 'FIF', 'BAF', 'PINJAMAN', 'KARTU KREDIT',
+      'GOTAGIHAN'] },
   { id: 'kat_asuransi', nama: 'Asuransi & BPJS', tipe: PENGELUARAN, ikon: '🛡', warna: 'var(--c6)', prioritas: 76,
     polaKataKunci: ['ASURANSI', 'INSURANCE', 'PRUDENTIAL', 'ALLIANZ', 'MANULIFE', 'AXA', 'BPJS', 'JASA RAHARJA'] },
   { id: 'kat_kesehatan', nama: 'Kesehatan', tipe: PENGELUARAN, ikon: '🏥', warna: 'var(--c12)', prioritas: 72,

@@ -293,6 +293,40 @@ test('celah kata kunci lain yang ditemukan lewat audit data nyata', () => {
   });
 });
 
+test('kasus terakhir dari audit "...Lain": GOTAGIHAN, reksa dana Bank Jago, HAKA, XENDIT', () => {
+  const uji = [
+    // GoPayLater lewat Permata EDC — tagihan pinjol, bukan penampung.
+    ['PAY GOTAGIHAN 7469810882911772 Permata ME 23:51:27 7469810882911772 74698108829', -94743, 'kat_cicilan'],
+    // Pembelian reksa dana lewat Bank Jago — dana masuk (redemption/bagi hasil), bukan penampung.
+    ['LLG-BANK JAGO REKSA DANA MANULIF S260702248685YRSIP', 2346168, 'kat_investasi'],
+    ['LLG-BANK JAGO REKSA DANA TRIM KA S2607022486859MKNI', 2754534, 'kat_investasi'],
+    // Restoran HAKA (dimsum / Kelapa Gading), dua bentuk deskripsi berbeda.
+    ['TRANSAKSI DEBIT TGL: 10/09 QR 008 00000.00HAKA DIMSU m e l a k u k a n s a n g g', -162000, 'kat_makan'],
+    ['HAKA KELAPA GADING 6019007586510332', -144000, 'kat_makan'],
+    // Xendit sebagai payment gateway belanja (dikonfirmasi pengguna), bukan penampung.
+    ['PAY XENDIT 7293102085535678 Permata ME 18:11:46 7293102085535678 729310208553567', -109500, 'kat_belanja'],
+  ];
+  uji.forEach(([deskripsi, nominal, harapan]) => {
+    assert.equal(tentukanKategori(deskripsi, nominal, KATEGORI_BAWAAN), harapan,
+      `"${deskripsi}" seharusnya masuk ${harapan}`);
+  });
+});
+
+test('kata kunci "BANK JAGO" (kategori Investasi) tidak salah ketangkap merchant kopi "Jago Coffee"', () => {
+  // "BANK JAGO" harus menangkap reksa dana, tapi tidak boleh menangkap merchant
+  // kopi "Jago Coffee"/"jagocoffee" yang cuma kebetulan berbagi nama depan.
+  const uji = [
+    ['TRANSAKSI DEBIT TGL: 22/09 QR 899 00000.00Jago Coffe', -20000, 'kat_makan'],
+    ['TRANSAKSI DEBIT TGL: 19/01 QR 914 00000.00jagocoffee', -54000, 'kat_lain_keluar'],
+  ];
+  uji.forEach(([deskripsi, nominal, harapan]) => {
+    assert.notEqual(tentukanKategori(deskripsi, nominal, KATEGORI_BAWAAN), 'kat_investasi',
+      `"${deskripsi}" tidak boleh masuk kat_investasi`);
+    assert.equal(tentukanKategori(deskripsi, nominal, KATEGORI_BAWAAN), harapan,
+      `"${deskripsi}" seharusnya masuk ${harapan}`);
+  });
+});
+
 /* ==========================================================================
    uploadTumpangTindih — deteksi e-statement yang ter-upload dua kali
    ========================================================================== */

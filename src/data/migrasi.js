@@ -22,6 +22,8 @@ import { KUNCI_SHEETS } from '../services/sheets-sync.js';
 export const KUNCI_MIGRASI = 'migrasiHashRekening';
 /** Bendera migrasi kata kunci kategori bawaan — lihat migrasiKataKunciBawaan. */
 export const KUNCI_MIGRASI_KATA_KUNCI = 'migrasiKataKunciBawaanV1';
+/** Bendera migrasi kategori Investasi — lihat migrasiKategoriInvestasi. */
+export const KUNCI_MIGRASI_KATEGORI_INVESTASI = 'migrasiKategoriInvestasiV1';
 
 /**
  * Hitung hash baru untuk seluruh transaksi.
@@ -168,4 +170,51 @@ export async function migrasiKataKunciBawaan() {
 
   await pengaturanRepo.tulis(KUNCI_MIGRASI_KATA_KUNCI, '1');
   return { dijalankan: true, jumlahKategori: kategoriBerubah.length, jumlahKataKunci };
+}
+
+/**
+ * Cari kategori dari `definisiBaru` yang belum ada di daftar pengguna.
+ *
+ * Fungsi murni, dicocokkan lewat `id` seperti gabungKataKunciBaru — tapi
+ * sengaja TIDAK menggunakan ulang fungsi itu, karena maksudnya berlawanan:
+ * gabungKataKunciBaru mengabaikan kategori yang tidak ditemukan (menganggap
+ * sudah dihapus pengguna), sedangkan di sini kategori yang tidak ditemukan
+ * justru itulah yang harus dibuat — kategori yang benar-benar baru di kode
+ * tidak mungkin "sudah dihapus pengguna" karena belum pernah ada baginya
+ * untuk dihapus.
+ *
+ * @param {Array} kategoriSekarang milik pengguna, dari kategoriRepo.daftar()
+ * @param {Array} definisiBaru definisi kategori yang harus ada, subset KATEGORI_BAWAAN
+ * @returns {Array} definisi yang belum dimiliki pengguna, siap disimpan apa adanya
+ */
+export function kategoriBaruYangBelumAda(kategoriSekarang, definisiBaru) {
+  const idSekarang = new Set(kategoriSekarang.map((k) => k.id));
+  return definisiBaru.filter((def) => !idSekarang.has(def.id));
+}
+
+/**
+ * Tambahkan kategori "Investasi" (Pemasukan) bagi pengguna yang sudah
+ * menjalankan semaiBawaan() sebelum kategori ini ditambahkan ke
+ * KATEGORI_BAWAAN. Tanpa migrasi ini, pengguna lama tidak akan pernah punya
+ * kategori ini sama sekali — beda dari migrasiKataKunciBawaan yang cuma
+ * menambah kata kunci ke kategori yang sudah ada, di sini kategorinya
+ * sendiri yang hilang.
+ *
+ * Tidak mengubah kategori transaksi mana pun dengan sendirinya — pengguna
+ * tetap perlu menekan "Kelompokkan ulang semua transaksi" di halaman
+ * Kategori supaya transaksi lama (mis. "LLG-BANK JAGO REKSA DANA ...") ikut
+ * pindah ke kategori baru ini.
+ */
+export async function migrasiKategoriInvestasi() {
+  const sudah = await pengaturanRepo.baca(KUNCI_MIGRASI_KATEGORI_INVESTASI, '');
+  if (sudah) return { dilewati: true };
+
+  const kategoriSekarang = await kategoriRepo.daftar();
+  const definisiBaru = KATEGORI_BAWAAN.filter((k) => k.id === 'kat_investasi');
+  const kategoriBaru = kategoriBaruYangBelumAda(kategoriSekarang, definisiBaru);
+
+  for (const kat of kategoriBaru) await kategoriRepo.simpanKategori(kat);
+
+  await pengaturanRepo.tulis(KUNCI_MIGRASI_KATEGORI_INVESTASI, '1');
+  return { dijalankan: true, jumlahKategori: kategoriBaru.length };
 }

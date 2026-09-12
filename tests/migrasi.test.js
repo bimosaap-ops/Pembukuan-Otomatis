@@ -10,7 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { hitungHashBaru, gabungKataKunciBaru } from '../src/data/migrasi.js';
+import { hitungHashBaru, gabungKataKunciBaru, kategoriBaruYangBelumAda } from '../src/data/migrasi.js';
 import { hitungBaseHash } from '../src/domain/dedupe.js';
 
 const trx = (i, lebih = {}) => ({
@@ -146,4 +146,33 @@ test('gabungKataKunciBaru tidak pernah mengurangi kata kunci milik pengguna send
   const { kategoriBerubah } = gabungKataKunciBaru(kategoriSekarang, kategoriBawaan);
   assert.ok(kategoriBerubah[0].polaKataKunci.includes('KOPI'),
     'perilaku saat ini: kata kunci LAMA yang dihapus pengguna ikut kembali — hanya kata kunci BARU yang dijamin aman');
+});
+
+/* ==========================================================================
+   kategoriBaruYangBelumAda — menutup celah semaiBawaan() untuk kategori yang
+   BENAR-BENAR BARU di KATEGORI_BAWAAN (lihat migrasiKategoriInvestasi),
+   berlawanan dengan gabungKataKunciBaru yang mengabaikan kategori yang
+   tidak ditemukan (menganggap sudah dihapus pengguna).
+   ========================================================================== */
+
+test('kategoriBaruYangBelumAda mengembalikan kategori yang belum dimiliki pengguna', () => {
+  const kategoriSekarang = [{ id: 'kat_makan', polaKataKunci: ['KOPI'] }];
+  const definisiBaru = [{ id: 'kat_investasi', nama: 'Investasi', polaKataKunci: ['REKSA DANA'] }];
+
+  const hasil = kategoriBaruYangBelumAda(kategoriSekarang, definisiBaru);
+
+  assert.equal(hasil.length, 1);
+  assert.equal(hasil[0].id, 'kat_investasi');
+});
+
+test('kategoriBaruYangBelumAda tidak mengembalikan kategori yang sudah dimiliki pengguna', () => {
+  // Baik yang dibuat lewat semaiBawaan() maupun yang sengaja dibuat ulang
+  // sendiri oleh pengguna dengan id yang sama — di kedua kasus kategorinya
+  // sudah ada, jadi tidak boleh disisipkan lagi (akan menimpa punya pengguna).
+  const kategoriSekarang = [{ id: 'kat_investasi', nama: 'Investasi Saya', polaKataKunci: ['SAHAM'] }];
+  const definisiBaru = [{ id: 'kat_investasi', nama: 'Investasi', polaKataKunci: ['REKSA DANA'] }];
+
+  const hasil = kategoriBaruYangBelumAda(kategoriSekarang, definisiBaru);
+
+  assert.deepEqual(hasil, []);
 });
