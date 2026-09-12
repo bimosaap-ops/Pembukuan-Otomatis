@@ -1,10 +1,16 @@
 /**
- * Menjalankan pastikanDashboard di atas tiruan API Apps Script.
+ * Menjalankan pastikanSemuaTab di atas tiruan API Apps Script.
  *
  * Tiruan ini sengaja MEMODELKAN BATAS GRID dan MENCATAT RENTANG BARIS tiap blok:
  * dua bug yang sudah pernah lolos ke pengguna adalah lebar kolom di luar grid
  * ("Kolom tersebut melampaui batas") dan blok yang saling tindih. Keduanya
  * tidak mungkin tertangkap oleh pemeriksaan sintaks semata.
+ *
+ * Sejak Dashboard Full/Anggaran/Cari Transaksi ikut dibangun kode, tiruan sel
+ * di sini juga BENAR-BENAR MENYIMPAN NILAI (bukan cuma mencatat rumus) —
+ * pastikanAnggaran membaca balik apa yang pernah ditulis untuk memutuskan
+ * kategori mana yang belum ada, dan itu mustahil diuji kalau setValues cuma
+ * stub kosong.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,10 +20,10 @@ const src = fs.readFileSync(new URL('../sheets/Code.gs', import.meta.url), 'utf8
 const nomorKolom = (huruf) => [...huruf].reduce((a, c) => a * 26 + (c.charCodeAt(0) - 64), 0);
 
 function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
-  const rumus = {}, charts = [], props = {}, pelanggaran = [];
+  const rumus = {}, charts = [], props = {}, pelanggaran = [], condFormatRules = [];
   const dibuat = [];
 
-  // Baris data tiruan: kolom sesuai HEADER (15 kolom).
+  // Baris data tiruan: kolom sesuai HEADER (16 kolom).
   const barisData = [];
   rekening.forEach((label, iR) => {
     for (let b = 0; b < bulan; b += 1) {
@@ -37,6 +43,20 @@ function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
 
   function buatSheet(nama, kolomAwal = 26, barisAwal = 1000) {
     let maxKolom = kolomAwal, maxBaris = barisAwal;
+    // Isi sungguhan per (baris,kolom). Dibutuhkan supaya pastikanAnggaran
+    // (baca lalu tambah, bukan bangun-ulang) bisa diuji: tanpa ini getValues
+    // tidak pernah melihat apa yang baru ditulis appendRow/setValues sebelumnya.
+    const isi = [];
+    const tulisSel = (baris, kolom, nilai) => {
+      if (!isi[baris - 1]) isi[baris - 1] = [];
+      isi[baris - 1][kolom - 1] = nilai;
+    };
+    const bacaSel = (baris, kolom) => {
+      const v = isi[baris - 1] ? isi[baris - 1][kolom - 1] : undefined;
+      return v === undefined ? '' : v;
+    };
+    let barisTerisi = 0;
+
     const cekA1 = (a1) => {
       for (const m of String(a1).matchAll(/\$?([A-Z]+)\$?(\d+)/g)) {
         const k = nomorKolom(m[1]), b = Number(m[2]);
@@ -44,23 +64,51 @@ function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
         if (b > maxBaris) pelanggaran.push(`${nama}: "${a1}" baris ${b} > ${maxBaris}`);
       }
     };
-    function buatRange(a1) {
+    const posisiA1 = (a1) => {
+      const m = String(a1).match(/^\$?([A-Z]+)\$?(\d+)/);
+      return m ? { baris: Number(m[2]), kolom: nomorKolom(m[1]) } : { baris: 1, kolom: 1 };
+    };
+
+    function buatRange(a1, posisi, ukuran = { tb: 1, tk: 1 }) {
       let proxy;
       const t = {
-        setFormula(f) { rumus[a1] = f; return proxy; },
-        // setFormulas (jamak) dipakai blok saldo per rekening. Tanpa dicatat di
-        // sini, rumus-rumus itu lolos dari SELURUH pemeriksaan di bawah —
-        // termasuk pemeriksaan pemisah argumen lokal Indonesia.
-        setFormulas(matriks) {
-          matriks.forEach((baris, i) => baris.forEach((f, j) => {
-            if (f) rumus[`${a1}#${i}_${j}`] = f;
-          }));
+        setFormula(f) {
+          rumus[a1] = f;
+          tulisSel(posisi.baris, posisi.kolom, f);
+          barisTerisi = Math.max(barisTerisi, posisi.baris);
           return proxy;
         },
-        setValue: () => proxy,
-        getValue: () => (pakaiKoma ? 3 : 1.2),
-        getValues: () => (nama === 'Transaksi' ? barisData.map((r) => r.slice()) : [[]]),
-        setValues: () => proxy,
+        // setFormulas (jamak) dipakai blok saldo per rekening & ranking
+        // Dashboard Full. Tanpa dicatat di sini, rumus-rumus itu lolos dari
+        // SELURUH pemeriksaan di bawah — termasuk pemeriksaan pemisah
+        // argumen lokal Indonesia.
+        setFormulas(matriks) {
+          matriks.forEach((barisArr, i) => barisArr.forEach((f, j) => {
+            if (f) rumus[`${a1}#${i}_${j}`] = f;
+            tulisSel(posisi.baris + i, posisi.kolom + j, f);
+          }));
+          if (matriks.length) barisTerisi = Math.max(barisTerisi, posisi.baris + matriks.length - 1);
+          return proxy;
+        },
+        setValue(v) {
+          tulisSel(posisi.baris, posisi.kolom, v);
+          barisTerisi = Math.max(barisTerisi, posisi.baris);
+          return proxy;
+        },
+        setValues(matriks) {
+          matriks.forEach((barisArr, i) => barisArr.forEach((v, j) => tulisSel(posisi.baris + i, posisi.kolom + j, v)));
+          if (matriks.length) barisTerisi = Math.max(barisTerisi, posisi.baris + matriks.length - 1);
+          return proxy;
+        },
+        getValue: () => (pakaiKoma ? 3 : (bacaSel(posisi.baris, posisi.kolom) || 1.2)),
+        getValues: () => {
+          if (nama === 'Transaksi') return barisData.map((r) => r.slice());
+          const out = [];
+          for (let r = 0; r < ukuran.tb; r += 1) {
+            out.push(Array.from({ length: ukuran.tk }, (_, c) => bacaSel(posisi.baris + r, posisi.kolom + c)));
+          }
+          return out;
+        },
         clearContent: () => proxy,
         applyRowBanding: () => ({ setHeaderRowColor: () => {} }),
         getDisplayValue: () => '',
@@ -68,25 +116,30 @@ function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
       proxy = new Proxy(t, { get: (o, k) => (k in o ? o[k] : () => proxy) });
       return proxy;
     }
+
     const sh = {
       getName: () => nama,
       getIndex: () => 1,
       getMaxColumns: () => maxKolom,
       getMaxRows: () => maxBaris,
-      getLastRow: () => (nama === 'Transaksi' ? barisData.length + 1 : 1),
+      getLastRow: () => (nama === 'Transaksi' ? barisData.length + 1 : barisTerisi),
       getBandings: () => [],
       insertColumnsAfter: (after, n) => { maxKolom += n; },
       insertRowsAfter: (after, n) => { maxBaris += n; },
+      appendRow: (baris) => {
+        barisTerisi += 1;
+        baris.forEach((v, i) => tulisSel(barisTerisi, i + 1, v));
+      },
       setColumnWidth: (k) => { if (k > maxKolom) pelanggaran.push(`${nama}: setColumnWidth(${k}) > ${maxKolom}`); },
       setColumnWidths: (m, j) => { if (m + j - 1 > maxKolom) pelanggaran.push(`${nama}: setColumnWidths(${m},${j}) -> ${m + j - 1} > ${maxKolom}`); },
       setRowHeight: (b) => { if (b > maxBaris) pelanggaran.push(`${nama}: setRowHeight(${b}) > ${maxBaris}`); },
       setRowHeights: (m, j) => { if (m + j - 1 > maxBaris) pelanggaran.push(`${nama}: setRowHeights(${m},${j}) > ${maxBaris}`); },
       getRange: (...a) => {
-        if (typeof a[0] === 'string') { cekA1(a[0]); return buatRange(a[0]); }
+        if (typeof a[0] === 'string') { cekA1(a[0]); return buatRange(a[0], posisiA1(a[0])); }
         const [b, k, tb = 1, tk = 1] = a;
         if (k + tk - 1 > maxKolom) pelanggaran.push(`${nama}: getRange(${a}) kolom ${k + tk - 1} > ${maxKolom}`);
         if (b + tb - 1 > maxBaris) pelanggaran.push(`${nama}: getRange(${a}) baris ${b + tb - 1} > ${maxBaris}`);
-        return buatRange(`R${b}C${k}`);
+        return buatRange(`R${b}C${k}`, { baris: b, kolom: k }, { tb, tk });
       },
       newChart() {
         const b = new Proxy({ build: () => ({}) }, { get: (t, k) => (k in t ? t[k] : () => b) });
@@ -111,8 +164,17 @@ function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
     SpreadsheetApp: {
       getActiveSpreadsheet: () => ss,
       BandingTheme: { LIGHT_GREY: 'LG' },
+      // Mencatat method builder apa saja yang dipanggil per aturan (mis.
+      // 'setGradientMinpoint','setRanges') supaya aturan heatmap gradien bisa
+      // diuji keberadaannya — proxy lama menelan semuanya tanpa jejak.
       newConditionalFormatRule() {
-        const b = new Proxy({ build: () => ({}) }, { get: (t, k) => (k in t ? t[k] : () => b) });
+        const dipanggil = [];
+        const b = new Proxy({ build: () => { condFormatRules.push(dipanggil); return {}; } }, {
+          get: (t, k) => {
+            if (k in t) return t[k];
+            return (...args) => { dipanggil.push(String(k)); return b; };
+          },
+        });
         return b;
       },
       getUi: () => new Proxy({}, { get: () => () => ({}) }),
@@ -126,9 +188,15 @@ function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
   };
 
   const api = new Function(...Object.keys(sandbox),
-    `${src}\n; return { pastikanDashboard, statistikData, hurufKolom, VERSI_DASHBOARD };`)(...Object.values(sandbox));
-  api.pastikanDashboard(ss, 'Transaksi');
-  return { rumus, charts, props, pelanggaran, dibuat, api };
+    `${src}\n; return { pastikanSemuaTab, statistikData, hurufKolom, VERSI_DASHBOARD };`)(...Object.values(sandbox));
+  api.pastikanSemuaTab(ss, 'Transaksi');
+  return {
+    rumus, charts, props, pelanggaran, dibuat, api, lembar, condFormatRules,
+    // Dipakai tes idempoten: rerun pastikanSemuaTab di atas STATE yang sama
+    // (props/lembar sama), supaya bisa diperiksa apa yang berubah dan apa
+    // yang sengaja tidak disentuh.
+    ulangi: () => api.pastikanSemuaTab(ss, 'Transaksi'),
+  };
 }
 
 // Salah di sini menggeser seluruh matriks kategori x bulan.
@@ -154,23 +222,61 @@ for (const susunan of SUSUNAN) {
   for (const pakaiKoma of [true, false]) {
     const label = `${susunan.rekening.length} rekening x ${susunan.bulan} bulan, pemisah "${pakaiKoma ? ',' : ';'}"`;
 
-    test(`Dashboard terbangun utuh: ${label}`, () => {
+    test(`Dashboard & Dashboard Full terbangun utuh: ${label}`, () => {
       const h = jalankan({ pakaiKoma, ...susunan });
 
       assert.deepEqual(h.pelanggaran, [], `melampaui batas grid:\n  ${h.pelanggaran.join('\n  ')}`);
 
-      // Invarian terpenting untuk tata letak bertumpuk: blok tidak saling tindih.
-      const rentang = JSON.parse(h.props.rentangBlokDashboard || '[]');
-      assert.ok(rentang.length >= 3, 'rentang blok harus tercatat');
-      const urut = rentang.slice().sort((a, b) => a[0] - b[0]);
-      for (let i = 1; i < urut.length; i += 1) {
-        assert.ok(urut[i][0] > urut[i - 1][1], `blok bertabrakan: [${urut[i - 1]}] dan [${urut[i]}]`);
+      assert.ok(h.dibuat.includes(DASHBOARD_FULL_NAMA), 'Dashboard Full harus dibuat');
+      assert.ok(h.dibuat.includes(ANGGARAN_NAMA), 'Anggaran harus dibuat');
+      assert.ok(h.dibuat.includes(CARI_NAMA), 'Cari Transaksi harus dibuat');
+
+      // Invarian terpenting untuk tata letak bertumpuk: blok tidak saling
+      // tindih — diperiksa untuk Dashboard DAN Dashboard Full secara
+      // independen (dua sheet berbeda, dua daftar rentang berbeda).
+      for (const [kunciRentang, kunciJangkar, namaTab] of [
+        ['rentangBlokDashboard', 'selRumusDashboard', 'Dashboard'],
+        ['rentangBlokDashboardFull', 'selRumusDashboardFull', 'Dashboard Full'],
+      ]) {
+        const rentang = JSON.parse(h.props[kunciRentang] || '[]');
+        assert.ok(rentang.length >= 2, `[${namaTab}] rentang blok harus tercatat`);
+        const urut = rentang.slice().sort((a, b) => a[0] - b[0]);
+        for (let i = 1; i < urut.length; i += 1) {
+          assert.ok(urut[i][0] > urut[i - 1][1], `[${namaTab}] blok bertabrakan: [${urut[i - 1]}] dan [${urut[i]}]`);
+        }
+
+        const jangkar = JSON.parse(h.props[kunciJangkar] || '[]');
+        assert.ok(jangkar.length > 0, `[${namaTab}] jangkar rumus harus tercatat`);
+        for (const sel of jangkar) assert.ok(h.rumus[sel], `[${namaTab}] jangkar ${sel} tidak berisi rumus`);
       }
 
-      // Jangkar yang dipantau dashboardRusak harus benar-benar berisi rumus.
-      const jangkar = JSON.parse(h.props.selRumusDashboard || '[]');
-      assert.ok(jangkar.length > 0, 'jangkar rumus harus tercatat');
-      for (const sel of jangkar) assert.ok(h.rumus[sel], `jangkar ${sel} tidak berisi rumus`);
+      // Blok anomali TETAP TOP_ANOMALI+1 baris berapa pun ukuran fixture-nya
+      // (dibatasi lewat QUERY "limit", bukan cadangan) — dan blok anggaran
+      // vs realisasi PAS sejumlah kategori (disizekan dari Anggaran, bukan
+      // cadangan QUERY).
+      const rentangFull = JSON.parse(h.props.rentangBlokDashboardFull || '[]').sort((a, b) => a[0] - b[0]);
+      // Rentang tercatat mulai dari baris JUDUL SEKSI (sebelum kepalaTabel),
+      // sama seperti seluruh blok lain di file ini — makanya +1 lagi di atas
+      // TOP_ANOMALI (baris header) untuk baris judul itu sendiri.
+      const tinggiAnomali = rentangFull[rentangFull.length - 2][1] - rentangFull[rentangFull.length - 2][0];
+      assert.equal(tinggiAnomali, TOP_ANOMALI_NILAI + 1, 'blok Transaksi Tak Wajar harus tetap TOP_ANOMALI+1 baris (+1 judul seksi)');
+      // +3 tetap: baris judul seksi, baris "Bulan berjalan", dan baris header
+      // tabel — semuanya di atas baris data pertama, sebelum blok ini sizekan
+      // PAS sejumlah kategori (tanpa cadangan QUERY).
+      const tinggiBudget = rentangFull[rentangFull.length - 1][1] - rentangFull[rentangFull.length - 1][0];
+      assert.equal(tinggiBudget, susunan.kategori + 3, 'blok Anggaran vs Realisasi harus pas sejumlah kategori (+3 baris judul/bulan/header)');
+
+      // Anggaran harus terseed pas sejumlah kategori pengeluaran fixture,
+      // tanpa duplikat.
+      const anggaran = h.lembar.Anggaran;
+      const isiAnggaran = anggaran.getRange(2, 1, Math.max(anggaran.getLastRow() - 1, 0), 1)
+        .getValues().map((row) => row[0]);
+      assert.equal(isiAnggaran.length, susunan.kategori, 'Anggaran harus terseed sejumlah kategori pengeluaran');
+      assert.equal(new Set(isiAnggaran).size, isiAnggaran.length, 'Anggaran tidak boleh punya kategori duplikat');
+
+      // Aturan gradien untuk heatmap tren kategori harus terpasang.
+      assert.ok(h.condFormatRules.some((c) => c.includes('setGradientMinpoint')),
+        'harus ada aturan gradien untuk heatmap tren kategori');
 
       for (const [sel, f] of Object.entries(h.rumus)) {
         assert.equal((f.match(/\(/g) || []).length, (f.match(/\)/g) || []).length, `kurung ${sel}`);
@@ -192,7 +298,13 @@ for (const susunan of SUSUNAN) {
       // Tanpa asersi ini, kembalinya ke LEFT saja akan lolos diam-diam — dan
       // LEFT pada tanggal hanya benar selama format tampilannya kebetulan
       // "yyyy-mm-dd".
-      const berbulan = Object.values(h.rumus).filter((f) => /LEFT\(/.test(f) || /TEXT\(/.test(f));
+      // Dibatasi ke rumus yang benar-benar MENGEKSTRAK bulan sebagai teks
+      // ("yyyy-mm") — bukan sembarang rumus yang kebetulan merujuk B2:B, mis.
+      // daftar Transaksi Tak Wajar (menampilkan tanggal mentah) atau Cari
+      // Transaksi (menyaring rentang tanggal mentah) yang sengaja tidak
+      // butuh cabang ISNUMBER/TEXT sama sekali.
+      const berbulan = Object.values(h.rumus)
+        .filter((f) => (/LEFT\(/.test(f) || /TEXT\(/.test(f)) && /"yyyy-mm"/.test(f));
       assert.ok(berbulan.length > 0, 'harus ada rumus yang mengambil bulan');
       for (const f of berbulan) {
         if (!/'Transaksi'!B2:B/.test(f)) continue;
@@ -200,12 +312,67 @@ for (const susunan of SUSUNAN) {
           `rumus bulan harus punya cabang ISNUMBER/TEXT untuk tanggal bertipe tanggal: ${f.slice(0, 90)}`);
       }
 
-      assert.equal(h.charts.length, 2, 'harus 2 grafik');
+      // 2 grafik di Dashboard (donat + kolom) + 1 di Dashboard Full (top kategori).
+      assert.equal(h.charts.length, 3, 'harus 3 grafik (2 di Dashboard, 1 di Dashboard Full)');
       assert.equal(h.props.versiDashboard, h.api.VERSI_DASHBOARD, 'versi harus tercatat');
       assert.ok(h.props.sidikDashboard, 'sidik data harus tercatat');
     });
   }
 }
+
+// Konstanta yang dicerminkan dari Code.gs, dipakai asersi di atas — dites
+// tersendiri di bawah supaya kalau nilainya berubah di Code.gs, tesnya
+// gagal dengan jelas ("nilai tercermin salah") bukan diam-diam memeriksa
+// angka yang sudah basi.
+const DASHBOARD_FULL_NAMA = 'Dashboard Full';
+const ANGGARAN_NAMA = 'Anggaran';
+const CARI_NAMA = 'Cari Transaksi';
+const TOP_ANOMALI_NILAI = 25;
+
+test('konstanta nama tab & TOP_ANOMALI di tes ini masih cocok dengan Code.gs', () => {
+  const h = jalankan({ pakaiKoma: false, rekening: ['BCA|111'], bulan: 2, kategori: 2 });
+  assert.ok(h.lembar[DASHBOARD_FULL_NAMA], `sheet bernama "${DASHBOARD_FULL_NAMA}" harus ada`);
+  assert.ok(h.lembar[ANGGARAN_NAMA], `sheet bernama "${ANGGARAN_NAMA}" harus ada`);
+  assert.ok(h.lembar[CARI_NAMA], `sheet bernama "${CARI_NAMA}" harus ada`);
+  const rentangFull = JSON.parse(h.props.rentangBlokDashboardFull || '[]').sort((a, b) => a[0] - b[0]);
+  const tinggiAnomali = rentangFull[rentangFull.length - 2][1] - rentangFull[rentangFull.length - 2][0];
+  assert.equal(tinggiAnomali, TOP_ANOMALI_NILAI + 1, 'TOP_ANOMALI_NILAI di tes ini harus cocok dengan TOP_ANOMALI di Code.gs');
+});
+
+test('pastikanAnggaran tidak menimpa nilai yang sudah diketik pengguna, dan tidak menduplikasi kategori', () => {
+  const h = jalankan({ pakaiKoma: false, rekening: ['BCA|111'], bulan: 2, kategori: 3 });
+  const anggaran = h.lembar.Anggaran;
+  const jumlahAwal = anggaran.getLastRow() - 1;
+  assert.equal(jumlahAwal, 3, 'seed awal harus pas 3 kategori');
+
+  // Simulasikan pengguna mengetik target anggaran di baris kategori pertama.
+  anggaran.getRange(2, 2).setValue(500000);
+  anggaran.getRange(2, 3).setValue('Dikira-kira dari rata-rata 3 bulan terakhir');
+
+  h.ulangi();
+
+  assert.equal(anggaran.getRange(2, 2).getValues()[0][0], 500000,
+    'Target Bulanan yang diketik pengguna tidak boleh tertimpa oleh sinkron berikutnya');
+  assert.equal(anggaran.getRange(2, 3).getValues()[0][0], 'Dikira-kira dari rata-rata 3 bulan terakhir',
+    'Catatan yang diketik pengguna tidak boleh tertimpa');
+  assert.equal(anggaran.getLastRow() - 1, jumlahAwal,
+    'tidak boleh ada baris kategori yang terduplikasi pada sinkron berikutnya');
+});
+
+test('Cari Transaksi hanya dibuat sekali — sinkron berikutnya tidak menyentuhnya lagi', () => {
+  const h = jalankan({ pakaiKoma: false, rekening: ['BCA|111'], bulan: 2, kategori: 2 });
+  const cari = h.lembar['Cari Transaksi'];
+  // Simulasikan pengguna sedang mengetik kata kunci pencarian.
+  cari.getRange('B2').setValue('kopi');
+
+  const dibuatSebelum = h.dibuat.filter((n) => n === 'Cari Transaksi').length;
+  h.ulangi();
+  const dibuatSesudah = h.dibuat.filter((n) => n === 'Cari Transaksi').length;
+
+  assert.equal(dibuatSesudah, dibuatSebelum, 'Cari Transaksi tidak boleh dibuat ulang');
+  assert.equal(cari.getRange('B2').getValues()[0][0], 'kopi',
+    'kata kunci yang sedang diketik pengguna tidak boleh terhapus oleh sinkron berikutnya');
+});
 
 /* ==========================================================================
    doPost di atas tiruan Apps Script

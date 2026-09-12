@@ -229,6 +229,104 @@ test('kata kunci tetap cocok walau kode referensi menempel tanpa spasi ke nama m
   assert.equal(tentukanKategori('TRF DARI BESTINDO BANK DANAMON Dana Dimuka', 5730000, KATEGORI_BAWAAN), 'kat_transfer_masuk');
 });
 
+test('nama masakan jalanan Indonesia dikenali sebagai Makan & Minum, bukan jatuh ke penampung', () => {
+  // Ditemukan lewat audit data nyata: ratusan transaksi QRIS warung dengan
+  // format "TRANSAKSI DEBIT TGL: .. QR ### 00000.00[nama masakan]" (tanpa
+  // spasi sebelum nama merchant — lihat catatan cocokKunci) jatuh ke
+  // "Pengeluaran Lain" karena nama masakannya sendiri tidak dikenal, bukan
+  // nama warung/resto generik seperti "WARUNG"/"CAFE"/"KFC" yang sudah ada.
+  const uji = [
+    'TRANSAKSI DEBIT TGL: 23/08 QR 008 00000.00Iga Bakar',
+    'TRANSAKSI DEBIT TGL: 03/07 QR 008 00000.00BAKSO CIPTA',
+    'TRANSAKSI DEBIT TGL: 06/07 QR 013 00000.00SATE MADURA',
+    'TRANSAKSI DEBIT TGL: 25/07 QR 009 00000.00qr Warteg Aceh',
+    'TRANSAKSI DEBIT TGL: 20/05 00000.00NASI GORENG SPESIAL',
+    'TRANSAKSI DEBIT TGL: 08/07 QR 013 00000.00Pecel lele lamongan',
+    'TRANSAKSI DEBIT TGL: 26/07 QR 014 00000.00SOTO MIE BOGOR',
+    'TRANSAKSI DEBIT TGL: 16/11 QR 916 00000.00Mie Ayam Bang Jali',
+  ];
+  uji.forEach((deskripsi) => {
+    assert.equal(tentukanKategori(deskripsi, -25000, KATEGORI_BAWAAN), 'kat_makan',
+      `"${deskripsi}" seharusnya masuk Makan & Minum, bukan penampung`);
+  });
+});
+
+test('singkatan BI-FAST "BIF TRANSFER DR" dikenali sebagai Transfer Masuk', () => {
+  // Ditemukan lewat audit data nyata: ~75 juta rupiah dari ~19 pengirim
+  // berbeda nyangkut di "Pemasukan Lain" karena kata kunci lama cuma
+  // menangkap "TRANSFER DARI"/"BIFAST DARI" (kata penuh), bukan singkatan
+  // "DR" yang dipakai statement BCA untuk notifikasi BI-FAST masuk.
+  const uji = [
+    'BIF TRANSFER DR FEBI SASTI RAHAYU',
+    'BIF TRANSFER DR 028 FEBI SASTI RAHAYU',
+    'BIF TRANSFER DR 013 PUTRI VIONA ROSSA',
+  ];
+  uji.forEach((deskripsi) => {
+    assert.equal(tentukanKategori(deskripsi, 2000000, KATEGORI_BAWAAN), 'kat_transfer_masuk',
+      `"${deskripsi}" seharusnya masuk Transfer Masuk, bukan penampung`);
+  });
+});
+
+test('celah kata kunci lain yang ditemukan lewat audit data nyata', () => {
+  const uji = [
+    // Transfer sesama BCA lewat MyBCA tanpa kata "TRF"/"TRANSFER" sama sekali.
+    ['KE 008 DIVA QUINTA MAHMUD /MYBCA 95271', -6000000, 'kat_transfer_keluar'],
+    // "GO-PAY" bertanda hubung tidak match "GOPAY" tanpa tanda hubung.
+    ['PAY GO-PAY CUSTOMER 8980XXXXXXX7279 Permata ME 13:05:08', -100000, 'kat_dompet_digital'],
+    // "TOPUP" generik, dan nama merchant yang jadi Alfamidi/AEON di EDC.
+    ['TOPUP088291177279 0145200311031084', -100000, 'kat_dompet_digital'],
+    ['MIDI 088C PONDOK K 6019007586510332', -283700, 'kat_belanja'],
+    ['PURCHASE ALTO 20:00:27 AEON STORE PAKUWON BKS BEKASI', -118500, 'kat_belanja'],
+    // Kedai kopi dengan ejaan "COFFE" (tanpa E kedua), dan resto rantai Solaria.
+    ['MONO MUSIC & COFFE 6019007586510332', -120000, 'kat_makan'],
+    ['SOLARIA-SUNTER FRE 6019007586510332', -119000, 'kat_makan'],
+    // Tarik tunai tanpa kata "ATM"/"CASH" di depannya.
+    ['WITHDRAWAL DI LINK 305036145 JL. POND', -100000, 'kat_tarik_tunai'],
+    // Tempat biliar -- hiburan, bukan dompet digital/penampung.
+    ["D'PALACE BILLIARD 6019007586510332", -196400, 'kat_langganan'],
+    // Reimbursement/penggantian dana, bukan sekadar transfer masuk biasa.
+    ['LLG-DANAMON BESTINDO PUTRA MAN Penggantian dana Konsumsi PC', 2441000, 'kat_refund'],
+  ];
+  uji.forEach(([deskripsi, nominal, harapan]) => {
+    assert.equal(tentukanKategori(deskripsi, nominal, KATEGORI_BAWAAN), harapan,
+      `"${deskripsi}" seharusnya masuk ${harapan}`);
+  });
+});
+
+test('kasus terakhir dari audit "...Lain": GOTAGIHAN, reksa dana Bank Jago, HAKA, XENDIT', () => {
+  const uji = [
+    // GoPayLater lewat Permata EDC — tagihan pinjol, bukan penampung.
+    ['PAY GOTAGIHAN 7469810882911772 Permata ME 23:51:27 7469810882911772 74698108829', -94743, 'kat_cicilan'],
+    // Pembelian reksa dana lewat Bank Jago — dana masuk (redemption/bagi hasil), bukan penampung.
+    ['LLG-BANK JAGO REKSA DANA MANULIF S260702248685YRSIP', 2346168, 'kat_investasi'],
+    ['LLG-BANK JAGO REKSA DANA TRIM KA S2607022486859MKNI', 2754534, 'kat_investasi'],
+    // Restoran HAKA (dimsum / Kelapa Gading), dua bentuk deskripsi berbeda.
+    ['TRANSAKSI DEBIT TGL: 10/09 QR 008 00000.00HAKA DIMSU m e l a k u k a n s a n g g', -162000, 'kat_makan'],
+    ['HAKA KELAPA GADING 6019007586510332', -144000, 'kat_makan'],
+    // Xendit sebagai payment gateway belanja (dikonfirmasi pengguna), bukan penampung.
+    ['PAY XENDIT 7293102085535678 Permata ME 18:11:46 7293102085535678 729310208553567', -109500, 'kat_belanja'],
+  ];
+  uji.forEach(([deskripsi, nominal, harapan]) => {
+    assert.equal(tentukanKategori(deskripsi, nominal, KATEGORI_BAWAAN), harapan,
+      `"${deskripsi}" seharusnya masuk ${harapan}`);
+  });
+});
+
+test('kata kunci "BANK JAGO" (kategori Investasi) tidak salah ketangkap merchant kopi "Jago Coffee"', () => {
+  // "BANK JAGO" harus menangkap reksa dana, tapi tidak boleh menangkap merchant
+  // kopi "Jago Coffee"/"jagocoffee" yang cuma kebetulan berbagi nama depan.
+  const uji = [
+    ['TRANSAKSI DEBIT TGL: 22/09 QR 899 00000.00Jago Coffe', -20000, 'kat_makan'],
+    ['TRANSAKSI DEBIT TGL: 19/01 QR 914 00000.00jagocoffee', -54000, 'kat_lain_keluar'],
+  ];
+  uji.forEach(([deskripsi, nominal, harapan]) => {
+    assert.notEqual(tentukanKategori(deskripsi, nominal, KATEGORI_BAWAAN), 'kat_investasi',
+      `"${deskripsi}" tidak boleh masuk kat_investasi`);
+    assert.equal(tentukanKategori(deskripsi, nominal, KATEGORI_BAWAAN), harapan,
+      `"${deskripsi}" seharusnya masuk ${harapan}`);
+  });
+});
+
 /* ==========================================================================
    uploadTumpangTindih — deteksi e-statement yang ter-upload dua kali
    ========================================================================== */
