@@ -1211,16 +1211,24 @@ function pastikanTransaksiEmail(ss) {
     t.getRange(1, 1, 1, HEADER_TRANSAKSI_EMAIL.length)
       .setFontWeight('bold').setFontColor('#ffffff').setBackground(BIRU_TUA)
       .setVerticalAlignment('middle');
-    // RRN dan Nomor Referensi WAJIB teks, bukan Number: ditemukan lewat data
-    // produksi nyata bahwa Google Sheets diam-diam mengubah nilai digit-murni
-    // (mis. "255515732408") jadi Number begitu ditulis lewat setValues,
-    // sementara yang memuat huruf (mis. "...QRS1141733407") tetap string --
-    // inkonsistensi yang bisa memutus pencocokan referensi di fase
-    // rekonsiliasi nanti. Persis kelas bug yang sama yang sudah diperbaiki
-    // untuk kolom "No. Rekening" tab Transaksi (lihat getSheet()).
-    t.getRange(2, 10, Math.max(t.getMaxRows() - 1, 1), 2).setNumberFormat('@');
     t.setTabColor('#0b8043');
   }
+  // RRN dan Nomor Referensi WAJIB teks, bukan Number: ditemukan lewat data
+  // produksi nyata bahwa Google Sheets diam-diam mengubah nilai digit-murni
+  // (mis. "255515732408") jadi Number begitu ditulis lewat setValues,
+  // sementara yang memuat huruf (mis. "...QRS1141733407") tetap string --
+  // inkonsistensi yang bisa memutus pencocokan referensi di fase
+  // rekonsiliasi nanti. Persis kelas bug yang sama yang sudah diperbaiki
+  // untuk kolom "No. Rekening" tab Transaksi (lihat getSheet()).
+  //
+  // SENGAJA DI LUAR blok "tab belum ada" di atas: tab ini sudah lebih dulu
+  // dibuat pengguna sebelum perbaikan ini ada, dan format yang cuma
+  // dipasang saat pembuatan TIDAK PERNAH sampai ke tab yang sudah telanjur
+  // ada -- persis kesalahan yang sama yang pernah terjadi pada bendera
+  // migrasi kata kunci kategori (lihat migrasiKataKunciBawaanV2 di
+  // src/data/migrasi.js). Dipanggil ulang di sini murah (satu setNumberFormat)
+  // dan aman diulang setiap pemanggilan.
+  t.getRange(2, 10, Math.max(t.getMaxRows() - 1, 1), 2).setNumberFormat('@');
   return t;
 }
 
@@ -1505,7 +1513,15 @@ function bacaKonfigurasiEmail(ss) {
  * TETAP tersimpan walau parsing gagal), dan baris terstruktur di
  * "Transaksi Email" HANYA kalau parsing berhasil.
  *
- * @returns {{diproses:number, ditemukan:number, diparsing:number, alasan:?string}}
+ * Dipanggil di awal fungsi ini: reparseEmailGagal() — begitu parser
+ * diperbaiki (mis. sub-template BCA baru), email lama yang sempat gagal
+ * langsung "sembuh" tanpa perlu Gmail dijamah lagi. Baris yang GAGAL
+ * diparse SENGAJA tidak menahan label thread di Gmail (beda dari versi
+ * awal fungsi ini) supaya jelas: perbaikannya lewat reparseEmailGagal()
+ * yang membaca ulang teks yang sudah tersimpan, bukan lewat unlabel/
+ * refetch dari Gmail yang jauh lebih rumit untuk manfaat yang sama.
+ *
+ * @returns {{diproses:number, ditemukan:number, diparsing:number, diperbaiki:number, alasan:?string}}
  */
 function pollEmailTransaksi() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -1513,9 +1529,11 @@ function pollEmailTransaksi() {
   const emailMasuk = pastikanEmailMasuk(ss);
   const transaksiEmail = pastikanTransaksiEmail(ss);
 
+  const diperbaiki = reparseEmailGagal().diperbaiki;
+
   const konfigurasi = bacaKonfigurasiEmail(ss);
   if (!konfigurasi.length) {
-    return { diproses: 0, ditemukan: 0, diparsing: 0, alasan: 'Konfigurasi Email masih kosong — isi pola pengirim/subjek dulu.' };
+    return { diproses: 0, ditemukan: 0, diparsing: 0, diperbaiki, alasan: 'Konfigurasi Email masih kosong — isi pola pengirim/subjek dulu.' };
   }
 
   let label = GmailApp.getUserLabelByName(LABEL_EMAIL_DIPROSES);
@@ -1579,17 +1597,77 @@ function pollEmailTransaksi() {
       .setValues(barisTransaksiEmail);
   }
 
-  return { diproses, ditemukan: threads.length, diparsing, alasan: null };
+  return { diproses, ditemukan: threads.length, diparsing, diperbaiki, alasan: null };
+}
+
+/**
+ * Coba parse ulang baris "_EmailMasuk" yang sebelumnya gagal (Berhasil
+ * Diparse = FALSE), memakai teks yang SUDAH TERSIMPAN — tidak menyentuh
+ * Gmail sama sekali. Ini jalan pulang begitu parseEmailBerdasarkanBank()
+ * diperbaiki (mis. sub-template baru ditambahkan): email lama yang sempat
+ * gagal ikut "sembuh" pada Proses Email Transaksi Sekarang berikutnya,
+ * tanpa perlu mekanisme unlabel/refetch dari Gmail yang jauh lebih rumit
+ * untuk manfaat yang sama.
+ *
+ * Baris yang berhasil di-reparse ditimpa DI TEMPAT (kolom Berhasil
+ * Diparse/Pesan Error), bukan digandakan — dan baris "Transaksi Email"
+ * baru hanya ditambahkan kalau Gmail Message ID itu belum pernah tercatat
+ * di sana (jaga-jaga dipanggil dua kali).
+ *
+ * @returns {{diperbaiki:number}}
+ */
+function reparseEmailGagal() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const emailMasuk = pastikanEmailMasuk(ss);
+  const transaksiEmail = pastikanTransaksiEmail(ss);
+
+  const lastEmailMasuk = emailMasuk.getLastRow();
+  if (lastEmailMasuk <= 1) return { diperbaiki: 0 };
+
+  const data = emailMasuk.getRange(2, 1, lastEmailMasuk - 1, HEADER_EMAIL_MASUK.length).getValues();
+  const idSudahDiTransaksiEmail = new Set(
+    transaksiEmail.getLastRow() > 1
+      ? transaksiEmail.getRange(2, 1, transaksiEmail.getLastRow() - 1, 1).getValues().map((r) => String(r[0]))
+      : [],
+  );
+
+  let diperbaiki = 0;
+  const barisTransaksiEmailBaru = [];
+  data.forEach((row, i) => {
+    const [id, bank, , , , isi, ok] = row;
+    if (ok === true) return; // sudah pernah berhasil -- tidak perlu diulang
+    if (idSudahDiTransaksiEmail.has(String(id))) return; // jaga dobel kalau dipanggil ulang
+
+    const parsed = parseEmailBerdasarkanBank(bank, isi);
+    if (!parsed.parsedOk) return; // masih gagal dengan parser yang berlaku sekarang, biarkan untuk lain kali
+
+    emailMasuk.getRange(i + 2, 7, 1, 2).setValues([[true, '']]); // Berhasil Diparse, Pesan Error
+    barisTransaksiEmailBaru.push([
+      id, parsed.bank, parsed.eventTime, parsed.amount, parsed.direction,
+      parsed.merchantRaw || '', parsed.jenisTransaksi || '', parsed.acquirer || '',
+      parsed.location || '', parsed.rrn || '', parsed.refNo || '',
+      parsed.parserVersion || '', parsed.confidence || '', new Date(),
+    ]);
+    diperbaiki += 1;
+  });
+
+  if (barisTransaksiEmailBaru.length) {
+    transaksiEmail.getRange(transaksiEmail.getLastRow() + 1, 1, barisTransaksiEmailBaru.length, HEADER_TRANSAKSI_EMAIL.length)
+      .setValues(barisTransaksiEmailBaru);
+  }
+
+  return { diperbaiki };
 }
 
 /** Menu "Proses Email Transaksi Sekarang" — jalan manual, laporkan hasilnya. */
 function prosesEmailSekarang() {
   const hasil = pollEmailTransaksi();
   const ui = SpreadsheetApp.getUi();
+  const perbaikanTeks = hasil.diperbaiki ? ` ${hasil.diperbaiki} email lama yang sempat gagal kini berhasil diparse ulang.` : '';
   const pesan = hasil.alasan
-    ? hasil.alasan
+    ? hasil.alasan + perbaikanTeks
     : `${hasil.diproses} email transaksi baru disimpan ke tab "_EmailMasuk" (dari ${hasil.ditemukan} thread diperiksa), `
-      + `${hasil.diparsing} berhasil diparse ke tab "Transaksi Email".`;
+      + `${hasil.diparsing} berhasil diparse ke tab "Transaksi Email".${perbaikanTeks}`;
   ui.alert('Proses Email Transaksi', pesan, ui.ButtonSet.OK);
 }
 
