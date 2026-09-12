@@ -8,7 +8,7 @@
  */
 
 export const NAMA_DB = 'pembukuan_v1';
-export const VERSI_DB = 1;
+export const VERSI_DB = 2;
 
 export const STORE = {
   ACCOUNTS: 'accounts',
@@ -16,6 +16,9 @@ export const STORE = {
   TRANSACTIONS: 'transactions',
   CATEGORIES: 'categories',
   SETTINGS: 'settings',
+  /** Realtime Email Transaction Feed — lihat rencana implementasi & entities.js buatTransaksiEmail. */
+  EMAIL_TRANSACTIONS: 'email_transactions',
+  MERCHANT_DICTIONARY: 'merchant_dictionary',
 };
 
 let dbPromise = null;
@@ -60,6 +63,23 @@ function bukaDb() {
         kat.createIndex('tipe', 'tipe');
 
         db.createObjectStore(STORE.SETTINGS, { keyPath: 'key' });
+      }
+
+      if (versiLama < 2) {
+        // Realtime Email Transaction Feed — transaksi hasil parse email bank,
+        // ditarik dari tab "Transaksi Email" di Sheet (lihat email-feed-sync.js,
+        // fase berikutnya). gmailMessageId unik: satu email tidak boleh jadi
+        // dua transaksi walau ditarik ulang dari checkpoint yang sama.
+        const trxe = db.createObjectStore(STORE.EMAIL_TRANSACTIONS, { keyPath: 'id' });
+        trxe.createIndex('gmailMessageId', 'gmailMessageId', { unique: true });
+        trxe.createIndex('statusCocok', 'statusCocok');
+
+        // Kamus merchant -> kategori, dipelajari dari override pengguna saat
+        // menyelesaikan transaksi email "Perlu Ditinjau" (fase berikutnya).
+        // Bukan konsep yang sudah ada di categorize.js — lihat rencana
+        // implementasi soal kenapa ini genuinely baru, bukan perluasan
+        // polaKataKunci kategori.
+        db.createObjectStore(STORE.MERCHANT_DICTIONARY, { keyPath: 'merchantKey' });
       }
     };
 
