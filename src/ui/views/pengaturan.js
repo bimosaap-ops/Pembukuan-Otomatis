@@ -19,8 +19,10 @@ import {
   bacaKonfigSheets, simpanKonfigSheets, testWebhook, syncKeSheets, jumlahAntrean, praTinjauSelaras,
   statusSheets,
 } from '../../services/sheets-sync.js';
+import { tarikTransaksiEmail, statusTarikEmail } from '../../services/email-feed-sync.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
 import { toastSukses, toastGagal } from '../components/toast.js';
+import { pergiKe } from '../router.js';
 
 export async function mount(wadah) {
   const halaman = h('.halaman');
@@ -45,6 +47,7 @@ export async function mount(wadah) {
       kartuTampilan(render),
       kartuFolder(),
       await kartuSheets(),
+      await kartuEmailFeed(),
       kartuDatabase({ akun, transaksi, upload, kategori, penyimpanan }, render),
       kartuVersi(versi),
       kartuTentang(),
@@ -455,6 +458,50 @@ async function kartuSheets() {
           h('div', { text: '3. Sheet terisi otomatis tiap upload. Tombol \"Kirim semua\" untuk backfill.' }),
         ]),
       ]),
+    ]),
+  ]);
+}
+
+/* ==========================================================================
+   Transaksi Email — Realtime Email Transaction Feed
+   ========================================================================== */
+
+async function kartuEmailFeed() {
+  const { terakhirDitarikPada } = await statusTarikEmail();
+  const statusEl = h('.redup-2', {
+    style: { fontSize: '.82rem' },
+    text: terakhirDitarikPada
+      ? `Terakhir ditarik: ${new Date(terakhirDitarikPada).toLocaleString('id-ID')}`
+      : 'Belum pernah ditarik.',
+  });
+
+  return h('.kartu', null, [
+    h('.kartu__kepala', null, h('div', null, [
+      h('.kartu__judul', { text: 'Transaksi Email' }),
+      h('.kartu__ket', {
+        text: 'Notifikasi transaksi bank dari Gmail, dipantau lewat Apps Script (menu "Pembukuan" di Sheet) '
+          + 'dan ditarik ke sini untuk dicocokkan otomatis dengan e-statement. Memakai webhook Google Sheets yang sama di atas.',
+      }),
+    ])),
+    h('.baris.bungkus.mt-2', null, [
+      h('button.btn-primary', {
+        type: 'button',
+        onclick: async (e) => {
+          const b = e.currentTarget; b.disabled = true;
+          try {
+            const hasil = await tarikTransaksiEmail();
+            if (hasil?.skipped) { toastGagal('Aktifkan Sheets & isi URL dulu di atas.'); return; }
+            statusEl.textContent = `Terakhir ditarik: ${new Date().toLocaleString('id-ID')}`;
+            toastSukses(`Ditarik ${hasil.ditarik} baris, ${hasil.baru} transaksi baru.`);
+          } catch (err) {
+            toastGagal(`Gagal menarik: ${err.message}`);
+          } finally {
+            b.disabled = false;
+          }
+        },
+      }, [ikon('surat', 17), h('span', { text: 'Tarik email transaksi sekarang' })]),
+      h('button', { type: 'button', onclick: () => pergiKe('email-transaksi') }, 'Buka Transaksi Email'),
+      statusEl,
     ]),
   ]);
 }

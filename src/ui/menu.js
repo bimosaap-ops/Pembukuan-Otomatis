@@ -11,6 +11,7 @@ export const MENU = [
   { id: 'upload', label: 'Upload', labelPanjang: 'Upload e-Statement', emoji: '📄', ikon: 'upload', utama: true },
   { id: 'rekening', label: 'Rekening', labelPanjang: 'Rekening', emoji: '💳', ikon: 'rekening', utama: false },
   { id: 'transaksi', label: 'Transaksi', labelPanjang: 'Transaksi', emoji: '💸', ikon: 'transaksi', utama: true },
+  { id: 'email-transaksi', label: 'Email', labelPanjang: 'Transaksi Email', emoji: '📧', ikon: 'surat', utama: false },
   { id: 'analitik', label: 'Analitik', labelPanjang: 'Analitik', emoji: '📊', ikon: 'analitik', utama: true },
   { id: 'laporan', label: 'Laporan', labelPanjang: 'Laporan', emoji: '📑', ikon: 'laporan', utama: false },
   { id: 'riwayat', label: 'Riwayat', labelPanjang: 'Riwayat Upload', emoji: '📂', ikon: 'riwayat', utama: false },

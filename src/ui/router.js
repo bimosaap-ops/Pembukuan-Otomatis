@@ -15,6 +15,7 @@ const PEMUAT = {
   upload: () => import('./views/upload.js'),
   rekening: () => import('./views/rekening.js'),
   transaksi: () => import('./views/transaksi.js'),
+  'email-transaksi': () => import('./views/email-transaksi.js'),
   analitik: () => import('./views/analitik.js'),
   laporan: () => import('./views/laporan.js'),
   riwayat: () => import('./views/riwayat.js'),
