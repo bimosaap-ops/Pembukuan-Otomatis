@@ -105,6 +105,45 @@ Hormat Kami,
 PT Bank Central Asia Tbk
 `;
 
+// Sub-template ketiga (masih di bawah field pembeda "Jenis Transaksi"):
+// pembayaran BCA Virtual Account (mis. top-up GoPay). TIDAK punya field
+// "Pembayaran Ke" sama sekali -- ditemukan lewat verifikasi produksi lain
+// yang gagal parse karena itu. Teks di bawah ISI EMAIL ASLI dari
+// _EmailMasuk, nama pemilik VA disamarkan karena bukan bagian yang diuji.
+const EMAIL_BCA_VA = `
+Hai BIMO SAPUTRO,
+
+Anda baru saja melakukan transaksi dengan menggunakan fasilitas myBCA.
+Berikut ini adalah detail transaksi Anda :
+
+Status : Berhasil
+Tanggal Transaksi : 10 Sep 2026 09:50:46
+Jenis Transaksi : Transfer ke BCA Virtual Account
+Dari Rekening : 6090xxxx94
+No. BCA Virtual Account : 70001088291177279
+Nama : Bxxx Sxxxxxx
+Nama Perusahaan/Produk : PT DOMPET ANAK BANGSA / GOPAY TOPUP
+Nominal Bayar : IDR 400,000.00
+Biaya Admin : IDR 1,000.00
+Total Bayar : IDR 401,000.00
+Keterangan :
+Nomor Referensi : C9878E43-8901-4F1C-9DC2-0ADAEFB9144A
+
+Mohon simpan email ini sebagai referensi transaksi Anda.
+`;
+
+test('parseEmailBCA: sub-template Virtual Account (top-up, tanpa field "Pembayaran Ke") terparse benar', () => {
+  const hasil = parseEmailBCA(EMAIL_BCA_VA);
+  assert.equal(hasil.parsedOk, true);
+  assert.equal(hasil.bank, 'BCA');
+  assert.equal(hasil.amount, 401000, 'Total Bayar termasuk biaya admin, bukan Nominal Bayar saja');
+  assert.equal(hasil.direction, 'debit');
+  assert.equal(hasil.merchantRaw, 'PT DOMPET ANAK BANGSA / GOPAY TOPUP', 'fallback ke Nama Perusahaan/Produk karena Pembayaran Ke tidak ada');
+  assert.equal(hasil.jenisTransaksi, 'Transfer ke BCA Virtual Account');
+  assert.equal(hasil.refNo, 'C9878E43-8901-4F1C-9DC2-0ADAEFB9144A');
+  assert.equal(hasil.rrn, null, 'template VA tidak menyertakan RRN');
+});
+
 test('parseEmailBCA: sample asli "Internet Transaction Journal" terparse lengkap', () => {
   const hasil = parseEmailBCA(EMAIL_BCA);
   assert.equal(hasil.parsedOk, true);
