@@ -116,6 +116,13 @@ const JENDELA_PENCARIAN_EMAIL_HARI = 3;
 /** Batas jumlah thread diproses per jalan, menjaga kuota eksekusi Apps Script. */
 const MAKS_THREAD_EMAIL_PER_JALAN = 50;
 /**
+ * Tab audit ringan: satu baris per jalan pollEmailTransaksi() yang BENAR-
+ * BENAR melakukan sesuatu — lihat perluDicatatLogEmail(). Dibuat sekali,
+ * hanya ditambah baris, sama seperti Transaksi Email.
+ */
+const LOG_EMAIL_SHEET_NAME = 'Log Email';
+const HEADER_LOG_EMAIL = ['Waktu', 'Thread Diperiksa', 'Email Diproses', 'Berhasil Diparse', 'Gagal Diparse', 'Diperbaiki Reparse', 'Catatan'];
+/**
  * Dinaikkan setiap kali tata letak/rumus Dashboard ATAU Dashboard Full
  * berubah — keduanya dibangun ulang bersama dalam satu versi. Sheet yang
  * dibangun versi lama otomatis dibangun ulang saat POST berikutnya — tanpa
@@ -187,7 +194,7 @@ function sheetData(ss) {
   const bawaan = [
     DASHBOARD_SHEET_NAME, DASHBOARD_FULL_SHEET_NAME,
     ANGGARAN_SHEET_NAME, CARI_TRANSAKSI_SHEET_NAME, ARSIP_SHEET_NAME,
-    KONFIGURASI_EMAIL_SHEET_NAME, EMAIL_MASUK_SHEET_NAME, TRANSAKSI_EMAIL_SHEET_NAME,
+    KONFIGURASI_EMAIL_SHEET_NAME, EMAIL_MASUK_SHEET_NAME, TRANSAKSI_EMAIL_SHEET_NAME, LOG_EMAIL_SHEET_NAME,
   ];
   const lain = ss.getSheets().filter((s) => bawaan.indexOf(s.getName()) === -1);
   return lain.length ? lain[0] : ss.insertSheet(DATA_SHEET_NAME, 0);
@@ -410,6 +417,7 @@ function pastikanSemuaTab(ss, namaSheetData) {
   pastikanKonfigurasiEmail(ss);
   pastikanEmailMasuk(ss);
   pastikanTransaksiEmail(ss);
+  pastikanLogEmail(ss);
 
   const anggaranSh = ss.getSheetByName(ANGGARAN_SHEET_NAME);
   const anggaranBaris = anggaranSh ? Math.max(anggaranSh.getLastRow() - 1, 0) : 0;
@@ -1244,6 +1252,25 @@ function pastikanTransaksiEmail(ss) {
 }
 
 /**
+ * Tab audit ringan untuk pollEmailTransaksi() -- lihat catatLogEmail()/
+ * perluDicatatLogEmail(). Dibuat sekali, hanya ditambah baris, tidak ada
+ * kolom yang diketik manual pengguna -- sama seperti Transaksi Email.
+ */
+function pastikanLogEmail(ss) {
+  let t = ss.getSheetByName(LOG_EMAIL_SHEET_NAME);
+  if (!t) {
+    t = ss.insertSheet(LOG_EMAIL_SHEET_NAME, ss.getNumSheets());
+    t.appendRow(HEADER_LOG_EMAIL);
+    t.setFrozenRows(1);
+    t.getRange(1, 1, 1, HEADER_LOG_EMAIL.length)
+      .setFontWeight('bold').setFontColor('#ffffff').setBackground(BIRU_TUA)
+      .setVerticalAlignment('middle');
+    t.setTabColor('#0b8043');
+  }
+  return t;
+}
+
+/**
  * Peta nama bulan ke indeks 0-11 — memuat SINGKATAN INDONESIA dan INGGRIS
  * sekaligus (mis. "Agu"/"Aug", "Okt"/"Oct", "Des"/"Dec") karena sample email
  * BCA dan Permata yang jadi acuan parser ini masing-masing memakai singkatan
@@ -1549,7 +1576,9 @@ function pollEmailTransaksi() {
 
   const konfigurasi = bacaKonfigurasiEmail(ss);
   if (!konfigurasi.length) {
-    return { diproses: 0, ditemukan: 0, diparsing: 0, diperbaiki, alasan: 'Konfigurasi Email masih kosong — isi pola pengirim/subjek dulu.' };
+    const hasilKosong = { diproses: 0, ditemukan: 0, diparsing: 0, diperbaiki, alasan: 'Konfigurasi Email masih kosong — isi pola pengirim/subjek dulu.' };
+    catatLogEmail(ss, hasilKosong);
+    return hasilKosong;
   }
 
   let label = GmailApp.getUserLabelByName(LABEL_EMAIL_DIPROSES);
@@ -1613,7 +1642,48 @@ function pollEmailTransaksi() {
       .setValues(barisTransaksiEmail);
   }
 
-  return { diproses, ditemukan: threads.length, diparsing, diperbaiki, alasan: null };
+  const hasil = { diproses, ditemukan: threads.length, diparsing, diperbaiki, alasan: null };
+  catatLogEmail(ss, hasil);
+  return hasil;
+}
+
+/**
+ * Fungsi murni: satu baris log dari hasil pollEmailTransaksi() (lihat bentuk
+ * di komentar fungsi itu). Dipisah dari catatLogEmail() supaya bisa diuji
+ * tanpa Sheets sungguhan -- termasuk perhitungan "Gagal Diparse" (diproses
+ * dikurangi diparsing) yang tidak dihitung eksplisit oleh pollEmailTransaksi.
+ */
+function bangunBarisLogEmail(hasil) {
+  const gagal = Math.max((hasil.diproses || 0) - (hasil.diparsing || 0), 0);
+  return [
+    new Date(),
+    hasil.ditemukan || 0,
+    hasil.diproses || 0,
+    hasil.diparsing || 0,
+    gagal,
+    hasil.diperbaiki || 0,
+    hasil.alasan || '',
+  ];
+}
+
+/**
+ * Fungsi murni: apakah satu jalan pollEmailTransaksi() layak dicatat.
+ *
+ * Trigger otomatis jalan tiap 5 menit (JEDA_PEMANTAUAN_EMAIL_MENIT) --
+ * mencatat SETIAP jalan, termasuk yang tidak menemukan email baru sama
+ * sekali, akan membanjiri tab ini dengan puluhan ribu baris kosong per
+ * tahun tanpa nilai audit apa pun. Hanya jalan yang benar-benar melakukan
+ * sesuatu (email baru diproses, perbaikan reparse, atau gagal dengan
+ * alasan jelas seperti Konfigurasi Email kosong) yang layak satu baris.
+ */
+function perluDicatatLogEmail(hasil) {
+  return Boolean(hasil.diproses || hasil.diperbaiki || hasil.alasan);
+}
+
+/** Impure: tulis satu baris log kalau layak (lihat perluDicatatLogEmail). */
+function catatLogEmail(ss, hasil) {
+  if (!perluDicatatLogEmail(hasil)) return;
+  pastikanLogEmail(ss).appendRow(bangunBarisLogEmail(hasil));
 }
 
 /**
