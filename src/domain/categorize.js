@@ -26,7 +26,12 @@ export const KATEGORI_BAWAAN = [
   { id: 'kat_bunga', nama: 'Bunga & Bagi Hasil', tipe: PEMASUKAN, ikon: '🏦', warna: 'var(--c8)', prioritas: 75,
     polaKataKunci: ['BUNGA', 'BAGI HASIL', 'JASA GIRO', 'DEPOSITO', 'CASHBACK'] },
   { id: 'kat_refund', nama: 'Refund & Pengembalian', tipe: PEMASUKAN, ikon: '↩️', warna: 'var(--c9)', prioritas: 72,
-    polaKataKunci: ['REFUND', 'RETUR', 'PENGEMBALIAN', 'REVERSAL', 'KOREKSI', 'PENGGANTIAN'] },
+    polaKataKunci: ['REFUND', 'RETUR', 'PENGEMBALIAN', 'REVERSAL', 'KOREKSI', 'PENGGANTIAN',
+      // Statement LLG-Danamon kadang mencetak "BANK DANAMONPenggantian" tanpa
+      // spasi -- "PENGGANTIAN" berdiri sendiri gagal cocok karena huruf "N"
+      // langsung menyambung di kiri. Rp12,6 juta nyangkut di Transfer Masuk
+      // gara-gara ini.
+      'DANAMONPENGGANTIAN'] },
   { id: 'kat_investasi', nama: 'Investasi', tipe: PEMASUKAN, ikon: '📈', warna: 'var(--c7)', prioritas: 73,
     // "BANK JAGO" dipastikan pengguna sendiri sebagai rekening reksa dananya —
     // aman dijadikan kata kunci di sini karena kategorisasi ini khusus untuk
@@ -55,7 +60,11 @@ export const KATEGORI_BAWAAN = [
       // yang kebetulan memuat kata umum yang sama.
       'BAKSO', 'SATE', 'SOTO', 'NASI GORENG', 'NASI UDUK', 'NASI BEBEK', 'PECEL LELE', 'PECEL',
       'AYAM BAKAR', 'AYAM GORENG', 'AYAM PENYET', 'AYAM GEPREK', 'MIE AYAM', 'MIE ACEH', 'IGA BAKAR',
-      'HAKA'] },
+      'HAKA',
+      // "SOLARIA" tidak cocok kalau nama cabangnya menempel tanpa spasi ("...
+      // 00SOLARIABUA", singkatan EDC untuk "Solaria Buah Batu" atau sejenis) --
+      // batas kata gagal karena huruf "B" langsung menyambung di kanan.
+      'SOLARIABUA'] },
   { id: 'kat_belanja', nama: 'Belanja Harian', tipe: PENGELUARAN, ikon: '🛒', warna: 'var(--c4)', prioritas: 72,
     polaKataKunci: ['ALFAMART', 'ALFAMIDI', 'MIDI', 'INDOMARET', 'SUPERINDO', 'HYPERMART', 'TRANSMART', 'CARREFOUR',
       'GIANT', 'LOTTE', 'RANCH MARKET', 'HERO', 'YOGYA', 'PASAR', 'GROSIR', 'AEON', 'XENDIT'] },
@@ -102,7 +111,10 @@ export const KATEGORI_BAWAAN = [
     polaKataKunci: ['SPP', 'SEKOLAH', 'KAMPUS', 'UNIVERSITAS', 'KURSUS', 'BIMBEL', 'RUANGGURU', 'UANG PANGKAL'] },
   { id: 'kat_langganan', nama: 'Hiburan & Langganan', tipe: PENGELUARAN, ikon: '🎬', warna: 'var(--c4)', prioritas: 74,
     polaKataKunci: ['NETFLIX', 'SPOTIFY', 'YOUTUBE', 'DISNEY', 'VIU', 'VIDIO', 'APPLE', 'GOOGLE', 'STEAM',
-      'CANVA', 'ADOBE', 'MICROSOFT', 'CGV', 'XXI', 'CINEPOLIS', 'BIOSKOP', 'BILLIARD'] },
+      'CANVA', 'ADOBE', 'MICROSOFT', 'CGV', 'XXI', 'CINEPOLIS', 'BIOSKOP', 'BILLIARD',
+      // "JAMBILLIARD" ("Jam Billiard", nama tempat) menempel tanpa spasi --
+      // "BILLIARD" berdiri sendiri gagal cocok karena huruf "M" menyambung di kiri.
+      'JAMBILLIARD'] },
   { id: 'kat_gaji_karyawan', nama: 'Gaji Karyawan', tipe: PENGELUARAN, ikon: '👷', warna: 'var(--c3)', prioritas: 68,
     polaKataKunci: ['GAJI', 'PAYROLL', 'UPAH', 'HONOR', 'THR', 'MANDOR', 'TUKANG'] },
   { id: 'kat_operasional', nama: 'Operasional Usaha', tipe: PENGELUARAN, ikon: '🏗', warna: 'var(--c8)', prioritas: 66,
