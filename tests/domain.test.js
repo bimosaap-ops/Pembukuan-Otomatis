@@ -251,6 +251,48 @@ test('nama masakan jalanan Indonesia dikenali sebagai Makan & Minum, bukan jatuh
   });
 });
 
+test('singkatan BI-FAST "BIF TRANSFER DR" dikenali sebagai Transfer Masuk', () => {
+  // Ditemukan lewat audit data nyata: ~75 juta rupiah dari ~19 pengirim
+  // berbeda nyangkut di "Pemasukan Lain" karena kata kunci lama cuma
+  // menangkap "TRANSFER DARI"/"BIFAST DARI" (kata penuh), bukan singkatan
+  // "DR" yang dipakai statement BCA untuk notifikasi BI-FAST masuk.
+  const uji = [
+    'BIF TRANSFER DR FEBI SASTI RAHAYU',
+    'BIF TRANSFER DR 028 FEBI SASTI RAHAYU',
+    'BIF TRANSFER DR 013 PUTRI VIONA ROSSA',
+  ];
+  uji.forEach((deskripsi) => {
+    assert.equal(tentukanKategori(deskripsi, 2000000, KATEGORI_BAWAAN), 'kat_transfer_masuk',
+      `"${deskripsi}" seharusnya masuk Transfer Masuk, bukan penampung`);
+  });
+});
+
+test('celah kata kunci lain yang ditemukan lewat audit data nyata', () => {
+  const uji = [
+    // Transfer sesama BCA lewat MyBCA tanpa kata "TRF"/"TRANSFER" sama sekali.
+    ['KE 008 DIVA QUINTA MAHMUD /MYBCA 95271', -6000000, 'kat_transfer_keluar'],
+    // "GO-PAY" bertanda hubung tidak match "GOPAY" tanpa tanda hubung.
+    ['PAY GO-PAY CUSTOMER 8980XXXXXXX7279 Permata ME 13:05:08', -100000, 'kat_dompet_digital'],
+    // "TOPUP" generik, dan nama merchant yang jadi Alfamidi/AEON di EDC.
+    ['TOPUP088291177279 0145200311031084', -100000, 'kat_dompet_digital'],
+    ['MIDI 088C PONDOK K 6019007586510332', -283700, 'kat_belanja'],
+    ['PURCHASE ALTO 20:00:27 AEON STORE PAKUWON BKS BEKASI', -118500, 'kat_belanja'],
+    // Kedai kopi dengan ejaan "COFFE" (tanpa E kedua), dan resto rantai Solaria.
+    ['MONO MUSIC & COFFE 6019007586510332', -120000, 'kat_makan'],
+    ['SOLARIA-SUNTER FRE 6019007586510332', -119000, 'kat_makan'],
+    // Tarik tunai tanpa kata "ATM"/"CASH" di depannya.
+    ['WITHDRAWAL DI LINK 305036145 JL. POND', -100000, 'kat_tarik_tunai'],
+    // Tempat biliar -- hiburan, bukan dompet digital/penampung.
+    ["D'PALACE BILLIARD 6019007586510332", -196400, 'kat_langganan'],
+    // Reimbursement/penggantian dana, bukan sekadar transfer masuk biasa.
+    ['LLG-DANAMON BESTINDO PUTRA MAN Penggantian dana Konsumsi PC', 2441000, 'kat_refund'],
+  ];
+  uji.forEach(([deskripsi, nominal, harapan]) => {
+    assert.equal(tentukanKategori(deskripsi, nominal, KATEGORI_BAWAAN), harapan,
+      `"${deskripsi}" seharusnya masuk ${harapan}`);
+  });
+});
+
 /* ==========================================================================
    uploadTumpangTindih — deteksi e-statement yang ter-upload dua kali
    ========================================================================== */

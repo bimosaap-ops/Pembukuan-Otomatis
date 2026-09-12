@@ -26,27 +26,33 @@ export const KATEGORI_BAWAAN = [
   { id: 'kat_bunga', nama: 'Bunga & Bagi Hasil', tipe: PEMASUKAN, ikon: '🏦', warna: 'var(--c8)', prioritas: 75,
     polaKataKunci: ['BUNGA', 'BAGI HASIL', 'JASA GIRO', 'DEPOSITO', 'CASHBACK'] },
   { id: 'kat_refund', nama: 'Refund & Pengembalian', tipe: PEMASUKAN, ikon: '↩️', warna: 'var(--c9)', prioritas: 72,
-    polaKataKunci: ['REFUND', 'RETUR', 'PENGEMBALIAN', 'REVERSAL', 'KOREKSI'] },
+    polaKataKunci: ['REFUND', 'RETUR', 'PENGEMBALIAN', 'REVERSAL', 'KOREKSI', 'PENGGANTIAN'] },
   { id: 'kat_setoran', nama: 'Setoran Tunai', tipe: PEMASUKAN, ikon: '💵', warna: 'var(--c12)', prioritas: 68,
     polaKataKunci: ['SETORAN TUNAI', 'SETORAN', 'CASH DEPOSIT', 'STR TUNAI'] },
   { id: 'kat_transfer_masuk', nama: 'Transfer Masuk', tipe: PEMASUKAN, ikon: '⬇️', warna: 'var(--c1)', prioritas: 10,
     polaKataKunci: ['TRSF E-BANKING CR', 'TRANSFER MASUK', 'INCOMING', 'KREDIT', 'BI-FAST CR', 'TRANSFER DARI',
-      'PB DARI', 'BIFAST DARI', 'TRF DARI'] },
+      'PB DARI', 'BIFAST DARI', 'TRF DARI',
+      // Singkatan BI-FAST BCA: "BIF TRANSFER DR [nama]" — ditemukan lewat audit
+      // data nyata, ~75 juta rupiah dari ~19 pengirim berbeda nyangkut di
+      // Pemasukan Lain karena "TRANSFER DARI"/"BIFAST DARI" tidak menangkap
+      // bentuk singkat "DR" (bukan "DARI") ini.
+      'BIF TRANSFER DR'] },
   { id: KATEGORI_LAINNYA_MASUK, nama: 'Pemasukan Lain', tipe: PEMASUKAN, ikon: '➕', warna: 'var(--c10)', prioritas: 0,
     polaKataKunci: [] },
 
   // --- Pengeluaran -------------------------------------------------------
   { id: 'kat_makan', nama: 'Makan & Minum', tipe: PENGELUARAN, ikon: '🍜', warna: 'var(--c3)', prioritas: 70,
     polaKataKunci: ['GOFOOD', 'GRABFOOD', 'SHOPEEFOOD', 'RESTO', 'RESTAURANT', 'WARUNG', 'WARTEG', 'RUMAH MAKAN',
-      'KOPI', 'COFFEE', 'CAFE', 'KEDAI', 'MCDONALD', 'KFC', 'STARBUCKS', 'PIZZA', 'BAKERY', 'CATERING',
+      'KOPI', 'COFFEE', 'COFFE', 'CAFE', 'KEDAI', 'MCDONALD', 'KFC', 'STARBUCKS', 'PIZZA', 'BAKERY', 'CATERING',
+      'SOLARIA',
       // Nama masakan jalanan Indonesia — sengaja frasa spesifik ("AYAM BAKAR",
       // bukan "AYAM" berdiri sendiri) supaya tidak menelan transaksi tak terkait
       // yang kebetulan memuat kata umum yang sama.
       'BAKSO', 'SATE', 'SOTO', 'NASI GORENG', 'NASI UDUK', 'NASI BEBEK', 'PECEL LELE', 'PECEL',
       'AYAM BAKAR', 'AYAM GORENG', 'AYAM PENYET', 'AYAM GEPREK', 'MIE AYAM', 'MIE ACEH', 'IGA BAKAR'] },
   { id: 'kat_belanja', nama: 'Belanja Harian', tipe: PENGELUARAN, ikon: '🛒', warna: 'var(--c4)', prioritas: 72,
-    polaKataKunci: ['ALFAMART', 'ALFAMIDI', 'INDOMARET', 'SUPERINDO', 'HYPERMART', 'TRANSMART', 'CARREFOUR',
-      'GIANT', 'LOTTE', 'RANCH MARKET', 'HERO', 'YOGYA', 'PASAR', 'GROSIR'] },
+    polaKataKunci: ['ALFAMART', 'ALFAMIDI', 'MIDI', 'INDOMARET', 'SUPERINDO', 'HYPERMART', 'TRANSMART', 'CARREFOUR',
+      'GIANT', 'LOTTE', 'RANCH MARKET', 'HERO', 'YOGYA', 'PASAR', 'GROSIR', 'AEON'] },
   { id: 'kat_belanja_online', nama: 'Belanja Online', tipe: PENGELUARAN, ikon: '📦', warna: 'var(--c5)', prioritas: 74,
     polaKataKunci: ['TOKOPEDIA', 'SHOPEE', 'LAZADA', 'BUKALAPAK', 'BLIBLI', 'TIKTOK', 'ZALORA', 'AMAZON', 'IKEA'] },
   { id: 'kat_transport', nama: 'Transportasi & BBM', tipe: PENGELUARAN, ikon: '🚗', warna: 'var(--c8)', prioritas: 70,
@@ -73,10 +79,11 @@ export const KATEGORI_BAWAAN = [
   { id: 'kat_pajak', nama: 'Pajak', tipe: PENGELUARAN, ikon: '🧮', warna: 'var(--c7)', prioritas: 78,
     polaKataKunci: ['PAJAK', 'PPH', 'PPN', 'SAMSAT', 'PBB', 'MPN', 'DJP', 'BEA'] },
   { id: 'kat_tarik_tunai', nama: 'Tarik Tunai', tipe: PENGELUARAN, ikon: '🏧', warna: 'var(--c10)', prioritas: 78,
-    polaKataKunci: ['TARIKAN TUNAI', 'TARIK TUNAI', 'TARIKAN ATM', 'CASH WITHDRAWAL', 'ATM WITHDRAWAL', 'PENARIKAN'] },
+    polaKataKunci: ['TARIKAN TUNAI', 'TARIK TUNAI', 'TARIKAN ATM', 'CASH WITHDRAWAL', 'ATM WITHDRAWAL', 'PENARIKAN',
+      'WITHDRAWAL'] },
   { id: 'kat_dompet_digital', nama: 'Dompet Digital & QRIS', tipe: PENGELUARAN, ikon: '📲', warna: 'var(--c1)', prioritas: 60,
-    polaKataKunci: ['QRIS', 'QR PAYMENT', 'GOPAY', 'OVO', 'SHOPEEPAY', 'LINKAJA', 'E-WALLET', 'ISI SALDO',
-      'SALDO DANA', 'DANA WALLET'] },
+    polaKataKunci: ['QRIS', 'QR PAYMENT', 'GOPAY', 'GO-PAY', 'OVO', 'SHOPEEPAY', 'LINKAJA', 'E-WALLET', 'ISI SALDO',
+      'SALDO DANA', 'DANA WALLET', 'TOPUP'] },
   { id: 'kat_cicilan', nama: 'Cicilan & Pinjaman', tipe: PENGELUARAN, ikon: '📉', warna: 'var(--c5)', prioritas: 76,
     polaKataKunci: ['ANGSURAN', 'CICILAN', 'INSTALLMENT', 'KPR', 'LEASING', 'ADIRA', 'FIF', 'BAF', 'PINJAMAN', 'KARTU KREDIT'] },
   { id: 'kat_asuransi', nama: 'Asuransi & BPJS', tipe: PENGELUARAN, ikon: '🛡', warna: 'var(--c6)', prioritas: 76,
@@ -88,7 +95,7 @@ export const KATEGORI_BAWAAN = [
     polaKataKunci: ['SPP', 'SEKOLAH', 'KAMPUS', 'UNIVERSITAS', 'KURSUS', 'BIMBEL', 'RUANGGURU', 'UANG PANGKAL'] },
   { id: 'kat_langganan', nama: 'Hiburan & Langganan', tipe: PENGELUARAN, ikon: '🎬', warna: 'var(--c4)', prioritas: 74,
     polaKataKunci: ['NETFLIX', 'SPOTIFY', 'YOUTUBE', 'DISNEY', 'VIU', 'VIDIO', 'APPLE', 'GOOGLE', 'STEAM',
-      'CANVA', 'ADOBE', 'MICROSOFT', 'CGV', 'XXI', 'CINEPOLIS', 'BIOSKOP'] },
+      'CANVA', 'ADOBE', 'MICROSOFT', 'CGV', 'XXI', 'CINEPOLIS', 'BIOSKOP', 'BILLIARD'] },
   { id: 'kat_gaji_karyawan', nama: 'Gaji Karyawan', tipe: PENGELUARAN, ikon: '👷', warna: 'var(--c3)', prioritas: 68,
     polaKataKunci: ['GAJI', 'PAYROLL', 'UPAH', 'HONOR', 'THR', 'MANDOR', 'TUKANG'] },
   { id: 'kat_operasional', nama: 'Operasional Usaha', tipe: PENGELUARAN, ikon: '🏗', warna: 'var(--c8)', prioritas: 66,
@@ -98,7 +105,11 @@ export const KATEGORI_BAWAAN = [
     polaKataKunci: ['ZAKAT', 'INFAQ', 'INFAK', 'SEDEKAH', 'DONASI', 'QURBAN', 'BAZNAS', 'DOMPET DHUAFA', 'KITABISA'] },
   { id: 'kat_transfer_keluar', nama: 'Transfer Keluar', tipe: PENGELUARAN, ikon: '⬆️', warna: 'var(--c1)', prioritas: 10,
     polaKataKunci: ['TRSF E-BANKING DB', 'TRANSFER KE', 'TRANSFER', 'BI-FAST', 'RTGS', 'SKN', 'OVERBOOKING',
-      'TRF', 'SWITCHING', 'KIRIM UANG', 'PB KE', 'BIFAST KE', 'TRF BIFAST KE'] },
+      'TRF', 'SWITCHING', 'KIRIM UANG', 'PB KE', 'BIFAST KE', 'TRF BIFAST KE',
+      // Transfer sesama BCA lewat MyBCA kadang tidak dilabeli "TRF"/"TRANSFER"
+      // sama sekali di teks statement, cuma "KE ### [nama] /MYBCA ####" —
+      // "/MYBCA" dipakai sebagai penanda karena "KE" sendirian terlalu umum.
+      '/MYBCA'] },
   { id: KATEGORI_LAINNYA_KELUAR, nama: 'Pengeluaran Lain', tipe: PENGELUARAN, ikon: '➖', warna: 'var(--c11)', prioritas: 0,
     polaKataKunci: [] },
 ].map((k, i) => ({ ...k, bawaan: true, urutan: i }));
