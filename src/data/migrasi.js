@@ -20,8 +20,21 @@ import { KUNCI_SHEETS } from '../services/sheets-sync.js';
 
 /** Bendera di store settings; nilainya versi migrasi yang sudah dijalankan. */
 export const KUNCI_MIGRASI = 'migrasiHashRekening';
-/** Bendera migrasi kata kunci kategori bawaan — lihat migrasiKataKunciBawaan. */
-export const KUNCI_MIGRASI_KATA_KUNCI = 'migrasiKataKunciBawaanV1';
+/**
+ * Bendera migrasi kata kunci kategori bawaan — lihat migrasiKataKunciBawaan.
+ *
+ * PENTING: bendera ini SEKALI JALAN per nilai string-nya. Menambah kata kunci
+ * baru ke KATEGORI_BAWAAN di rilis berikutnya TIDAK sampai ke pengguna yang
+ * sudah menjalankan versi ini — persis kelas masalah yang migrasi ini sendiri
+ * dibuat untuk menutup, sekarang kena ke migrasinya sendiri. Naikkan angka di
+ * belakang ('V1' -> 'V2' -> ...) SETIAP KALI KATEGORI_BAWAAN dapat kata kunci
+ * baru, supaya migrasi ini jalan sekali lagi dan menyusul yang tertinggal.
+ * (Ketahuan lewat SOLARIABUA/JAMBILLIARD/DANAMONPENGGANTIAN yang tidak ikut
+ * terkoreksi walau kode sudah benar dan sudah live — kata kuncinya sendiri
+ * tidak pernah sampai ke daftar kategori pengguna karena bendera V1 sudah
+ * terpakai dari rilis sebelumnya.)
+ */
+export const KUNCI_MIGRASI_KATA_KUNCI = 'migrasiKataKunciBawaanV2';
 /** Bendera migrasi kategori Investasi — lihat migrasiKategoriInvestasi. */
 export const KUNCI_MIGRASI_KATEGORI_INVESTASI = 'migrasiKategoriInvestasiV1';
 
