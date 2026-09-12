@@ -1535,6 +1535,37 @@ function bacaKonfigurasiEmail(ss) {
 }
 
 /**
+ * Fragmen query Gmail "(from:a OR from:b OR ...)" dari pola pengirim aktif
+ * di Konfigurasi Email -- BUKAN sekadar optimisasi, ini root fix untuk
+ * pollEmailTransaksi()/jalankanBackfillEmail() yang bisa mandek total.
+ *
+ * Tanpa pembatasan ini, GmailApp.search menyisir SELURUH kotak masuk
+ * pengguna, dan email non-bank apa pun (pribadi, notifikasi lain, dst.)
+ * diklasifikasi 'unknown' oleh klasifikasikanEmail() -- thread 'unknown'
+ * SENGAJA tidak pernah diberi label (lihat prosesThreadEmailTransaksi,
+ * `semuaTuntas = false`) supaya bisa sembuh sendiri kalau pola dilengkapi.
+ * Konsekuensi yang tidak disadari: thread itu terus muncul lagi di setiap
+ * pencarian berikutnya dan memakan kuota MAKS_THREAD_.../PER_JALAN tanpa
+ * membuat kemajuan sama sekali -- persis penyebab backfill yang mentok di
+ * tengah jalan (ditemukan lewat verifikasi produksi: 300 thread diperiksa
+ * tapi cuma segelintir email baru, tiga jalan berturut-turut, karena
+ * hampir seluruh kuota terpakai memeriksa ulang email pribadi pengguna
+ * yang sama yang tidak pernah bisa berlabel).
+ *
+ * Kalau ADA baris aktif dengan polaPengirim KOSONG (aturan yang sengaja
+ * mencocokkan pengirim apa pun berdasar pola subjek saja), fungsi ini
+ * mengembalikan '' (tanpa pembatasan sama sekali) -- membatasi pengirim di
+ * sisi Gmail akan diam-diam mematahkan jangkauan aturan semacam itu.
+ */
+function bangunQueryPengirimGmail(konfigurasi) {
+  const aktif = (konfigurasi || []).filter((k) => k.aktif !== false);
+  if (aktif.some((k) => !String(k.polaPengirim || '').trim())) return '';
+  const pola = [...new Set(aktif.map((k) => String(k.polaPengirim).trim()))];
+  if (!pola.length) return '';
+  return `(${pola.map((p) => `from:${p}`).join(' OR ')})`;
+}
+
+/**
  * Poll Gmail untuk email transaksi baru. Dipanggil manual lewat menu
  * "Proses Email Transaksi Sekarang" (verifikasi sebelum trigger otomatis
  * dipasang — lihat rencana implementasi) atau lewat time-driven trigger
@@ -1591,7 +1622,8 @@ function pollEmailTransaksi() {
       : [],
   );
 
-  const query = `-label:"${LABEL_EMAIL_DIPROSES}" newer_than:${JENDELA_PENCARIAN_EMAIL_HARI}d`;
+  const queryPengirim = bangunQueryPengirimGmail(konfigurasi);
+  const query = `${queryPengirim} -label:"${LABEL_EMAIL_DIPROSES}" newer_than:${JENDELA_PENCARIAN_EMAIL_HARI}d`.trim();
   const threads = GmailApp.search(query, 0, MAKS_THREAD_EMAIL_PER_JALAN);
 
   const { barisEmailMasuk, barisTransaksiEmail, diproses, diparsing } =
@@ -1762,7 +1794,8 @@ function jalankanBackfillEmail(sejakTanggal) {
 
   // Gmail menerima format tanggal YYYY/MM/DD pada operator "after:", bukan
   // YYYY-MM-DD yang diminta lewat prompt (lebih akrab utk pengguna Indonesia).
-  const query = `-label:"${LABEL_EMAIL_DIPROSES}" after:${sejakTanggal.replace(/-/g, '/')}`;
+  const queryPengirim = bangunQueryPengirimGmail(konfigurasi);
+  const query = `${queryPengirim} -label:"${LABEL_EMAIL_DIPROSES}" after:${sejakTanggal.replace(/-/g, '/')}`.trim();
   const threads = GmailApp.search(query, 0, MAKS_THREAD_BACKFILL_PER_JALAN);
 
   const { barisEmailMasuk, barisTransaksiEmail, diproses, diparsing } =

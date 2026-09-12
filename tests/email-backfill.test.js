@@ -1,9 +1,19 @@
 /**
- * Tes jalankanBackfillEmail() di sheets/Code.gs — menu "Tarik Email Lama
- * (Backfill)", ditambahkan setelah verifikasi produksi menunjukkan
- * pollEmailTransaksi() cuma menoleh JENDELA_PENCARIAN_EMAIL_HARI (3) hari
- * ke belakang, sehingga transaksi lama (mis. sejak awal tahun) yang sudah
- * ada di Gmail sebelum pemantauan dipasang tidak pernah ikut tertarik.
+ * Tes jalankanBackfillEmail() dan bangunQueryPengirimGmail() di
+ * sheets/Code.gs — menu "Tarik Email Lama (Backfill)", ditambahkan setelah
+ * verifikasi produksi menunjukkan pollEmailTransaksi() cuma menoleh
+ * JENDELA_PENCARIAN_EMAIL_HARI (3) hari ke belakang, sehingga transaksi
+ * lama (mis. sejak awal tahun) yang sudah ada di Gmail sebelum pemantauan
+ * dipasang tidak pernah ikut tertarik.
+ *
+ * bangunQueryPengirimGmail() sendiri adalah ROOT FIX untuk bug lanjutan
+ * yang ditemukan dari data produksi nyata: backfill sejak Januari mandek
+ * di sekitar Agustus setelah 3 kali jalan (Log Email menunjukkan
+ * "Thread Diperiksa" selalu mentok di batas 300 tapi "Email Diproses"
+ * anjlok 99->8->0) karena query Gmail lama TIDAK membatasi pengirim —
+ * seluruh kotak masuk pribadi pengguna ikut tersisir dan email non-bank
+ * yang diklasifikasi 'unknown' tidak pernah berlabel, sehingga terus
+ * muncul lagi tiap pencarian dan menghabiskan kuota tanpa kemajuan.
  *
  * Sengaja HANYA menguji jalur yang tidak menyentuh Gmail sungguhan (early-
  * return konfigurasi kosong) plus argumen yang dikirim ke GmailApp.search
@@ -80,7 +90,7 @@ function muatApi(ss, gmail) {
     console: { warn: () => {}, log: () => {} },
   };
   return new Function(...Object.keys(sandbox),
-    `${src}\n; return { jalankanBackfillEmail, pastikanKonfigurasiEmail, MAKS_THREAD_BACKFILL_PER_JALAN };`)(...Object.values(sandbox));
+    `${src}\n; return { jalankanBackfillEmail, pastikanKonfigurasiEmail, bangunQueryPengirimGmail, MAKS_THREAD_BACKFILL_PER_JALAN };`)(...Object.values(sandbox));
 }
 
 test('jalankanBackfillEmail: Konfigurasi Email kosong -> berhenti sebelum menyentuh Gmail sama sekali', () => {
@@ -107,6 +117,9 @@ test('jalankanBackfillEmail: tanggal YYYY-MM-DD dikonversi ke format Gmail YYYY/
   const hasil = api.jalankanBackfillEmail('2026-01-15');
 
   assert.match(queryDikirim, /after:2026\/01\/15/);
+  // Regresi bug produksi: query WAJIB membatasi pengirim, bukan menyisir
+  // seluruh kotak masuk -- lihat catatan di kepala berkas ini.
+  assert.match(queryDikirim, /from:bca\.co\.id/);
   assert.equal(hasil.alasan, null);
   assert.equal(hasil.ditemukan, 0);
   assert.equal(hasil.masihAda, false);
@@ -127,4 +140,46 @@ test('jalankanBackfillEmail: masihAda true kalau jumlah thread ditemukan mencapa
 
   assert.equal(hasil.ditemukan, api.MAKS_THREAD_BACKFILL_PER_JALAN);
   assert.equal(hasil.masihAda, true, 'jumlah ditemukan == batas per-jalan berarti kemungkinan masih ada sisa yang belum diperiksa');
+});
+
+test('bangunQueryPengirimGmail: menggabungkan beberapa pola pengirim aktif dengan OR', () => {
+  const api = muatApi(buatSpreadsheetTiruan());
+  const query = api.bangunQueryPengirimGmail([
+    { polaPengirim: 'bca.co.id', aktif: true },
+    { polaPengirim: 'permatabank.co.id', aktif: true },
+  ]);
+  assert.equal(query, '(from:bca.co.id OR from:permatabank.co.id)');
+});
+
+test('bangunQueryPengirimGmail: baris nonaktif diabaikan', () => {
+  const api = muatApi(buatSpreadsheetTiruan());
+  const query = api.bangunQueryPengirimGmail([
+    { polaPengirim: 'bca.co.id', aktif: true },
+    { polaPengirim: 'promo-bank-lain.co.id', aktif: false },
+  ]);
+  assert.equal(query, '(from:bca.co.id)');
+});
+
+test('bangunQueryPengirimGmail: baris aktif dengan polaPengirim kosong (aturan subjek-saja) -> fallback tanpa pembatasan', () => {
+  const api = muatApi(buatSpreadsheetTiruan());
+  const query = api.bangunQueryPengirimGmail([
+    { polaPengirim: 'bca.co.id', aktif: true },
+    { polaPengirim: '', polaSubjek: 'Transfer', aktif: true },
+  ]);
+  assert.equal(query, '', 'satu saja baris aktif tanpa polaPengirim harus mematahkan pembatasan sama sekali, bukan diam-diam melewatkan baris itu');
+});
+
+test('bangunQueryPengirimGmail: pola pengirim duplikat (dua bank, sender sama) tidak dobel di query', () => {
+  const api = muatApi(buatSpreadsheetTiruan());
+  const query = api.bangunQueryPengirimGmail([
+    { polaPengirim: 'bca.co.id', aktif: true },
+    { polaPengirim: 'bca.co.id', aktif: true },
+  ]);
+  assert.equal(query, '(from:bca.co.id)');
+});
+
+test('bangunQueryPengirimGmail: konfigurasi kosong -> string kosong', () => {
+  const api = muatApi(buatSpreadsheetTiruan());
+  assert.equal(api.bangunQueryPengirimGmail([]), '');
+  assert.equal(api.bangunQueryPengirimGmail(null), '');
 });
