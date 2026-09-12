@@ -37,8 +37,13 @@ export const KATEGORI_BAWAAN = [
 
   // --- Pengeluaran -------------------------------------------------------
   { id: 'kat_makan', nama: 'Makan & Minum', tipe: PENGELUARAN, ikon: '🍜', warna: 'var(--c3)', prioritas: 70,
-    polaKataKunci: ['GOFOOD', 'GRABFOOD', 'SHOPEEFOOD', 'RESTO', 'RESTAURANT', 'WARUNG', 'RUMAH MAKAN',
-      'KOPI', 'COFFEE', 'CAFE', 'KEDAI', 'MCDONALD', 'KFC', 'STARBUCKS', 'PIZZA', 'BAKERY', 'CATERING'] },
+    polaKataKunci: ['GOFOOD', 'GRABFOOD', 'SHOPEEFOOD', 'RESTO', 'RESTAURANT', 'WARUNG', 'WARTEG', 'RUMAH MAKAN',
+      'KOPI', 'COFFEE', 'CAFE', 'KEDAI', 'MCDONALD', 'KFC', 'STARBUCKS', 'PIZZA', 'BAKERY', 'CATERING',
+      // Nama masakan jalanan Indonesia — sengaja frasa spesifik ("AYAM BAKAR",
+      // bukan "AYAM" berdiri sendiri) supaya tidak menelan transaksi tak terkait
+      // yang kebetulan memuat kata umum yang sama.
+      'BAKSO', 'SATE', 'SOTO', 'NASI GORENG', 'NASI UDUK', 'NASI BEBEK', 'PECEL LELE', 'PECEL',
+      'AYAM BAKAR', 'AYAM GORENG', 'AYAM PENYET', 'AYAM GEPREK', 'MIE AYAM', 'MIE ACEH', 'IGA BAKAR'] },
   { id: 'kat_belanja', nama: 'Belanja Harian', tipe: PENGELUARAN, ikon: '🛒', warna: 'var(--c4)', prioritas: 72,
     polaKataKunci: ['ALFAMART', 'ALFAMIDI', 'INDOMARET', 'SUPERINDO', 'HYPERMART', 'TRANSMART', 'CARREFOUR',
       'GIANT', 'LOTTE', 'RANCH MARKET', 'HERO', 'YOGYA', 'PASAR', 'GROSIR'] },

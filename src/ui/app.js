@@ -14,7 +14,7 @@ import { cegahDropDiLuar } from './components/dropzone.js';
 import { toastGagal, toastSukses } from './components/toast.js';
 import { on, EVENT } from '../core/events.js';
 import { pantauKoneksiSheets } from '../services/sheets-sync.js';
-import { jalankanMigrasi } from '../data/migrasi.js';
+import { jalankanMigrasi, migrasiKataKunciBawaan } from '../data/migrasi.js';
 
 /**
  * Header hanya dipakai di layar HP; di layar lebar tempatnya diambil alih
@@ -89,6 +89,22 @@ async function mulai() {
     if (migrasi?.dijalankan) {
       toastSukses(`${migrasi.jumlah} transaksi diperiksa ulang terhadap duplikat. `
         + 'Tekan "Kirim semua sekarang" di Pengaturan agar Google Sheet ikut menyesuaikan.');
+    }
+
+    // Menambah kata kunci baru ke kategori bawaan (mis. "BAKSO", "SATE",
+    // "WARTEG" ke Makan & Minum) di kode tidak sampai ke pengguna lama —
+    // semaiBawaan() cuma menyalin sekali saat pertama pakai. Migrasi ini
+    // menutup celah itu; tidak mengubah kategori transaksi mana pun dengan
+    // sendirinya, jadi diberi tahu lewat toast supaya pengguna tahu perlu
+    // menekan "Kelompokkan ulang semua transaksi" di halaman Kategori.
+    const migrasiKataKunci = await migrasiKataKunciBawaan().catch((e) => {
+      console.error('Migrasi kata kunci kategori gagal:', e);
+      return null;
+    });
+    if (migrasiKataKunci?.dijalankan && migrasiKataKunci.jumlahKataKunci) {
+      toastSukses(`${migrasiKataKunci.jumlahKataKunci} kata kunci baru ditambahkan ke `
+        + `${migrasiKataKunci.jumlahKategori} kategori bawaan. Buka halaman Kategori dan tekan `
+        + '"Kelompokkan ulang semua transaksi" agar transaksi lama ikut terkoreksi.');
     }
 
     // Antrean retry Sheets (kalau ada, dari sesi sebelumnya yang gagal

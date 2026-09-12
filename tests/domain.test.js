@@ -229,6 +229,28 @@ test('kata kunci tetap cocok walau kode referensi menempel tanpa spasi ke nama m
   assert.equal(tentukanKategori('TRF DARI BESTINDO BANK DANAMON Dana Dimuka', 5730000, KATEGORI_BAWAAN), 'kat_transfer_masuk');
 });
 
+test('nama masakan jalanan Indonesia dikenali sebagai Makan & Minum, bukan jatuh ke penampung', () => {
+  // Ditemukan lewat audit data nyata: ratusan transaksi QRIS warung dengan
+  // format "TRANSAKSI DEBIT TGL: .. QR ### 00000.00[nama masakan]" (tanpa
+  // spasi sebelum nama merchant — lihat catatan cocokKunci) jatuh ke
+  // "Pengeluaran Lain" karena nama masakannya sendiri tidak dikenal, bukan
+  // nama warung/resto generik seperti "WARUNG"/"CAFE"/"KFC" yang sudah ada.
+  const uji = [
+    'TRANSAKSI DEBIT TGL: 23/08 QR 008 00000.00Iga Bakar',
+    'TRANSAKSI DEBIT TGL: 03/07 QR 008 00000.00BAKSO CIPTA',
+    'TRANSAKSI DEBIT TGL: 06/07 QR 013 00000.00SATE MADURA',
+    'TRANSAKSI DEBIT TGL: 25/07 QR 009 00000.00qr Warteg Aceh',
+    'TRANSAKSI DEBIT TGL: 20/05 00000.00NASI GORENG SPESIAL',
+    'TRANSAKSI DEBIT TGL: 08/07 QR 013 00000.00Pecel lele lamongan',
+    'TRANSAKSI DEBIT TGL: 26/07 QR 014 00000.00SOTO MIE BOGOR',
+    'TRANSAKSI DEBIT TGL: 16/11 QR 916 00000.00Mie Ayam Bang Jali',
+  ];
+  uji.forEach((deskripsi) => {
+    assert.equal(tentukanKategori(deskripsi, -25000, KATEGORI_BAWAAN), 'kat_makan',
+      `"${deskripsi}" seharusnya masuk Makan & Minum, bukan penampung`);
+  });
+});
+
 /* ==========================================================================
    uploadTumpangTindih — deteksi e-statement yang ter-upload dua kali
    ========================================================================== */
