@@ -28,6 +28,8 @@ import * as kategoriRepo from '../../data/repo/categories.js';
 import * as kamusRepo from '../../data/repo/merchant-dictionary.js';
 import { STATUS_COCOK_EMAIL, STATUS_RESOLUSI_EMAIL } from '../../domain/entities.js';
 import { tarikTransaksiEmail, rentangTanggalKandidat } from '../../services/email-feed-sync.js';
+import { eksporUntukTinjauan, terapkanHasilTinjauan } from '../../services/email-review.js';
+import { unduhBlob } from '../../services/export.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
 import { toastSukses, toastGagal } from '../components/toast.js';
 
@@ -66,13 +68,26 @@ export async function mount(wadah) {
   ]);
   tombolTarik.addEventListener('click', () => tarik(tombolTarik));
 
+  const tombolEkspor = h('button.btn-kecil', { type: 'button' }, 'Ekspor untuk Ditinjau');
+  tombolEkspor.addEventListener('click', () => eksporTinjauan(tombolEkspor));
+
+  const inputTinjauan = h('input', {
+    type: 'file', accept: 'application/json,.json', class: 'sr-only',
+    onchange: async (e) => {
+      const file = e.target.files?.[0];
+      e.target.value = '';
+      if (file) await terapkanTinjauan(file);
+    },
+  });
+  const tombolTerapkan = h('button.btn-kecil', { type: 'button', onclick: () => inputTinjauan.click() }, 'Terapkan Hasil Tinjauan');
+
   halaman.append(
     h('.halaman__kepala', null, [
       h('div', null, [
         h('.halaman__judul', { text: 'Transaksi Email' }),
         h('.halaman__ket', { text: 'Notifikasi transaksi dari email bank, dicocokkan otomatis dengan e-statement. Hanya yang belum beres ditampilkan di sini.' }),
       ]),
-      tombolTarik,
+      h('.baris.bungkus', null, [tombolTarik, tombolEkspor, tombolTerapkan, inputTinjauan]),
     ]),
     isi,
   );
@@ -94,6 +109,84 @@ export async function mount(wadah) {
     } finally {
       btn.disabled = false;
       ganti(btn, [ikon('surat', 17), h('span', { text: 'Tarik Email Sekarang' })]);
+    }
+  }
+
+  /**
+   * "Ekspor untuk Ditinjau" — untuk kasus exception-nya terlalu banyak
+   * diklik satu-satu (mis. setelah backfill besar): unduh exception yang
+   * masih terbuka + kandidat e-statement di sekitarnya sebagai satu
+   * berkas JSON, supaya bisa dianalisis di luar aplikasi lalu hasilnya
+   * diterapkan kembali lewat "Terapkan Hasil Tinjauan" di bawah.
+   */
+  async function eksporTinjauan(btn) {
+    btn.disabled = true;
+    try {
+      const data = await eksporUntukTinjauan();
+      if (!data.transaksiEmail.length) {
+        toastGagal('Tidak ada transaksi yang perlu ditinjau saat ini.');
+        return;
+      }
+      const tanggal = new Date().toISOString().slice(0, 10);
+      await unduhBlob(
+        new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),
+        `transaksi-email-tinjauan-${tanggal}.json`,
+      );
+      toastSukses(`${data.transaksiEmail.length} transaksi diekspor untuk ditinjau.`);
+    } catch (e) {
+      toastGagal(`Gagal mengekspor: ${e.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  /**
+   * "Terapkan Hasil Tinjauan" — kebalikan dari ekspor di atas: baca berkas
+   * keputusan ({gmailMessageId, aksi, transaksiCocokId?, alasan?}[]),
+   * ringkas dulu lewat modal konfirmasi (tidak langsung diterapkan diam-
+   * diam), baru panggil terapkanHasilTinjauan() yang menjalankan aksi yang
+   * SAMA PERSIS dengan Tautkan manual/Terima tautan ini/Abaikan manual.
+   */
+  async function terapkanTinjauan(file) {
+    let daftarKeputusan;
+    try {
+      daftarKeputusan = JSON.parse(await file.text());
+    } catch {
+      toastGagal('Berkas tidak bisa dibaca sebagai JSON.');
+      return;
+    }
+    if (!Array.isArray(daftarKeputusan) || !daftarKeputusan.length) {
+      toastGagal('Berkas ini tidak berisi daftar keputusan yang valid.');
+      return;
+    }
+
+    const jumlah = { tautkan: 0, selesai: 0, abaikan: 0, lain: 0 };
+    daftarKeputusan.forEach((k) => {
+      if (k?.aksi === 'tautkan') jumlah.tautkan += 1;
+      else if (k?.aksi === 'selesai') jumlah.selesai += 1;
+      else if (k?.aksi === 'abaikan') jumlah.abaikan += 1;
+      else jumlah.lain += 1;
+    });
+
+    const ya = await konfirmasi({
+      judul: 'Terapkan hasil tinjauan?',
+      pesan: `${daftarKeputusan.length} keputusan akan diterapkan: ${jumlah.tautkan} ditautkan, `
+        + `${jumlah.selesai} ditandai selesai, ${jumlah.abaikan} diabaikan`
+        + (jumlah.lain ? `, ${jumlah.lain} lainnya (akan dilewati kalau tidak valid)` : '')
+        + '. Lanjutkan?',
+      tombolYa: 'Ya, terapkan',
+    });
+    if (!ya) return;
+
+    try {
+      const hasil = await terapkanHasilTinjauan(daftarKeputusan);
+      const ringkasan = `${hasil.ditautkan} ditautkan, ${hasil.diselesaikan} selesai, ${hasil.diabaikan} diabaikan`
+        + (hasil.dilewati.length ? `, ${hasil.dilewati.length} dilewati (lihat konsol untuk sebabnya)` : '');
+      toastSukses(`Diterapkan: ${ringkasan}.`);
+      if (hasil.dilewati.length) console.warn('Keputusan yang dilewati:', hasil.dilewati);
+      emit(EVENT.DATA_BERUBAH, { sumber: 'email-tinjauan' });
+    } catch (e) {
+      toastGagal(`Gagal menerapkan: ${e.message}`);
     }
   }
 
