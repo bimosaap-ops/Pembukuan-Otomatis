@@ -1211,6 +1211,14 @@ function pastikanTransaksiEmail(ss) {
     t.getRange(1, 1, 1, HEADER_TRANSAKSI_EMAIL.length)
       .setFontWeight('bold').setFontColor('#ffffff').setBackground(BIRU_TUA)
       .setVerticalAlignment('middle');
+    // RRN dan Nomor Referensi WAJIB teks, bukan Number: ditemukan lewat data
+    // produksi nyata bahwa Google Sheets diam-diam mengubah nilai digit-murni
+    // (mis. "255515732408") jadi Number begitu ditulis lewat setValues,
+    // sementara yang memuat huruf (mis. "...QRS1141733407") tetap string --
+    // inkonsistensi yang bisa memutus pencocokan referensi di fase
+    // rekonsiliasi nanti. Persis kelas bug yang sama yang sudah diperbaiki
+    // untuk kolom "No. Rekening" tab Transaksi (lihat getSheet()).
+    t.getRange(2, 10, Math.max(t.getMaxRows() - 1, 1), 2).setNumberFormat('@');
     t.setTabColor('#0b8043');
   }
   return t;
@@ -1281,17 +1289,29 @@ const PARSER_VERSION_BCA = 'bca-v1';
 const PARSER_VERSION_PERMATA = 'permata-v1';
 
 /**
- * Parser email "Internet Transaction Journal" BCA (notifikasi transaksi
- * myBCA/kartu, mis. pembayaran QRIS). Dibangun dari SAMPLE ASLI pengguna,
- * bukan tebakan format. Cakupan MVP: template notifikasi pembayaran
- * (uang keluar) sesuai contoh — template BCA lain (transfer masuk, dsb.)
- * belum tentu punya field yang sama dan akan gagal parse sampai sample-nya
- * tersedia (parsedOk:false, bukan hasil yang salah tebak).
+ * Parser email BCA ("Internet Transaction Journal"). Dibangun dari SAMPLE
+ * ASLI pengguna, bukan tebakan format — dua template sejauh ini, dibedakan
+ * lewat field pembeda yang ada di masing-masing:
+ *   - "Jenis Transaksi" -> notifikasi pembayaran (QRIS/kartu, uang keluar).
+ *   - "Jenis Transfer" -> transfer ke sesama rekening BCA (ditemukan lewat
+ *     verifikasi produksi pengguna, bukan sample yang diminta duluan --
+ *     teks aslinya tertangkap apa adanya di _EmailMasuk sebelum parser ini
+ *     ada, jadi dipakai langsung, bukan ditebak).
+ * Template BCA lain (transfer masuk, dsb.) belum tentu berbagi field yang
+ * sama dan akan gagal parse sampai sample/teks aslinya tersedia
+ * (parsedOk:false, bukan hasil yang salah tebak).
  *
  * FUNGSI MURNI.
  */
 function parseEmailBCA(bodyText) {
   const body = String(bodyText || '');
+  if (ekstrakField(body, 'Jenis Transaksi')) return parseEmailBCAPembayaran(body);
+  if (ekstrakField(body, 'Jenis Transfer')) return parseEmailBCATransferSesamaBCA(body);
+  return { parsedOk: false, error: 'Template email BCA tidak dikenali (bukan notifikasi pembayaran maupun transfer sesama BCA)' };
+}
+
+/** Sub-template: notifikasi pembayaran myBCA (QRIS/kartu). */
+function parseEmailBCAPembayaran(body) {
   const tanggalTransaksi = ekstrakField(body, 'Tanggal Transaksi');
   const jenisTransaksi = ekstrakField(body, 'Jenis Transaksi');
   const pembayaranKe = ekstrakField(body, 'Pembayaran Ke');
@@ -1322,6 +1342,38 @@ function parseEmailBCA(bodyText) {
     acquirer: pengakuisisi || null,
     location: lokasiMerchant || null,
     rrn: rrn || null,
+    refNo: nomorReferensi || null,
+    parserVersion: PARSER_VERSION_BCA,
+    confidence: 'high',
+  };
+}
+
+/** Sub-template: transfer ke sesama rekening BCA (bukan pembayaran merchant). */
+function parseEmailBCATransferSesamaBCA(body) {
+  const tanggalTransaksi = ekstrakField(body, 'Tanggal Transaksi');
+  const jenisTransfer = ekstrakField(body, 'Jenis Transfer');
+  const namaPenerima = ekstrakField(body, 'Nama Penerima');
+  const nominalTujuan = ekstrakField(body, 'Nominal Tujuan');
+  const nomorReferensi = ekstrakField(body, 'Nomor Referensi');
+
+  const eventTime = parseTanggalJamGabungan(tanggalTransaksi);
+  const amount = parseNominalIDR(nominalTujuan);
+
+  if (!eventTime || !amount || !namaPenerima) {
+    return { parsedOk: false, error: 'Field minimum (tanggal transaksi/nominal tujuan/nama penerima) tidak ditemukan di isi email' };
+  }
+
+  return {
+    parsedOk: true,
+    bank: 'BCA',
+    eventTime,
+    amount,
+    direction: 'debit', // transfer KELUAR ke rekening BCA lain
+    merchantRaw: namaPenerima,
+    jenisTransaksi: jenisTransfer || null,
+    acquirer: null,
+    location: null,
+    rrn: null, // template ini tidak menyertakan RRN
     refNo: nomorReferensi || null,
     parserVersion: PARSER_VERSION_BCA,
     confidence: 'high',

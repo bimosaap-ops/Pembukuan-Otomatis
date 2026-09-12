@@ -76,6 +76,35 @@ Ketentuan                   : -
 Semoga informasi ini bermanfaat bagi Anda.
 `;
 
+// Sub-template kedua BCA: transfer ke sesama rekening BCA (field pembeda
+// "Jenis Transfer", bukan "Jenis Transaksi"). Ditemukan lewat verifikasi
+// produksi pengguna sendiri terhadap Gmail asli -- teks di bawah adalah
+// ISI EMAIL ASLI yang tertangkap apa adanya di tab _EmailMasuk (bukan
+// sample yang diminta duluan), nama penerima & nomor rekening tujuan
+// disamarkan di sini karena bukan bagian yang diuji.
+const EMAIL_BCA_TRANSFER = `
+Hai BIMO SAPUTRO,
+Anda baru saja melakukan transaksi dengan menggunakan fasilitas myBCA.
+Berikut ini adalah detail transaksi Anda :
+Status : Berhasil
+Tanggal Transaksi : 11 Sep 2026 23:51:56
+Jenis Transfer : Transfer ke rekening BCA
+Dari Rekening : 6090xxxx94
+Mata Uang Asal : IDR - Indonesian Rupiah
+Rekening Tujuan : 1640XXXX93
+Mata Uang Tujuan : IDR - Indonesian Rupiah
+Nama Penerima : PENERIMA CONTOH
+Nominal Tujuan : IDR 3,000,000.00
+Berita : -
+Nomor Referensi : 82810E1E-936E-4C63-8C72-AD6AC4496318
+Mohon simpan email ini sebagai referensi transaksi Anda.
+Apabila Anda tidak mengenal transaksi ini, segera hubungi Halo BCA di
+1500888.
+
+Hormat Kami,
+PT Bank Central Asia Tbk
+`;
+
 test('parseEmailBCA: sample asli "Internet Transaction Journal" terparse lengkap', () => {
   const hasil = parseEmailBCA(EMAIL_BCA);
   assert.equal(hasil.parsedOk, true);
@@ -119,6 +148,40 @@ test('parseEmailPermata: sample asli "Transfer - Other Bank BI-FAST" terparse le
   assert.equal(t.getHours(), 10);
   assert.equal(t.getMinutes(), 13);
   assert.equal(t.getSeconds(), 35);
+});
+
+test('parseEmailBCA: sub-template transfer sesama BCA (field "Jenis Transfer") terparse benar', () => {
+  const hasil = parseEmailBCA(EMAIL_BCA_TRANSFER);
+  assert.equal(hasil.parsedOk, true);
+  assert.equal(hasil.bank, 'BCA');
+  assert.equal(hasil.amount, 3000000);
+  assert.equal(hasil.direction, 'debit');
+  assert.equal(hasil.merchantRaw, 'PENERIMA CONTOH');
+  assert.equal(hasil.jenisTransaksi, 'Transfer ke rekening BCA');
+  assert.equal(hasil.acquirer, null, 'template transfer tidak punya field acquirer');
+  assert.equal(hasil.location, null);
+  assert.equal(hasil.rrn, null, 'template transfer tidak menyertakan RRN sama sekali');
+  assert.equal(hasil.refNo, '82810E1E-936E-4C63-8C72-AD6AC4496318');
+  assert.equal(hasil.parserVersion, 'bca-v1');
+
+  const t = hasil.eventTime;
+  assert.equal(t.getFullYear(), 2026);
+  assert.equal(t.getMonth(), 8);
+  assert.equal(t.getDate(), 11);
+  assert.equal(t.getHours(), 23);
+  assert.equal(t.getMinutes(), 51);
+  assert.equal(t.getSeconds(), 56);
+});
+
+test('parseEmailBCA: dispatcher memilih sub-template pembayaran vs transfer dengan benar', () => {
+  assert.equal(parseEmailBCA(EMAIL_BCA).jenisTransaksi, 'Pembayaran QRIS');
+  assert.equal(parseEmailBCA(EMAIL_BCA_TRANSFER).jenisTransaksi, 'Transfer ke rekening BCA');
+});
+
+test('parseEmailBCA: template tak dikenal (bukan keduanya) -> parsedOk:false dengan pesan jelas', () => {
+  const hasil = parseEmailBCA('Email BCA yang formatnya belum pernah dilihat sama sekali.');
+  assert.equal(hasil.parsedOk, false);
+  assert.match(hasil.error, /tidak dikenali/);
 });
 
 test('parseEmailBCA: tahan terhadap perataan spasi tunggal (bukan kolom rata kanan)', () => {
