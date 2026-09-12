@@ -82,6 +82,31 @@ const ANGGARAN_SHEET_NAME = 'Anggaran';
  */
 const CARI_TRANSAKSI_SHEET_NAME = 'Cari Transaksi';
 /**
+ * Tab input pengguna: pola pengirim/subjek email transaksi bank yang mau
+ * dipantau. Dibuat sekali, tidak pernah dibangun ulang — lihat
+ * pastikanKonfigurasiEmail(). Kosong secara sengaja saat pertama dibuat:
+ * pola pengirim asli tidak boleh ditebak, harus diisi pengguna dari email
+ * transaksi sungguhan yang mereka terima.
+ */
+const KONFIGURASI_EMAIL_SHEET_NAME = 'Konfigurasi Email';
+/**
+ * Tab tersembunyi berisi email transaksi mentah yang berhasil diklasifikasi
+ * — lihat pastikanEmailMasuk()/pollEmailTransaksi(). Kunci idempotensi:
+ * kolom A (Gmail Message ID) diperiksa dulu sebelum baris ditambahkan.
+ */
+const EMAIL_MASUK_SHEET_NAME = '_EmailMasuk';
+const HEADER_EMAIL_MASUK = ['Gmail Message ID', 'Perkiraan Bank', 'Dari', 'Subjek', 'Diterima Pada', 'Isi Dipotong', 'Berhasil Diparse', 'Pesan Error', 'Dibuat Pada'];
+/** Batas potong isi email mentah yang disimpan (karakter) — lihat PRD §12. */
+const BATAS_ISI_EMAIL = 2000;
+/** Label Gmail penanda "sudah diperiksa" — dasar idempotensi pollEmailTransaksi(). */
+const LABEL_EMAIL_DIPROSES = 'Pembukuan/Diproses';
+/** Kata di subjek yang membuat email dilewati tanpa diperiksa lebih lanjut (PRD §10.2). */
+const KATA_KECUALI_EMAIL = ['OTP', 'PROMO', 'PROMOSI', 'NEWSLETTER', 'IKLAN', 'ADVERTISEMENT'];
+/** Jendela pencarian mundur tiap jalan — self-healing kalau ada run yang terlewat (PRD §9.5). */
+const JENDELA_PENCARIAN_EMAIL_HARI = 3;
+/** Batas jumlah thread diproses per jalan, menjaga kuota eksekusi Apps Script. */
+const MAKS_THREAD_EMAIL_PER_JALAN = 50;
+/**
  * Dinaikkan setiap kali tata letak/rumus Dashboard ATAU Dashboard Full
  * berubah — keduanya dibangun ulang bersama dalam satu versi. Sheet yang
  * dibangun versi lama otomatis dibangun ulang saat POST berikutnya — tanpa
@@ -132,6 +157,7 @@ function onOpen() {
     .createMenu('Pembukuan')
     .addItem('Bangun ulang Dashboard & rapikan data', 'bangunUlangDashboard')
     .addItem('Diagnosa', 'diagnosaDashboard')
+    .addItem('Proses Email Transaksi Sekarang', 'prosesEmailSekarang')
     .addToUi();
 }
 
@@ -150,6 +176,7 @@ function sheetData(ss) {
   const bawaan = [
     DASHBOARD_SHEET_NAME, DASHBOARD_FULL_SHEET_NAME,
     ANGGARAN_SHEET_NAME, CARI_TRANSAKSI_SHEET_NAME, ARSIP_SHEET_NAME,
+    KONFIGURASI_EMAIL_SHEET_NAME, EMAIL_MASUK_SHEET_NAME,
   ];
   const lain = ss.getSheets().filter((s) => bawaan.indexOf(s.getName()) === -1);
   return lain.length ? lain[0] : ss.insertSheet(DATA_SHEET_NAME, 0);
@@ -369,6 +396,8 @@ function pastikanSemuaTab(ss, namaSheetData) {
 
   pastikanAnggaran(ss, stat);
   pastikanCariTransaksi(ss);
+  pastikanKonfigurasiEmail(ss);
+  pastikanEmailMasuk(ss);
 
   const anggaranSh = ss.getSheetByName(ANGGARAN_SHEET_NAME);
   const anggaranBaris = anggaranSh ? Math.max(anggaranSh.getLastRow() - 1, 0) : 0;
@@ -1115,6 +1144,181 @@ function pastikanCariTransaksi(ss) {
     + `"Tidak ada transaksi cocok")`);
   c.getRange(`A${isi}:A${akhir}`).setNumberFormat('yyyy-mm-dd');
   c.getRange(`E${isi}:G${akhir}`).setNumberFormat(RP);
+}
+
+/**
+ * Tab input pengguna: pola pengirim/subjek email transaksi bank. Dibuat
+ * sekali, tidak pernah dibangun ulang/dihapus — sama seperti Anggaran.
+ * Sengaja dibuat KOSONG: pola pengirim asli (mis. alamat noreply BCA/
+ * Permata) tidak boleh ditebak lewat kode, harus diisi pengguna dari email
+ * transaksi sungguhan yang mereka terima sendiri.
+ */
+function pastikanKonfigurasiEmail(ss) {
+  if (ss.getSheetByName(KONFIGURASI_EMAIL_SHEET_NAME)) return;
+
+  const k = ss.insertSheet(KONFIGURASI_EMAIL_SHEET_NAME, ss.getNumSheets());
+  k.appendRow(['Pola Pengirim', 'Pola Subjek', 'Bank', 'Aktif']);
+  k.setFrozenRows(1);
+  k.getRange(1, 1, 1, 4)
+    .setFontWeight('bold').setFontColor('#ffffff').setBackground(BIRU_TUA)
+    .setVerticalAlignment('middle');
+  k.setColumnWidths(1, 2, 220);
+  k.setColumnWidth(3, 100);
+  k.setColumnWidth(4, 80);
+  k.getRange('A2').setValue('(isi pola pengirim/subjek email transaksi bank Anda di sini, lalu jalankan menu "Proses Email Transaksi Sekarang")');
+  k.getRange('A2:D2').setFontStyle('italic').setFontColor('#999999');
+  k.setTabColor('#0b8043');
+}
+
+/**
+ * Tab tersembunyi berisi email transaksi mentah yang lolos klasifikasi
+ * (lihat klasifikasikanEmail/pollEmailTransaksi). Mengikuti pola penjaga
+ * arsipkan()/_Arsip: dibuat sekali, disembunyikan, hanya ditambah baris.
+ */
+function pastikanEmailMasuk(ss) {
+  let m = ss.getSheetByName(EMAIL_MASUK_SHEET_NAME);
+  if (!m) {
+    m = ss.insertSheet(EMAIL_MASUK_SHEET_NAME, ss.getNumSheets());
+    m.appendRow(HEADER_EMAIL_MASUK);
+    m.setFrozenRows(1);
+    m.hideSheet();
+  }
+  return m;
+}
+
+/**
+ * Klasifikasi satu email: transaction_email (cocok pola aktif di
+ * Konfigurasi Email), non_transaction (subjek memuat kata kecuali — PRD
+ * §10.2), atau unknown (tidak cocok pola mana pun, mungkin format bank yang
+ * belum dikenal — sengaja TIDAK dianggap non_transaction, lihat
+ * pollEmailTransaksi soal kenapa ini penting untuk idempotensi).
+ *
+ * FUNGSI MURNI — tidak menyentuh GmailApp/Sheets sama sekali, supaya bisa
+ * diuji tanpa email sungguhan (mengikuti disiplin pure/impure split yang
+ * sudah dipakai di seluruh berkas ini, mis. tujuan()/statistikData()).
+ *
+ * @param {string} dari header "From" email
+ * @param {string} subjek header "Subject" email
+ * @param {Array<{polaPengirim:string, polaSubjek:string, bank:string, aktif:boolean}>} konfigurasi
+ * @returns {{outcome:'transaction_email'|'non_transaction'|'unknown', bank:?string}}
+ */
+function klasifikasikanEmail(dari, subjek, konfigurasi) {
+  const dariU = String(dari || '').toUpperCase();
+  const subjekU = String(subjek || '').toUpperCase();
+
+  if (KATA_KECUALI_EMAIL.some((kw) => subjekU.indexOf(kw) !== -1)) {
+    return { outcome: 'non_transaction', bank: null };
+  }
+
+  const cocok = (konfigurasi || []).find((baris) => {
+    if (baris.aktif === false) return false;
+    const polaPengirim = String(baris.polaPengirim || '').trim();
+    const polaSubjek = String(baris.polaSubjek || '').trim();
+    if (!polaPengirim && !polaSubjek) return false;
+    const pengirimCocok = !polaPengirim || dariU.indexOf(polaPengirim.toUpperCase()) !== -1;
+    const subjekCocok = !polaSubjek || subjekU.indexOf(polaSubjek.toUpperCase()) !== -1;
+    return pengirimCocok && subjekCocok;
+  });
+
+  if (cocok) return { outcome: 'transaction_email', bank: cocok.bank || null };
+  return { outcome: 'unknown', bank: null };
+}
+
+/**
+ * Ambil pola aktif dari tab Konfigurasi Email sebagai array biasa, siap
+ * dipakai klasifikasikanEmail(). Terpisah dari pollEmailTransaksi() supaya
+ * pemanggilan Sheets (impure) tidak bercampur dengan logika klasifikasi
+ * (murni) di satu fungsi yang sama.
+ */
+function bacaKonfigurasiEmail(ss) {
+  const sh = ss.getSheetByName(KONFIGURASI_EMAIL_SHEET_NAME);
+  if (!sh) return [];
+  const last = sh.getLastRow();
+  if (last <= 1) return [];
+  return sh.getRange(2, 1, last - 1, 4).getValues()
+    .filter((r) => String(r[0] || '').trim() || String(r[1] || '').trim())
+    .map((r) => ({ polaPengirim: r[0], polaSubjek: r[1], bank: r[2], aktif: r[3] !== false }));
+}
+
+/**
+ * Poll Gmail untuk email transaksi baru. Dipanggil manual lewat menu
+ * "Proses Email Transaksi Sekarang" (verifikasi sebelum trigger otomatis
+ * dipasang — lihat rencana implementasi) atau lewat time-driven trigger
+ * setelah tahap itu lulus.
+ *
+ * Idempotensi lewat label Gmail LABEL_EMAIL_DIPROSES, BUKAN history_id/
+ * cursor — Apps Script time-driven trigger tidak punya "watch expiration"
+ * ala Pub/Sub, jadi seluruh mekanisme renewal di PRD §9.4 tidak relevan di
+ * sini. Thread HANYA dilabeli kalau SEMUA pesan di dalamnya tuntas
+ * diklasifikasi (transaction_email tersimpan, atau non_transaction
+ * dipastikan bukan transaksi) — pesan berstatus "unknown" (format belum
+ * dikenal) sengaja TIDAK menahan label, supaya begitu pengguna menambah
+ * pola baru di Konfigurasi Email, email lama yang sebelumnya tak dikenal
+ * ikut terjaring run berikutnya (dibatasi JENDELA_PENCARIAN_EMAIL_HARI,
+ * bukan retensi tanpa batas).
+ *
+ * @returns {{diproses:number, ditemukan:number, alasan:?string}}
+ */
+function pollEmailTransaksi() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  pastikanKonfigurasiEmail(ss);
+  const emailMasuk = pastikanEmailMasuk(ss);
+
+  const konfigurasi = bacaKonfigurasiEmail(ss);
+  if (!konfigurasi.length) {
+    return { diproses: 0, ditemukan: 0, alasan: 'Konfigurasi Email masih kosong — isi pola pengirim/subjek dulu.' };
+  }
+
+  let label = GmailApp.getUserLabelByName(LABEL_EMAIL_DIPROSES);
+  if (!label) label = GmailApp.createLabel(LABEL_EMAIL_DIPROSES);
+
+  const idSudahAda = new Set(
+    emailMasuk.getLastRow() > 1
+      ? emailMasuk.getRange(2, 1, emailMasuk.getLastRow() - 1, 1).getValues().map((r) => String(r[0]))
+      : [],
+  );
+
+  const query = `-label:"${LABEL_EMAIL_DIPROSES}" newer_than:${JENDELA_PENCARIAN_EMAIL_HARI}d`;
+  const threads = GmailApp.search(query, 0, MAKS_THREAD_EMAIL_PER_JALAN);
+
+  const barisBaru = [];
+  let diproses = 0;
+  threads.forEach((thread) => {
+    let semuaTuntas = true;
+    thread.getMessages().forEach((msg) => {
+      const id = msg.getId();
+      if (idSudahAda.has(id)) return;
+
+      const hasil = klasifikasikanEmail(msg.getFrom(), msg.getSubject(), konfigurasi);
+      if (hasil.outcome === 'transaction_email') {
+        const isi = msg.getPlainBody().slice(0, BATAS_ISI_EMAIL);
+        barisBaru.push([id, hasil.bank || '', msg.getFrom(), msg.getSubject(), msg.getDate(), isi, '', '', new Date()]);
+        idSudahAda.add(id);
+        diproses += 1;
+      } else if (hasil.outcome === 'unknown') {
+        semuaTuntas = false;
+      }
+      // non_transaction: dianggap tuntas, tidak menahan label thread.
+    });
+    if (semuaTuntas) thread.addLabel(label);
+  });
+
+  if (barisBaru.length) {
+    emailMasuk.getRange(emailMasuk.getLastRow() + 1, 1, barisBaru.length, HEADER_EMAIL_MASUK.length)
+      .setValues(barisBaru);
+  }
+
+  return { diproses, ditemukan: threads.length, alasan: null };
+}
+
+/** Menu "Proses Email Transaksi Sekarang" — jalan manual, laporkan hasilnya. */
+function prosesEmailSekarang() {
+  const hasil = pollEmailTransaksi();
+  const ui = SpreadsheetApp.getUi();
+  const pesan = hasil.alasan
+    ? hasil.alasan
+    : `${hasil.diproses} email transaksi baru disimpan ke tab "_EmailMasuk" (dari ${hasil.ditemukan} thread diperiksa).`;
+  ui.alert('Proses Email Transaksi', pesan, ui.ButtonSet.OK);
 }
 
 /**
