@@ -167,6 +167,8 @@ function onOpen() {
     .addItem('Bangun ulang Dashboard & rapikan data', 'bangunUlangDashboard')
     .addItem('Diagnosa', 'diagnosaDashboard')
     .addItem('Proses Email Transaksi Sekarang', 'prosesEmailSekarang')
+    .addItem('Aktifkan Pemantauan Email Transaksi', 'aktifkanPemantauanEmail')
+    .addItem('Nonaktifkan Pemantauan Email', 'nonaktifkanPemantauanEmail')
     .addToUi();
 }
 
@@ -1673,6 +1675,82 @@ function reparseEmailGagal() {
   return { diperbaiki };
 }
 
+/**
+ * Susun baris "Transaksi Email" jadi objek datar siap-JSON untuk
+ * doPost{tarikTransaksiEmail}, menyaring yang "Dibuat Pada"-nya sesudah
+ * `sejakValid` (null berarti tarik semua -- dipakai PWA pada pull pertama).
+ *
+ * Dipisah dari doPost supaya bisa diuji lewat tiruan Sheets tanpa perlu
+ * mensimulasikan payload HTTP/JSON.parse sekaligus.
+ *
+ * @param {Sheet} t hasil pastikanTransaksiEmail(ss)
+ * @param {?Date} sejakValid
+ * @returns {Array<Object>}
+ */
+function bangunBarisTarikTransaksiEmail(t, sejakValid) {
+  const last = t.getLastRow();
+  const baris = [];
+  if (last <= 1) return baris;
+
+  const nilai = t.getRange(2, 1, last - 1, HEADER_TRANSAKSI_EMAIL.length).getValues();
+  nilai.forEach((r) => {
+    if (!r[0]) return; // baris kosong (mis. bekas rentang format tanpa data)
+    const dibuatPada = r[13];
+    if (sejakValid && dibuatPada instanceof Date && dibuatPada <= sejakValid) return;
+
+    baris.push({
+      gmailMessageId: String(r[0]),
+      bank: r[1] || '',
+      waktuTransaksi: r[2] instanceof Date ? r[2].toISOString() : r[2],
+      nominal: Number(r[3]) || 0,
+      arah: r[4] || '',
+      merchantMentah: r[5] || '',
+      jenisTransaksi: r[6] || '',
+      acquirer: r[7] || '',
+      lokasi: r[8] || '',
+      rrn: r[9] ? String(r[9]) : null,
+      nomorReferensi: r[10] ? String(r[10]) : null,
+      versiParser: r[11] || '',
+      confidence: r[12] || '',
+      dibuatPada: dibuatPada instanceof Date ? dibuatPada.toISOString() : dibuatPada,
+    });
+  });
+  return baris;
+}
+
+/** Menit antar pemeriksaan email otomatis. Apps Script cuma menerima 1/5/10/15/30. */
+const JEDA_PEMANTAUAN_EMAIL_MENIT = 5;
+
+/** Hapus trigger pollEmailTransaksi yang mungkin sudah terpasang -- mencegah dobel kalau menu ditekan berkali-kali. */
+function hapusTriggerEmail() {
+  ScriptApp.getProjectTriggers()
+    .filter((t) => t.getHandlerFunction() === 'pollEmailTransaksi')
+    .forEach((t) => ScriptApp.deleteTrigger(t));
+}
+
+/**
+ * Menu "Aktifkan Pemantauan Email Transaksi" — memasang time-driven trigger.
+ * Baru aman dipasang SETELAH "Proses Email Transaksi Sekarang" manual
+ * terbukti jalan benar (lihat rencana implementasi Fase 1) — otorisasi
+ * Gmail pertama kali sebaiknya lewat jalur manual yang bisa diawasi
+ * langsung, bukan lewat trigger yang jalan sendiri di latar belakang.
+ */
+function aktifkanPemantauanEmail() {
+  hapusTriggerEmail();
+  ScriptApp.newTrigger('pollEmailTransaksi').timeBased().everyMinutes(JEDA_PEMANTAUAN_EMAIL_MENIT).create();
+  SpreadsheetApp.getUi().alert(
+    'Pemantauan Email Transaksi',
+    `Trigger otomatis terpasang -- email transaksi akan diperiksa tiap ${JEDA_PEMANTAUAN_EMAIL_MENIT} menit.`,
+    SpreadsheetApp.getUi().ButtonSet.OK,
+  );
+}
+
+/** Menu "Nonaktifkan Pemantauan Email". */
+function nonaktifkanPemantauanEmail() {
+  hapusTriggerEmail();
+  SpreadsheetApp.getUi().alert('Pemantauan Email Transaksi', 'Trigger otomatis dihentikan.', SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
 /** Menu "Proses Email Transaksi Sekarang" — jalan manual, laporkan hasilnya. */
 function prosesEmailSekarang() {
   const hasil = pollEmailTransaksi();
@@ -1885,6 +1963,25 @@ function doPost(e) {
       return json(Object.assign(tujuan(ssPing, getSheet()), {ok:true, ping:true}));
     } catch (err) {
       return json({ok:false, error: String(err && err.message || err)});
+    }
+  }
+
+  // Tarik transaksi email juga dijawab SEBELUM kunci diambil -- sama seperti
+  // ping, ini murni baca. PWA memanggilnya dengan `sejak` (checkpoint waktu
+  // dari respons SEBELUMNYA, bukan jam lokal PWA sendiri, supaya tidak
+  // meleset kalau jam perangkat dan jam server Apps Script berbeda) dan
+  // mendapat balik baris "Transaksi Email" yang lebih baru dari itu, plus
+  // `sekarang` untuk dipakai sebagai checkpoint pemanggilan berikutnya.
+  if (data.tarikTransaksiEmail === true) {
+    try {
+      const ssTarik = SpreadsheetApp.getActiveSpreadsheet();
+      const t = pastikanTransaksiEmail(ssTarik);
+      const sejak = data.sejak ? new Date(data.sejak) : null;
+      const sejakValid = sejak && !isNaN(sejak.getTime()) ? sejak : null;
+      const baris = bangunBarisTarikTransaksiEmail(t, sejakValid);
+      return json({ ok: true, baris, sekarang: new Date().toISOString() });
+    } catch (err) {
+      return json({ ok: false, error: String(err && err.message || err) });
     }
   }
 
