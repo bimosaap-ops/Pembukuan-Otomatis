@@ -174,6 +174,7 @@ function onOpen() {
     .addItem('Bangun ulang Dashboard & rapikan data', 'bangunUlangDashboard')
     .addItem('Diagnosa', 'diagnosaDashboard')
     .addItem('Proses Email Transaksi Sekarang', 'prosesEmailSekarang')
+    .addItem('Tarik Email Lama (Backfill)', 'backfillEmailTransaksi')
     .addItem('Aktifkan Pemantauan Email Transaksi', 'aktifkanPemantauanEmail')
     .addItem('Nonaktifkan Pemantauan Email', 'nonaktifkanPemantauanEmail')
     .addToUi();
@@ -1593,10 +1594,36 @@ function pollEmailTransaksi() {
   const query = `-label:"${LABEL_EMAIL_DIPROSES}" newer_than:${JENDELA_PENCARIAN_EMAIL_HARI}d`;
   const threads = GmailApp.search(query, 0, MAKS_THREAD_EMAIL_PER_JALAN);
 
+  const { barisEmailMasuk, barisTransaksiEmail, diproses, diparsing } =
+    prosesThreadEmailTransaksi(threads, konfigurasi, idSudahAda, label);
+
+  tulisHasilEmailTransaksi(emailMasuk, transaksiEmail, barisEmailMasuk, barisTransaksiEmail);
+
+  const hasil = { diproses, ditemukan: threads.length, diparsing, diperbaiki, alasan: null };
+  catatLogEmail(ss, hasil);
+  return hasil;
+}
+
+/**
+ * Inti klasifikasi+parsing satu kumpulan thread Gmail -- diekstrak dari
+ * pollEmailTransaksi() supaya dipakai ulang APA ADANYA oleh
+ * jalankanBackfillEmail() (menu "Tarik Email Lama"), bukan disalin. Kedua
+ * pemanggil beda cuma pada QUERY pencarian Gmail-nya (jendela mundur
+ * beberapa hari vs "sejak tanggal X"), bukan pada cara mengklasifikasi/
+ * memparsing/melabeli -- jadi logikanya sendiri sengaja satu tempat.
+ *
+ * `idSudahAda` diubah DI TEMPAT (menambah id yang baru diproses) --
+ * pemanggil sudah tahu ini karena harus membangunnya lebih dulu dari
+ * _EmailMasuk yang ada.
+ *
+ * @returns {{barisEmailMasuk:Array, barisTransaksiEmail:Array, diproses:number, diparsing:number}}
+ */
+function prosesThreadEmailTransaksi(threads, konfigurasi, idSudahAda, label) {
   const barisEmailMasuk = [];
   const barisTransaksiEmail = [];
   let diproses = 0;
   let diparsing = 0;
+
   threads.forEach((thread) => {
     let semuaTuntas = true;
     thread.getMessages().forEach((msg) => {
@@ -1633,6 +1660,11 @@ function pollEmailTransaksi() {
     if (semuaTuntas) thread.addLabel(label);
   });
 
+  return { barisEmailMasuk, barisTransaksiEmail, diproses, diparsing };
+}
+
+/** Tulis hasil prosesThreadEmailTransaksi() ke kedua tab -- dipakai ulang oleh backfill. */
+function tulisHasilEmailTransaksi(emailMasuk, transaksiEmail, barisEmailMasuk, barisTransaksiEmail) {
   if (barisEmailMasuk.length) {
     emailMasuk.getRange(emailMasuk.getLastRow() + 1, 1, barisEmailMasuk.length, HEADER_EMAIL_MASUK.length)
       .setValues(barisEmailMasuk);
@@ -1641,10 +1673,110 @@ function pollEmailTransaksi() {
     transaksiEmail.getRange(transaksiEmail.getLastRow() + 1, 1, barisTransaksiEmail.length, HEADER_TRANSAKSI_EMAIL.length)
       .setValues(barisTransaksiEmail);
   }
+}
 
-  const hasil = { diproses, ditemukan: threads.length, diparsing, diperbaiki, alasan: null };
-  catatLogEmail(ss, hasil);
-  return hasil;
+/**
+ * Batas thread per jalan BACKFILL -- jauh lebih besar dari
+ * MAKS_THREAD_EMAIL_PER_JALAN karena ini dipanggil manual sesekali (bukan
+ * tiap 5 menit oleh trigger), tapi tetap dibatasi supaya satu klik menu
+ * tidak melebihi batas eksekusi Apps Script (~6 menit di akun pribadi).
+ * Kalau riwayat Gmail-nya lebih banyak dari ini, pengguna cukup menekan
+ * menu yang sama lagi -- thread yang sudah diberi label dilewati otomatis
+ * lewat query `-label:...`, jadi aman diulang.
+ */
+const MAKS_THREAD_BACKFILL_PER_JALAN = 300;
+
+/**
+ * Menu "Tarik Email Lama (Backfill)" -- untuk email transaksi yang SUDAH
+ * ADA di Gmail sebelum pemantauan otomatis dipasang (mis. transaksi dari
+ * awal tahun). Beda dari pollEmailTransaksi() yang sengaja membatasi
+ * pencarian ke JENDELA_PENCARIAN_EMAIL_HARI hari terakhir supaya polling
+ * tiap 5 menit tetap murah -- riwayat lama butuh sekali jalan yang jauh
+ * lebih luas, jadi dipisah jadi fungsi sendiri dan TIDAK pernah dipanggil
+ * trigger otomatis.
+ */
+function backfillEmailTransaksi() {
+  const ui = SpreadsheetApp.getUi();
+  const jawab = ui.prompt(
+    'Tarik Email Lama (Backfill)',
+    'Tarik email transaksi sejak tanggal berapa? Format: YYYY-MM-DD (mis. 2026-01-01)',
+    ui.ButtonSet.OK_CANCEL,
+  );
+  if (jawab.getSelectedButton() !== ui.Button.OK) return;
+
+  const sejakTanggal = jawab.getResponseText().trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sejakTanggal)) {
+    ui.alert('Format tanggal salah. Gunakan YYYY-MM-DD, misalnya 2026-01-01.');
+    return;
+  }
+
+  const hasil = jalankanBackfillEmail(sejakTanggal);
+  if (hasil.alasan) {
+    ui.alert('Tarik Email Lama (Backfill)', hasil.alasan, ui.ButtonSet.OK);
+    return;
+  }
+
+  const lanjutan = hasil.masihAda
+    ? ` Masih ada thread yang belum diperiksa (batas ${MAKS_THREAD_BACKFILL_PER_JALAN} per jalan) -- `
+      + 'jalankan menu ini sekali lagi dengan tanggal yang SAMA untuk melanjutkan; '
+      + 'thread yang sudah diberi label dilewati otomatis, jadi aman diulang.'
+    : ' Seluruh thread sejak tanggal itu sudah diperiksa.';
+  ui.alert(
+    'Tarik Email Lama (Backfill)',
+    `${hasil.diproses} email transaksi baru disimpan (dari ${hasil.ditemukan} thread diperiksa sejak ${sejakTanggal}), `
+      + `${hasil.diparsing} berhasil diparse.${lanjutan}`,
+    ui.ButtonSet.OK,
+  );
+}
+
+/**
+ * Inti backfill, dipisah dari menu-nya (backfillEmailTransaksi) supaya bisa
+ * diuji lewat harness Code.gs tanpa SpreadsheetApp.getUi() sungguhan.
+ *
+ * @param {string} sejakTanggal format 'YYYY-MM-DD'
+ * @returns {{diproses:number, ditemukan:number, diparsing:number, masihAda:boolean, alasan:?string}}
+ */
+function jalankanBackfillEmail(sejakTanggal) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  pastikanKonfigurasiEmail(ss);
+  const emailMasuk = pastikanEmailMasuk(ss);
+  const transaksiEmail = pastikanTransaksiEmail(ss);
+
+  const konfigurasi = bacaKonfigurasiEmail(ss);
+  if (!konfigurasi.length) {
+    const hasilKosong = {
+      diproses: 0, ditemukan: 0, diparsing: 0, masihAda: false,
+      alasan: 'Konfigurasi Email masih kosong — isi pola pengirim/subjek dulu.',
+    };
+    return hasilKosong;
+  }
+
+  let label = GmailApp.getUserLabelByName(LABEL_EMAIL_DIPROSES);
+  if (!label) label = GmailApp.createLabel(LABEL_EMAIL_DIPROSES);
+
+  const idSudahAda = new Set(
+    emailMasuk.getLastRow() > 1
+      ? emailMasuk.getRange(2, 1, emailMasuk.getLastRow() - 1, 1).getValues().map((r) => String(r[0]))
+      : [],
+  );
+
+  // Gmail menerima format tanggal YYYY/MM/DD pada operator "after:", bukan
+  // YYYY-MM-DD yang diminta lewat prompt (lebih akrab utk pengguna Indonesia).
+  const query = `-label:"${LABEL_EMAIL_DIPROSES}" after:${sejakTanggal.replace(/-/g, '/')}`;
+  const threads = GmailApp.search(query, 0, MAKS_THREAD_BACKFILL_PER_JALAN);
+
+  const { barisEmailMasuk, barisTransaksiEmail, diproses, diparsing } =
+    prosesThreadEmailTransaksi(threads, konfigurasi, idSudahAda, label);
+
+  tulisHasilEmailTransaksi(emailMasuk, transaksiEmail, barisEmailMasuk, barisTransaksiEmail);
+
+  const masihAda = threads.length === MAKS_THREAD_BACKFILL_PER_JALAN;
+  catatLogEmail(ss, {
+    diproses, ditemukan: threads.length, diparsing, diperbaiki: 0,
+    alasan: `Backfill sejak ${sejakTanggal}${masihAda ? ' (masih berlanjut)' : ' (selesai)'}`,
+  });
+
+  return { diproses, ditemukan: threads.length, diparsing, masihAda, alasan: null };
 }
 
 /**
