@@ -131,15 +131,26 @@ export function cetakHalaman() {
    Backup & Restore
    ========================================================================== */
 
-export const VERSI_BACKUP = 1;
+/**
+ * Naik ke 2 saat Fase 4 Realtime Email Transaction Feed menambah store
+ * email_transactions/merchant_dictionary ke db.js -- backup versi 1 lama
+ * tidak pernah menyimpan keduanya (bug: backup yang diambil sebelum fix
+ * ini diam-diam kehilangan seluruh riwayat rekonsiliasi email & kamus
+ * merchant kalau direstore). Backup versi 1 tetap bisa direstore apa
+ * adanya ke aplikasi versi ini -- pulihkanBackup() memakai default `[]`
+ * untuk kunci yang tidak ada, bukan menolaknya.
+ */
+export const VERSI_BACKUP = 2;
 
 export async function buatBackup() {
-  const [accounts, transactions, uploaded, categories, settings] = await Promise.all([
+  const [accounts, transactions, uploaded, categories, settings, emailTransactions, merchantDictionary] = await Promise.all([
     ambilSemua(STORE.ACCOUNTS),
     ambilSemua(STORE.TRANSACTIONS),
     ambilSemua(STORE.UPLOADED_FILES),
     ambilSemua(STORE.CATEGORIES),
     ambilSemua(STORE.SETTINGS),
+    ambilSemua(STORE.EMAIL_TRANSACTIONS),
+    ambilSemua(STORE.MERCHANT_DICTIONARY),
   ]);
 
   return {
@@ -151,8 +162,13 @@ export async function buatBackup() {
       transaksi: transactions.length,
       upload: uploaded.length,
       kategori: categories.length,
+      transaksiEmail: emailTransactions.length,
+      kamusMerchant: merchantDictionary.length,
     },
-    data: { accounts, transactions, uploaded_files: uploaded, categories, settings },
+    data: {
+      accounts, transactions, uploaded_files: uploaded, categories, settings,
+      email_transactions: emailTransactions, merchant_dictionary: merchantDictionary,
+    },
   };
 }
 
@@ -180,7 +196,13 @@ export async function pulihkanBackup(backup, mode = 'ganti') {
 
   if (mode === 'ganti') await kosongkanSemua();
 
-  const { accounts = [], transactions = [], uploaded_files: uploaded = [], categories = [], settings = [] } = backup.data;
+  const {
+    accounts = [], transactions = [], uploaded_files: uploaded = [], categories = [], settings = [],
+    // Kosong di backup versi 1 lama (dibuat sebelum stores ini ada) -- default
+    // `[]` di sini, bukan menolak backup itu, adalah bagaimana kompatibilitasnya
+    // dijaga.
+    email_transactions: emailTransactions = [], merchant_dictionary: merchantDictionary = [],
+  } = backup.data;
 
   await simpanBanyak(STORE.CATEGORIES, categories);
   await simpanBanyak(STORE.ACCOUNTS, accounts);
@@ -189,12 +211,24 @@ export async function pulihkanBackup(backup, mode = 'ganti') {
 
   // Saat menggabung, transaksi dengan hash yang sudah ada dilewati supaya
   // memulihkan backup lama tidak menggandakan pembukuan yang berjalan.
+  // email_transactions/merchant_dictionary mengikuti prinsip yang sama,
+  // dedup lewat gmailMessageId/merchantKey masing-masing.
   if (mode === 'gabung') {
     const adaSekarang = await ambilSemua(STORE.TRANSACTIONS);
     const hashAda = new Set(adaSekarang.map((t) => t.hash));
     await simpanBanyak(STORE.TRANSACTIONS, transactions.filter((t) => !hashAda.has(t.hash)));
+
+    const emailAda = await ambilSemua(STORE.EMAIL_TRANSACTIONS);
+    const gmailIdAda = new Set(emailAda.map((t) => t.gmailMessageId).filter(Boolean));
+    await simpanBanyak(STORE.EMAIL_TRANSACTIONS, emailTransactions.filter((t) => !gmailIdAda.has(t.gmailMessageId)));
+
+    const kamusAda = await ambilSemua(STORE.MERCHANT_DICTIONARY);
+    const merchantKeyAda = new Set(kamusAda.map((k) => k.merchantKey));
+    await simpanBanyak(STORE.MERCHANT_DICTIONARY, merchantDictionary.filter((k) => !merchantKeyAda.has(k.merchantKey)));
   } else {
     await simpanBanyak(STORE.TRANSACTIONS, transactions);
+    await simpanBanyak(STORE.EMAIL_TRANSACTIONS, emailTransactions);
+    await simpanBanyak(STORE.MERCHANT_DICTIONARY, merchantDictionary);
   }
 
   kategoriRepo.kosongkanCache();
@@ -205,5 +239,7 @@ export async function pulihkanBackup(backup, mode = 'ganti') {
     transaksi: transactions.length,
     upload: uploaded.length,
     kategori: categories.length,
+    transaksiEmail: emailTransactions.length,
+    kamusMerchant: merchantDictionary.length,
   };
 }
