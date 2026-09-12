@@ -110,3 +110,70 @@ export function buatKategori(data = {}) {
 /** Kategori penampung saat tidak ada aturan yang cocok. */
 export const KATEGORI_LAINNYA_MASUK = 'kat_lain_masuk';
 export const KATEGORI_LAINNYA_KELUAR = 'kat_lain_keluar';
+
+/**
+ * Status pencocokan transaksi email terhadap transaksi e-statement yang
+ * sudah ada — hasil src/domain/rekonsiliasiEmail.js (fase berikutnya).
+ * String kosong berarti belum pernah diperiksa sama sekali.
+ */
+export const STATUS_COCOK_EMAIL = {
+  MATCHED: 'matched',
+  MISSING: 'missing',
+  MISMATCH: 'mismatch',
+  AMBIGUOUS: 'ambiguous',
+};
+
+/** Keputusan pengguna atas satu transaksi email di dashboard exception (fase berikutnya). */
+export const STATUS_RESOLUSI_EMAIL = {
+  TERBUKA: 'terbuka',
+  DISELESAIKAN: 'diselesaikan',
+  DIABAIKAN: 'diabaikan',
+};
+
+/**
+ * Transaksi hasil parse email bank (Realtime Email Transaction Feed),
+ * ditarik dari tab "Transaksi Email" di Sheet. Field mengikuti field
+ * `bangunBarisTarikTransaksiEmail()` di sheets/Code.gs (bank, waktuTransaksi,
+ * nominal, arah, merchantMentah, jenisTransaksi, acquirer, lokasi, rrn,
+ * nomorReferensi, versiParser, confidence) plus field yang genuinely baru di
+ * sisi PWA: hasil rekonsiliasi dan kategorisasi (diisi fase berikutnya,
+ * `''`/`null` berarti belum diproses — bukan default yang salah/menebak).
+ */
+export function buatTransaksiEmail(data = {}) {
+  return {
+    id: data.id || idBaru('trxe'),
+    gmailMessageId: data.gmailMessageId || '',
+    bank: data.bank || '',
+    waktuTransaksi: data.waktuTransaksi || '',
+    nominal: Number(data.nominal) || 0,
+    arah: data.arah || '',
+    merchantMentah: data.merchantMentah || '',
+    /* Diisi merchantNormalisasi() (fase berikutnya) -- kosong berarti belum
+       pernah dinormalisasi, bukan berarti merchant-nya memang tidak dikenal. */
+    merchantKey: data.merchantKey || '',
+    jenisTransaksi: data.jenisTransaksi || '',
+    acquirer: data.acquirer || '',
+    lokasi: data.lokasi || '',
+    rrn: data.rrn || '',
+    nomorReferensi: data.nomorReferensi || '',
+    versiParser: data.versiParser || '',
+    confidence: data.confidence || '',
+    /* Hasil rekonsiliasiEmail.js (fase berikutnya). */
+    statusCocok: data.statusCocok || '',
+    transaksiCocokId: data.transaksiCocokId || '',
+    skorCocok: data.skorCocok === null || data.skorCocok === undefined ? null : Number(data.skorCocok),
+    alasanCocok: data.alasanCocok || '',
+    /* Hasil kategoriEmail.js (fase berikutnya). */
+    kategoriSaran: data.kategoriSaran || '',
+    kategoriFinal: data.kategoriFinal || '',
+    confidenceKategori: data.confidenceKategori || '',
+    overrideUser: Boolean(data.overrideUser),
+    /* Keputusan pengguna di dashboard exception (fase berikutnya) — beda dari
+       statusCocok, lihat PRD §26: status teknis vs keputusan pengguna tidak
+       boleh disamakan. */
+    statusResolusi: data.statusResolusi || STATUS_RESOLUSI_EMAIL.TERBUKA,
+    diselesaikanPada: data.diselesaikanPada || '',
+    dibuatPada: data.dibuatPada || new Date().toISOString(),
+    diubahPada: data.diubahPada || '',
+  };
+}
