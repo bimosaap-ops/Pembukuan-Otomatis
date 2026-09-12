@@ -312,6 +312,22 @@ test('kasus terakhir dari audit "...Lain": GOTAGIHAN, reksa dana Bank Jago, HAKA
   });
 });
 
+test('nama merchant yang menempel tanpa spasi ke kode EDC/statement, ditemukan setelah "Kelompokkan ulang"', () => {
+  // Ditemukan lewat re-audit Sheet setelah pengguna menjalankan "Kelompokkan
+  // ulang semua transaksi": tiga kasus nyata di mana nama merchant/kata kunci
+  // menyambung langsung ke teks lain tanpa spasi, sehingga batas kata di
+  // cocokKunci() gagal (huruf menyambung langsung di salah satu sisi).
+  const uji = [
+    ['TRANSAKSI DEBIT TGL: 16/04 QR 014 00000.00SOLARIABUA', -146000, 'kat_makan'],
+    ['QR PAYMENT 01:07:33 JAMBILLIARD Bek asi (Kota)', -184000, 'kat_langganan'],
+    ['LLG-DANAMON BESTINDO PUTRA MAN BANK DANAMONPenggantian dana PCM1238847210', 12607044, 'kat_refund'],
+  ];
+  uji.forEach(([deskripsi, nominal, harapan]) => {
+    assert.equal(tentukanKategori(deskripsi, nominal, KATEGORI_BAWAAN), harapan,
+      `"${deskripsi}" seharusnya masuk ${harapan}`);
+  });
+});
+
 test('kata kunci "BANK JAGO" (kategori Investasi) tidak salah ketangkap merchant kopi "Jago Coffee"', () => {
   // "BANK JAGO" harus menangkap reksa dana, tapi tidak boleh menangkap merchant
   // kopi "Jago Coffee"/"jagocoffee" yang cuma kebetulan berbagi nama depan.
