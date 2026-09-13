@@ -535,6 +535,11 @@ export function pantauKoneksiSheets() {
     Promise.all([akunRepo.peta(), kategoriRepo.peta()])
       .then(([akunMap, kategoriMap]) => syncAtauAntri([], akunMap, kategoriMap))
       .catch(() => {});
+    // Antrean hapus AKUN/KATEGORI: panggil dengan daftar baru kosong supaya
+    // hanya yang tertunda dari percobaan sebelumnya yang dicoba ulang — sama
+    // seperti syncAtauAntri([], ...) di atas.
+    hapusEntitasDariSheets('akun', []).catch(() => {});
+    hapusEntitasDariSheets('kategori', []).catch(() => {});
   };
   cobaFlush();
   window.addEventListener('online', cobaFlush);
@@ -554,11 +559,15 @@ export async function testWebhook() {
    Rekening/Kategori), bukan diturunkan dari isi statement, jadi `id` yang
    sudah stabil sejak awal cukup jadi kunci — tidak perlu dihash untuk dedup.
 
-   Sengaja TANPA antrean retry seperti transaksi: kedua tabel ini kecil
-   (biasanya puluhan baris) dan jarang berubah, jadi kegagalan sesaat
-   (offline) cukup diperbaiki lewat "Kirim semua sekarang" di Pengaturan,
-   bukan lewat antrean tersendiri yang menambah state untuk kasus yang jarang
-   terjadi.
+   Kirim/upsert TANPA antrean retry seperti transaksi: kedua tabel ini kecil
+   dan jarang berubah, jadi kegagalan sesaat pada CREATE/UPDATE cukup
+   diperbaiki lewat "Kirim semua sekarang" di Pengaturan. DELETE beda cerita:
+   sejak tarikEntitasDariSheets() ada, sebuah delete yang gagal terkirim
+   berarti Sheet tidak pernah tahu record itu hilang — pull berikutnya (dari
+   perangkat mana pun) akan menariknya lagi dan menghidupkannya kembali
+   secara lokal (persis skenario yang diperingatkan AD-008). Karena itu
+   delete SATU-SATUNYA operasi di sini yang punya antrean retry persisten,
+   sama seperti ANTREAN_HAPUS milik transaksi.
    ========================================================================== */
 
 /** Diekspor supaya bisa diuji langsung tanpa IndexedDB — sama seperti barisUntukSheet. */
@@ -576,6 +585,10 @@ export function barisAkunUntukSheet(a) {
     warna: a.warna || '',
     catatan: a.catatan || '',
     dibuatPada: a.dibuatPada || '',
+    // Waktu edit SUNGGUHAN di perangkat ini, dikirim apa adanya (beda dari
+    // "Dikirim Pada" tab Transaksi yang distempel server) — dipakai resolusi
+    // konflik last-updated-wins saat perangkat lain menariknya balik.
+    diubahPada: a.diubahPada || '',
   };
 }
 
@@ -592,6 +605,54 @@ export function barisKategoriUntukSheet(k) {
     prioritas: Number.isFinite(Number(k.prioritas)) ? Number(k.prioritas) : 50,
     bawaan: Boolean(k.bawaan),
     urutan: Number(k.urutan) || 0,
+    dibuatPada: k.dibuatPada || '',
+    diubahPada: k.diubahPada || '',
+  };
+}
+
+/**
+ * Kebalikan dari barisAkunUntukSheet/barisKategoriUntukSheet — ubah baris
+ * hasil tarikEntitasDariSheets() balik jadi bentuk yang siap dilempar ke
+ * repo/accounts.js simpanAkun() / repo/categories.js simpanKategori().
+ * Dipisah dari entitas-sync.js (yang menyentuh IndexedDB) supaya bisa diuji
+ * murni tanpa database — sama seperti seluruh fungsi lain di berkas ini.
+ *
+ * `saldo`/`jumlahTransaksi` SENGAJA tidak ikut dipetakan: keduanya dihitung
+ * ulang dari transaksi lokal (lihat entitas-sync.js), nilai dari Sheet cuma
+ * informasi tampilan milik perangkat yang mengirimnya dan tidak boleh
+ * menimpa angka lokal yang lebih akurat.
+ */
+export function akunDariBarisSheet(row) {
+  return {
+    id: row.id || '',
+    bank: row.bank || '',
+    nomorRekening: row.nomorRekening || '',
+    namaPemilik: row.namaPemilik || '',
+    mataUang: row.mataUang || '',
+    jenis: row.jenis || '',
+    saldoAwal: Number(row.saldoAwal) || 0,
+    warna: row.warna || '',
+    catatan: row.catatan || '',
+    dibuatPada: row.dibuatPada || '',
+    diubahPada: row.diubahPada || '',
+  };
+}
+
+export function kategoriDariBarisSheet(row) {
+  return {
+    id: row.id || '',
+    nama: row.nama || '',
+    tipe: row.tipe || '',
+    warna: row.warna || '',
+    ikon: row.ikon || '',
+    // Kebalikan dari join(', ') saat dikirim — string kosong berarti tidak
+    // ada kata kunci sama sekali, bukan satu kata kunci kosong.
+    polaKataKunci: String(row.polaKataKunci || '').split(',').map((s) => s.trim()).filter(Boolean),
+    prioritas: Number.isFinite(Number(row.prioritas)) ? Number(row.prioritas) : 50,
+    bawaan: Boolean(row.bawaan),
+    urutan: Number(row.urutan) || 0,
+    dibuatPada: row.dibuatPada || '',
+    diubahPada: row.diubahPada || '',
   };
 }
 
@@ -612,10 +673,54 @@ export async function syncEntitasKeSheets(entity, rows) {
   }, BATAS_BONGKAH_MS);
 }
 
-/** Beri tahu Sheet bahwa AKUN/KATEGORI ini sudah dihapus di aplikasi. */
+const KUNCI_ANTREAN_HAPUS_ENTITAS = {
+  akun: 'sheetsAntreanHapusAkun',
+  kategori: 'sheetsAntreanHapusKategori',
+};
+
+async function bacaAntreanHapusEntitas(entity) {
+  const ids = await pengaturanRepo.baca(KUNCI_ANTREAN_HAPUS_ENTITAS[entity], []);
+  return Array.isArray(ids) ? ids : [];
+}
+
+async function tulisAntreanHapusEntitas(entity, ids) {
+  await pengaturanRepo.tulis(KUNCI_ANTREAN_HAPUS_ENTITAS[entity], [...new Set(ids)].filter(Boolean));
+}
+
+/**
+ * Beri tahu Sheet bahwa AKUN/KATEGORI ini sudah dihapus di aplikasi.
+ * Gabungan dengan antrean tertunda sebelumnya (mis. percobaan yang gagal
+ * offline), dan sisa yang masih gagal disimpan lagi untuk dicoba
+ * berikutnya — lihat catatan antrean retry di kepala berkas bagian ini.
+ */
 export async function hapusEntitasDariSheets(entity, ids) {
-  const daftar = [...new Set((ids || []).filter(Boolean))];
+  const baru = [...new Set((ids || []).filter(Boolean))];
   const { url, aktif } = await bacaKonfigSheets();
-  if (!aktif || !url || !daftar.length) return { skipped: true };
-  return postUlang(url, { entity, hapus: daftar, dikirimPada: new Date().toISOString() }, BATAS_BONGKAH_MS);
+  if (!aktif || !url) return { skipped: true };
+
+  const tertunda = await bacaAntreanHapusEntitas(entity);
+  const gabungan = [...new Set([...tertunda, ...baru])];
+  if (!gabungan.length) return { skipped: true };
+
+  try {
+    const jawab = await postUlang(url, { entity, hapus: gabungan, dikirimPada: new Date().toISOString() }, BATAS_BONGKAH_MS);
+    await tulisAntreanHapusEntitas(entity, []);
+    return jawab;
+  } catch (e) {
+    await tulisAntreanHapusEntitas(entity, gabungan);
+    return { queued: true, jumlah: gabungan.length, error: e.message };
+  }
+}
+
+/**
+ * Tarik seluruh baris AKUN/KATEGORI dari Sheet — dipakai
+ * services/entitas-sync.js untuk restore & sync lintas perangkat. Beda dari
+ * tarikTransaksiEmail: tidak pakai checkpoint, seluruh tab ditarik tiap kali
+ * (lihat catatan di sheets/Code.gs tarikEntitas() soal alasannya).
+ */
+export async function tarikEntitasDariSheets(entity) {
+  const { url, aktif } = await bacaKonfigSheets();
+  if (!aktif || !url) return { skipped: true };
+  const jawab = await post(url, { tarikEntitas: true, entity }, BATAS_BONGKAH_MS);
+  return { ok: true, baris: Array.isArray(jawab.baris) ? jawab.baris : [] };
 }

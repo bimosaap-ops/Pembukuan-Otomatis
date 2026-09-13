@@ -34,6 +34,13 @@ export function buatAkun(data = {}) {
     warna: data.warna || '',
     catatan: data.catatan || '',
     dibuatPada: data.dibuatPada || new Date().toISOString(),
+    /* Dipakai sync ke Google Sheets untuk resolusi konflik last-updated-wins
+       (lihat services/entitas-sync.js) — bukan diisi di sini, sengaja hanya
+       diteruskan apa adanya. repo/accounts.js yang menstempelnya ke waktu
+       sekarang setiap kali pengguna benar-benar menyimpan lewat halaman
+       Rekening, supaya pemanggil lain (mis. hitungUlangSaldo, atau saat
+       menerapkan baris hasil pull) tidak ikut menganggapnya "baru diubah". */
+    diubahPada: data.diubahPada || '',
   };
 }
 
@@ -104,6 +111,9 @@ export function buatKategori(data = {}) {
     prioritas: data.prioritas === undefined ? 50 : Number(data.prioritas),
     bawaan: Boolean(data.bawaan),
     urutan: Number(data.urutan) || 0,
+    dibuatPada: data.dibuatPada || new Date().toISOString(),
+    /* Lihat catatan diubahPada di buatAkun() — pola yang sama persis. */
+    diubahPada: data.diubahPada || '',
   };
 }
 

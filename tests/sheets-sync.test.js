@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 
 import {
   barisUntukSheet, validasiUrlWebhook, post, kirimBaris, kirimHapus, UKURAN_BONGKAH,
-  barisAkunUntukSheet, barisKategoriUntukSheet,
+  barisAkunUntukSheet, barisKategoriUntukSheet, akunDariBarisSheet, kategoriDariBarisSheet,
 } from '../src/services/sheets-sync.js';
 import { buatTransaksi, buatAkun, buatKategori } from '../src/domain/entities.js';
 
@@ -143,6 +143,44 @@ test('barisKategoriUntukSheet membawa bawaan sebagai boolean sungguhan', () => {
   const k = buatKategori({ id: 'kat3', nama: 'Gaji', bawaan: true });
   assert.equal(barisKategoriUntukSheet(k).bawaan, true);
   assert.equal(typeof barisKategoriUntukSheet(buatKategori({ id: 'kat4' })).bawaan, 'boolean');
+});
+
+test('barisAkunUntukSheet dan barisKategoriUntukSheet membawa diubahPada apa adanya', () => {
+  const a = buatAkun({ id: 'acc5', diubahPada: '2026-01-01T00:00:00.000Z' });
+  assert.equal(barisAkunUntukSheet(a).diubahPada, '2026-01-01T00:00:00.000Z');
+
+  const k = buatKategori({ id: 'kat5', diubahPada: '2026-02-02T00:00:00.000Z' });
+  assert.equal(barisKategoriUntukSheet(k).diubahPada, '2026-02-02T00:00:00.000Z');
+});
+
+/* ==========================================================================
+   akunDariBarisSheet / kategoriDariBarisSheet — kebalikan dari di atas,
+   dipakai saat menerapkan hasil tarik dari Sheets (lihat entitas-sync.js)
+   ========================================================================== */
+
+test('kategoriDariBarisSheet memecah polaKataKunci balik jadi array', () => {
+  const kat = kategoriDariBarisSheet({ id: 'kat1', nama: 'Makanan', polaKataKunci: 'ALFAMART, INDOMARET' });
+  assert.deepEqual(kat.polaKataKunci, ['ALFAMART', 'INDOMARET']);
+});
+
+test('kategoriDariBarisSheet menghasilkan array kosong bila polaKataKunci kosong, bukan [""]', () => {
+  const kat = kategoriDariBarisSheet({ id: 'kat2', nama: 'Lain-lain', polaKataKunci: '' });
+  assert.deepEqual(kat.polaKataKunci, []);
+});
+
+test('akunDariBarisSheet TIDAK ikut memetakan saldo/jumlahTransaksi dari baris remote', () => {
+  const akun = akunDariBarisSheet({
+    id: 'acc1', bank: 'BCA', saldoAwal: 1000000, saldo: 999999999, jumlahTransaksi: 42,
+  });
+  assert.equal(akun.saldoAwal, 1000000);
+  assert.equal(akun.saldo, undefined);
+  assert.equal(akun.jumlahTransaksi, undefined);
+});
+
+test('barisKategoriUntukSheet lalu kategoriDariBarisSheet pulang-pergi tanpa kehilangan kata kunci', () => {
+  const asli = buatKategori({ id: 'kat9', nama: 'Transportasi', polaKataKunci: ['GRAB', 'GOJEK', 'MRT'] });
+  const balik = kategoriDariBarisSheet(barisKategoriUntukSheet(asli));
+  assert.deepEqual(balik.polaKataKunci, ['GRAB', 'GOJEK', 'MRT']);
 });
 
 /* ==========================================================================

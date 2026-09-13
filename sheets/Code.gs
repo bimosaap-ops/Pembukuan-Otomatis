@@ -169,20 +169,32 @@ const FORMAT_WAKTU = 'dd/mm/yyyy HH:mm';
 
 /**
  * Tab "Akun" & "Kategori" — cadangan rekening/kas dan kategori, ditulis lewat
- * doPost{entity:'akun'|'kategori'} (lihat tanganiEntitas). Berbeda dari tab
- * Transaksi: baris di sini genuinely dibuat pengguna (halaman Rekening/
- * Kategori), bukan diturunkan dari isi statement — kuncinya kolom ID (A),
- * bukan hash konten seperti Transaksi. Tabelnya kecil (biasanya puluhan
- * baris), jadi ditulis apa adanya tanpa optimasi blok/bongkah/arsip yang
- * dipakai tab Transaksi untuk ribuan baris.
+ * doPost{entity:'akun'|'kategori'} (lihat tanganiEntitas) dan dibaca lewat
+ * doPost{tarikEntitas:true} (lihat tarikEntitas) untuk restore/sync ke
+ * perangkat lain. Berbeda dari tab Transaksi: baris di sini genuinely dibuat
+ * pengguna (halaman Rekening/Kategori), bukan diturunkan dari isi statement
+ * — kuncinya kolom ID (A), bukan hash konten seperti Transaksi. Tabelnya
+ * kecil (biasanya puluhan baris), jadi ditulis apa adanya tanpa optimasi
+ * blok/bongkah yang dipakai tab Transaksi untuk ribuan baris, dan ditarik
+ * UTUH setiap kali (tanpa checkpoint `sejak`) — beda dari
+ * tarikTransaksiEmail yang perlu checkpoint karena tabnya bisa panjang.
+ *
+ * "Diubah Pada" dikirim APA ADANYA oleh klien (waktu edit sungguhan di
+ * perangkat itu, dipakai resolusi konflik last-updated-wins di
+ * services/entitas-sync.js) — beda dari "Dikirim Pada" tab Transaksi yang
+ * distempel SERVER. "Dihapus Pada" sebaliknya SELALU distempel server saat
+ * tanganiEntitas memproses penghapusan: baris tidak pernah benar-benar
+ * dibuang (lihat AD-008 soal tombstone) supaya perangkat lain yang menarik
+ * data ini tahu record itu sudah dihapus, bukan mengiranya belum pernah ada
+ * lalu menghidupkannya kembali.
  */
 const AKUN_SHEET_NAME = 'Akun';
-const HEADER_AKUN = ['ID', 'Bank', 'No. Rekening', 'Nama Pemilik', 'Mata Uang', 'Jenis', 'Saldo Awal', 'Saldo', 'Jumlah Transaksi', 'Warna', 'Catatan', 'Dibuat Pada'];
-const KOLOM_AKUN = ['id', 'bank', 'nomorRekening', 'namaPemilik', 'mataUang', 'jenis', 'saldoAwal', 'saldo', 'jumlahTransaksi', 'warna', 'catatan', 'dibuatPada'];
+const HEADER_AKUN = ['ID', 'Bank', 'No. Rekening', 'Nama Pemilik', 'Mata Uang', 'Jenis', 'Saldo Awal', 'Saldo', 'Jumlah Transaksi', 'Warna', 'Catatan', 'Dibuat Pada', 'Diubah Pada', 'Dihapus Pada'];
+const KOLOM_AKUN = ['id', 'bank', 'nomorRekening', 'namaPemilik', 'mataUang', 'jenis', 'saldoAwal', 'saldo', 'jumlahTransaksi', 'warna', 'catatan', 'dibuatPada', 'diubahPada', 'dihapusPada'];
 
 const KATEGORI_SHEET_NAME = 'Kategori';
-const HEADER_KATEGORI = ['ID', 'Nama', 'Tipe', 'Warna', 'Ikon', 'Kata Kunci', 'Prioritas', 'Bawaan', 'Urutan'];
-const KOLOM_KATEGORI = ['id', 'nama', 'tipe', 'warna', 'ikon', 'polaKataKunci', 'prioritas', 'bawaan', 'urutan'];
+const HEADER_KATEGORI = ['ID', 'Nama', 'Tipe', 'Warna', 'Ikon', 'Kata Kunci', 'Prioritas', 'Bawaan', 'Urutan', 'Dibuat Pada', 'Diubah Pada', 'Dihapus Pada'];
+const KOLOM_KATEGORI = ['id', 'nama', 'tipe', 'warna', 'ikon', 'polaKataKunci', 'prioritas', 'bawaan', 'urutan', 'dibuatPada', 'diubahPada', 'dihapusPada'];
 
 /* Palet laporan keuangan: kepala tabel dan pita seksi biru tua berteks putih,
    angka surplus hijau, defisit merah. */
@@ -1325,17 +1337,19 @@ function pastikanTabEntitas(ss, nama, header) {
  * Upsert/hapus baris AKUN atau KATEGORI berdasarkan ID (kolom A) — dipanggil
  * dari doPost saat payload membawa `entity`. Sengaja terpisah dari alur
  * TRANSAKSI (rows/hapus/selaras di doPost utama): tabelnya kecil, jadi
- * seluruh baris yang berubah ditulis langsung tanpa optimasi blok/bongkah,
- * dan penghapusan SELALU membuang barisnya (tidak ada mode "hanya selaras").
- * Tidak diarsipkan ke _Arsip seperti Transaksi: ini konfigurasi (rekening/
- * kategori), bukan riwayat keuangan, dan penghapusannya dipicu oleh perangkat
- * yang sama yang baru saja menghapusnya secara sadar di UI — bukan
- * penyelarasan otomatis jarak jauh yang perlu jalan pulang.
+ * seluruh baris yang berubah ditulis langsung tanpa optimasi blok/bongkah.
+ *
+ * Penghapusan TIDAK membuang barisnya seperti dulu — kolom "Dihapus Pada"
+ * distempel sebagai tombstone (lihat AD-008). Baris yang benar-benar dibuang
+ * dari Sheet berarti perangkat lain yang menariknya lewat tarikEntitas() sama
+ * sekali tidak tahu record itu pernah ada, dan bisa menghidupkannya kembali
+ * kalau device itu sendiri belum sempat menghapusnya secara lokal.
  */
 function tanganiEntitas(data, header, kolom, namaTab) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = pastikanTabEntitas(ss, namaTab, header);
   const lebar = header.length;
+  const kolomDihapusPada = kolom.indexOf('dihapusPada') + 1; // 1-based untuk getRange
   const rows = Array.isArray(data.rows) ? data.rows : [];
   const hapus = Array.isArray(data.hapus) ? data.hapus.map(String).filter(Boolean) : [];
 
@@ -1344,8 +1358,8 @@ function tanganiEntitas(data, header, kolom, namaTab) {
   const nomorBaris = {};
   lama.forEach((r, i) => { const id = String(r[0] || ''); if (id) nomorBaris[id] = i + 2; });
 
-  const dibuang = {};
-  hapus.forEach((id) => { if (nomorBaris[id]) dibuang[nomorBaris[id]] = true; });
+  const ditombstone = {};
+  hapus.forEach((id) => { if (nomorBaris[id]) ditombstone[nomorBaris[id]] = true; });
 
   // Payload tidak seharusnya pernah berisi ID ganda, tapi tetap dijaga di
   // sini seperti alur TRANSAKSI: kejadian terakhir yang dipakai.
@@ -1361,26 +1375,57 @@ function tanganiEntitas(data, header, kolom, namaTab) {
       return v === null || v === undefined ? '' : v;
     });
     const baris = nomorBaris[id];
-    if (baris && !dibuang[baris]) perbarui.push({ baris, nilai });
+    if (baris && !ditombstone[baris]) perbarui.push({ baris, nilai });
     else if (!baris) tambah.push(nilai);
   }
 
   perbarui.forEach((p) => sh.getRange(p.baris, 1, 1, lebar).setValues([p.nilai]));
   if (tambah.length) sh.getRange(sh.getLastRow() + 1, 1, tambah.length, lebar).setValues(tambah);
 
-  // Menurun supaya penghapusan satu baris tidak menggeser nomor baris
-  // berikutnya yang belum diproses.
-  const nomorDibuang = Object.keys(dibuang).map(Number).sort((a, b) => b - a);
-  nomorDibuang.forEach((n) => sh.deleteRow(n));
+  const nomorTombstone = Object.keys(ditombstone).map(Number);
+  const sekarang = new Date();
+  nomorTombstone.forEach((n) => sh.getRange(n, kolomDihapusPada).setValue(sekarang));
 
   return {
     ok: true,
     inserted: tambah.length,
     updated: perbarui.length,
-    dihapus: nomorDibuang.length,
+    dihapus: nomorTombstone.length,
     spreadsheet: ss.getName(),
     sheet: sh.getName(),
   };
+}
+
+/**
+ * Baca seluruh tab entitas (Akun/Kategori) untuk ditarik ke perangkat lain —
+ * dipanggil dari doPost{tarikEntitas:true}. Beda dari tarikTransaksiEmail:
+ * TIDAK memakai checkpoint `sejak` — tabelnya kecil, jadi seluruh baris
+ * (termasuk yang sudah ber-tombstone "Dihapus Pada") dikirim utuh setiap
+ * kali. Ini juga menghindari ketergantungan pada jam klien vs jam server
+ * yang justru jadi alasan tarikTransaksiEmail memakai checkpoint waktu
+ * SERVER — dengan full pull, pertanyaan itu tidak perlu dijawab sama sekali.
+ */
+function tarikEntitas(header, kolom, namaTab) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = pastikanTabEntitas(ss, namaTab, header);
+  const last = sh.getLastRow();
+  if (last < 2) return [];
+
+  const nilai = sh.getRange(2, 1, last - 1, header.length).getValues();
+  return nilai
+    .filter((r) => String(r[0] || '')) // baris tanpa ID (kosong) dilewati
+    .map((r) => {
+      const obj = {};
+      kolom.forEach((k, i) => {
+        const v = r[i];
+        // Date sungguhan (Diubah Pada/Dihapus Pada/Dibuat Pada) ditulis balik
+        // sebagai ISO string, sama seperti bangunBarisTarikTransaksiEmail —
+        // JSON.stringify sendiri akan mengubah objek Date jadi ISO, tapi
+        // eksplisit di sini lebih jelas dan tidak bergantung pada perilaku itu.
+        obj[k] = v instanceof Date ? v.toISOString() : v;
+      });
+      return obj;
+    });
 }
 
 /**
@@ -2327,6 +2372,21 @@ function doPost(e) {
       const sejakValid = sejak && !isNaN(sejak.getTime()) ? sejak : null;
       const baris = bangunBarisTarikTransaksiEmail(t, sejakValid);
       return json({ ok: true, baris, sekarang: new Date().toISOString() });
+    } catch (err) {
+      return json({ ok: false, error: String(err && err.message || err) });
+    }
+  }
+
+  // Tarik AKUN/KATEGORI juga murni baca — dijawab sebelum kunci diambil,
+  // sama seperti ping/tarikTransaksiEmail. Dipakai restore & sync ke
+  // perangkat lain (lihat services/entitas-sync.js).
+  if (data.tarikEntitas === true && (data.entity === 'akun' || data.entity === 'kategori')) {
+    try {
+      const cfg = data.entity === 'akun'
+        ? { header: HEADER_AKUN, kolom: KOLOM_AKUN, nama: AKUN_SHEET_NAME }
+        : { header: HEADER_KATEGORI, kolom: KOLOM_KATEGORI, nama: KATEGORI_SHEET_NAME };
+      const baris = tarikEntitas(cfg.header, cfg.kolom, cfg.nama);
+      return json({ ok: true, baris });
     } catch (err) {
       return json({ ok: false, error: String(err && err.message || err) });
     }

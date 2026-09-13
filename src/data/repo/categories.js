@@ -42,8 +42,9 @@ export async function satu(id) {
   return ambil(STORE.CATEGORIES, id);
 }
 
+/** Lihat catatan diubahPada di repo/accounts.js simpanAkun() — pola yang sama. */
 export async function simpanKategori(data) {
-  const kat = buatKategori(data);
+  const kat = buatKategori({ ...data, diubahPada: data.diubahPada || new Date().toISOString() });
   await simpan(STORE.CATEGORIES, kat);
   kosongkanCache();
   return kat;
