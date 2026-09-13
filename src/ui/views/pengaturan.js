@@ -17,7 +17,7 @@ import { versiBerjalan, periksaPembaruan } from '../versi.js';
 import { unduhBackup, pulihkanBackup, dukunganPilihFolder } from '../../services/export.js';
 import {
   bacaKonfigSheets, simpanKonfigSheets, testWebhook, syncKeSheets, jumlahAntrean, praTinjauSelaras,
-  statusSheets,
+  statusSheets, syncEntitasKeSheets,
 } from '../../services/sheets-sync.js';
 import { tarikTransaksiEmail, statusTarikEmail } from '../../services/email-feed-sync.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
@@ -442,6 +442,19 @@ async function kartuSheets() {
             } else {
               toastSukses(`Terkirim${tujuan}: ${rincian} · total ${r.total} baris${milikLain}.`);
             }
+
+            // Rekening & kategori: tabelnya kecil, jadi dikirim utuh sekali
+            // jalan (bukan per bongkah seperti transaksi) dan kegagalannya
+            // dilaporkan terpisah — transaksi yang sudah terkirim di atas
+            // tidak boleh ikut dianggap gagal gara-gara ini.
+            try {
+              await Promise.all([
+                syncEntitasKeSheets('akun', [...akun.values()]),
+                syncEntitasKeSheets('kategori', [...kategori.values()]),
+              ]);
+            } catch (errEntitas) {
+              toastGagal(`Rekening/kategori gagal terkirim: ${errEntitas.message}`);
+            }
           } catch (err) {
             await laporkanBackfillGagal(err);
           } finally {
@@ -456,6 +469,7 @@ async function kartuSheets() {
           h('div', { text: '1. Buat Google Sheet baru, header baris 1: hash | tanggal | deskripsi | nominal | debit | kredit | kategoriId | bank | nomorRekening | namaPemilik | sumber' }),
           h('div', { text: '2. Extensions → Apps Script → tempel Code.gs dari repo (lihat sheets/Code.gs) → Deploy → Web App → Anyone with link → copy URL → tempel di atas → Simpan → Test webhook.' }),
           h('div', { text: '3. Sheet terisi otomatis tiap upload. Tombol \"Kirim semua\" untuk backfill.' }),
+          h('div', { text: '4. Rekening dan Kategori dicadangkan otomatis ke tab "Akun" dan "Kategori" setiap kali disimpan/dihapus, dan ikut terkirim ulang oleh "Kirim semua sekarang".' }),
         ]),
       ]),
     ]),

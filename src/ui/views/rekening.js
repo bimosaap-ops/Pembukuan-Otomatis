@@ -7,7 +7,7 @@ import { h, ikon, ganti } from '../../core/dom.js';
 import { rupiah, toNum } from '../../core/format.js';
 import { on, emit, EVENT } from '../../core/events.js';
 import * as akunRepo from '../../data/repo/accounts.js';
-import { hapusDariSheets } from '../../services/sheets-sync.js';
+import { hapusDariSheets, syncEntitasKeSheets, hapusEntitasDariSheets } from '../../services/sheets-sync.js';
 import { BANK_DIKENAL, JENIS_AKUN } from '../../domain/entities.js';
 import { totalSaldo } from '../../domain/analytics.js';
 import { dataView } from '../components/data-view.js';
@@ -150,11 +150,12 @@ function bukaForm(akun, selesai) {
             mataUang: fMataUang.value.trim() || 'IDR',
             saldoAwal: toNum(fSaldoAwal.value),
           });
-          await akunRepo.hitungUlangSaldo(tersimpan.id);
+          const final = await akunRepo.hitungUlangSaldo(tersimpan.id);
           toastSukses(ubah ? 'Rekening diperbarui.' : 'Rekening ditambahkan.');
           m.tutup();
           emit(EVENT.DATA_BERUBAH, { sumber: 'rekening' });
           selesai?.();
+          syncEntitasKeSheets('akun', [final || tersimpan]).catch((e) => console.warn('Sheets sync gagal:', e));
         },
       }, ubah ? 'Simpan perubahan' : 'Tambah'),
     ],
@@ -172,6 +173,7 @@ async function hapus(akun, selesai) {
 
   const hasil = await akunRepo.hapusAkun(akun.id);
   hapusDariSheets(hasil.hash).catch((e) => console.warn('Hapus di Sheets gagal:', e));
+  hapusEntitasDariSheets('akun', [akun.id]).catch((e) => console.warn('Hapus rekening di Sheets gagal:', e));
   toastSukses(`Rekening dihapus beserta ${hasil.transaksiTerhapus} transaksi.`);
   emit(EVENT.DATA_BERUBAH, { sumber: 'rekening' });
   selesai?.();

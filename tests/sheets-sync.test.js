@@ -15,8 +15,9 @@ import assert from 'node:assert/strict';
 
 import {
   barisUntukSheet, validasiUrlWebhook, post, kirimBaris, kirimHapus, UKURAN_BONGKAH,
+  barisAkunUntukSheet, barisKategoriUntukSheet,
 } from '../src/services/sheets-sync.js';
-import { buatTransaksi } from '../src/domain/entities.js';
+import { buatTransaksi, buatAkun, buatKategori } from '../src/domain/entities.js';
 
 /* ==========================================================================
    barisUntukSheet
@@ -104,6 +105,44 @@ test('barisUntukSheet mengirim penanda transfer internal, dan defaultnya false',
   // Nilai yang tidak pernah diisi harus jadi false, bukan undefined — sel
   // kosong di Sheet tidak bisa dibedakan dari "bukan transfer".
   assert.equal(typeof barisUntukSheet(biasa, new Map()).transferInternal, 'boolean');
+});
+
+/* ==========================================================================
+   barisAkunUntukSheet / barisKategoriUntukSheet
+   ========================================================================== */
+
+test('barisAkunUntukSheet membawa id dan field rekening apa adanya', () => {
+  const a = buatAkun({
+    id: 'acc1', bank: 'BCA', nomorRekening: '1234567890', namaPemilik: 'BUDI',
+    saldoAwal: 1000000, saldo: 2500000, jumlahTransaksi: 12,
+  });
+  const baris = barisAkunUntukSheet(a);
+  assert.equal(baris.id, 'acc1');
+  assert.equal(baris.bank, 'BCA');
+  assert.equal(baris.saldoAwal, 1000000);
+  assert.equal(baris.saldo, 2500000);
+  assert.equal(baris.jumlahTransaksi, 12);
+});
+
+test('barisAkunUntukSheet tidak melempar error untuk akun kosong', () => {
+  assert.doesNotThrow(() => barisAkunUntukSheet(buatAkun()));
+});
+
+test('barisKategoriUntukSheet menggabung polaKataKunci jadi satu string', () => {
+  const k = buatKategori({ id: 'kat1', nama: 'Makanan', polaKataKunci: ['ALFAMART', 'INDOMARET'] });
+  const baris = barisKategoriUntukSheet(k);
+  assert.equal(baris.polaKataKunci, 'ALFAMART, INDOMARET');
+});
+
+test('barisKategoriUntukSheet mengisi string kosong bila polaKataKunci bukan array', () => {
+  const baris = barisKategoriUntukSheet({ id: 'kat2', nama: 'Lain-lain' });
+  assert.equal(baris.polaKataKunci, '');
+});
+
+test('barisKategoriUntukSheet membawa bawaan sebagai boolean sungguhan', () => {
+  const k = buatKategori({ id: 'kat3', nama: 'Gaji', bawaan: true });
+  assert.equal(barisKategoriUntukSheet(k).bawaan, true);
+  assert.equal(typeof barisKategoriUntukSheet(buatKategori({ id: 'kat4' })).bawaan, 'boolean');
 });
 
 /* ==========================================================================

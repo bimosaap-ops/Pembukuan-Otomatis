@@ -35,6 +35,12 @@
  *     siklus bangun-ulang di atas. "Anggaran" hanya ditambah baris kategori
  *     baru yang belum ada, tidak pernah menimpa/menghapus baris lama.
  *
+ * Dua tab TAMBAHAN, "Akun" dan "Kategori", dibuat LAZY oleh tanganiEntitas()
+ * saat doPost{entity:'akun'|'kategori'} pertama kali dipanggil — sama seperti
+ * tab data utama dibuat lazy oleh getSheet(). Cadangan rekening/kas dan
+ * kategori, upsert per ID (bukan hash: baris di sini genuinely dibuat
+ * pengguna, bukan diturunkan dari isi statement).
+ *
  * Angka GABUNGAN mengecualikan transfer internal (kolom O) supaya pindah dana
  * antar rekening sendiri tidak terhitung dua kali; angka PER REKENING tetap
  * menghitungnya, karena uangnya memang keluar/masuk di rekening itu.
@@ -161,6 +167,23 @@ const KOLOM_REKENING_AKHIR = 9;
 const RP = '"Rp "#,##0;[RED]-"Rp "#,##0';
 const FORMAT_WAKTU = 'dd/mm/yyyy HH:mm';
 
+/**
+ * Tab "Akun" & "Kategori" — cadangan rekening/kas dan kategori, ditulis lewat
+ * doPost{entity:'akun'|'kategori'} (lihat tanganiEntitas). Berbeda dari tab
+ * Transaksi: baris di sini genuinely dibuat pengguna (halaman Rekening/
+ * Kategori), bukan diturunkan dari isi statement — kuncinya kolom ID (A),
+ * bukan hash konten seperti Transaksi. Tabelnya kecil (biasanya puluhan
+ * baris), jadi ditulis apa adanya tanpa optimasi blok/bongkah/arsip yang
+ * dipakai tab Transaksi untuk ribuan baris.
+ */
+const AKUN_SHEET_NAME = 'Akun';
+const HEADER_AKUN = ['ID', 'Bank', 'No. Rekening', 'Nama Pemilik', 'Mata Uang', 'Jenis', 'Saldo Awal', 'Saldo', 'Jumlah Transaksi', 'Warna', 'Catatan', 'Dibuat Pada'];
+const KOLOM_AKUN = ['id', 'bank', 'nomorRekening', 'namaPemilik', 'mataUang', 'jenis', 'saldoAwal', 'saldo', 'jumlahTransaksi', 'warna', 'catatan', 'dibuatPada'];
+
+const KATEGORI_SHEET_NAME = 'Kategori';
+const HEADER_KATEGORI = ['ID', 'Nama', 'Tipe', 'Warna', 'Ikon', 'Kata Kunci', 'Prioritas', 'Bawaan', 'Urutan'];
+const KOLOM_KATEGORI = ['id', 'nama', 'tipe', 'warna', 'ikon', 'polaKataKunci', 'prioritas', 'bawaan', 'urutan'];
+
 /* Palet laporan keuangan: kepala tabel dan pita seksi biru tua berteks putih,
    angka surplus hijau, defisit merah. */
 const BIRU_TUA = '#1f4e79';
@@ -196,6 +219,7 @@ function sheetData(ss) {
     DASHBOARD_SHEET_NAME, DASHBOARD_FULL_SHEET_NAME,
     ANGGARAN_SHEET_NAME, CARI_TRANSAKSI_SHEET_NAME, ARSIP_SHEET_NAME,
     KONFIGURASI_EMAIL_SHEET_NAME, EMAIL_MASUK_SHEET_NAME, TRANSAKSI_EMAIL_SHEET_NAME, LOG_EMAIL_SHEET_NAME,
+    AKUN_SHEET_NAME, KATEGORI_SHEET_NAME,
   ];
   const lain = ss.getSheets().filter((s) => bawaan.indexOf(s.getName()) === -1);
   return lain.length ? lain[0] : ss.insertSheet(DATA_SHEET_NAME, 0);
@@ -1272,6 +1296,94 @@ function pastikanLogEmail(ss) {
 }
 
 /**
+ * Buat tab entitas (Akun/Kategori) bila belum ada, dan perbaiki headernya bila
+ * berubah — sama seperti guard header di getSheet(), disederhanakan karena
+ * tab ini tidak punya rumus maupun urusan lokal (pemisah argumen, dst.) yang
+ * perlu dijaga.
+ */
+function pastikanTabEntitas(ss, nama, header) {
+  let sh = ss.getSheetByName(nama);
+  if (!sh) {
+    sh = ss.insertSheet(nama, ss.getNumSheets());
+    sh.appendRow(header);
+    sh.setFrozenRows(1);
+    sh.getRange(1, 1, 1, header.length)
+      .setFontWeight('bold').setFontColor('#ffffff').setBackground(BIRU_TUA)
+      .setVerticalAlignment('middle');
+    sh.setTabColor('#0b8043');
+    return sh;
+  }
+  if (sh.getMaxColumns() < header.length) {
+    sh.insertColumnsAfter(sh.getMaxColumns(), header.length - sh.getMaxColumns());
+  }
+  const h = sh.getRange(1, 1, 1, header.length).getValues()[0].map(String);
+  if (h.join('|') !== header.join('|')) sh.getRange(1, 1, 1, header.length).setValues([header]);
+  return sh;
+}
+
+/**
+ * Upsert/hapus baris AKUN atau KATEGORI berdasarkan ID (kolom A) — dipanggil
+ * dari doPost saat payload membawa `entity`. Sengaja terpisah dari alur
+ * TRANSAKSI (rows/hapus/selaras di doPost utama): tabelnya kecil, jadi
+ * seluruh baris yang berubah ditulis langsung tanpa optimasi blok/bongkah,
+ * dan penghapusan SELALU membuang barisnya (tidak ada mode "hanya selaras").
+ * Tidak diarsipkan ke _Arsip seperti Transaksi: ini konfigurasi (rekening/
+ * kategori), bukan riwayat keuangan, dan penghapusannya dipicu oleh perangkat
+ * yang sama yang baru saja menghapusnya secara sadar di UI — bukan
+ * penyelarasan otomatis jarak jauh yang perlu jalan pulang.
+ */
+function tanganiEntitas(data, header, kolom, namaTab) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = pastikanTabEntitas(ss, namaTab, header);
+  const lebar = header.length;
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  const hapus = Array.isArray(data.hapus) ? data.hapus.map(String).filter(Boolean) : [];
+
+  const last = sh.getLastRow();
+  const lama = last > 1 ? sh.getRange(2, 1, last - 1, 1).getValues() : [];
+  const nomorBaris = {};
+  lama.forEach((r, i) => { const id = String(r[0] || ''); if (id) nomorBaris[id] = i + 2; });
+
+  const dibuang = {};
+  hapus.forEach((id) => { if (nomorBaris[id]) dibuang[nomorBaris[id]] = true; });
+
+  // Payload tidak seharusnya pernah berisi ID ganda, tapi tetap dijaga di
+  // sini seperti alur TRANSAKSI: kejadian terakhir yang dipakai.
+  const dedup = new Map();
+  rows.forEach((r) => { if (r && r.id) dedup.set(String(r.id), r); });
+
+  const tambah = [];
+  const perbarui = [];
+  for (const r of dedup.values()) {
+    const id = String(r.id);
+    const nilai = kolom.map((k) => {
+      const v = r[k];
+      return v === null || v === undefined ? '' : v;
+    });
+    const baris = nomorBaris[id];
+    if (baris && !dibuang[baris]) perbarui.push({ baris, nilai });
+    else if (!baris) tambah.push(nilai);
+  }
+
+  perbarui.forEach((p) => sh.getRange(p.baris, 1, 1, lebar).setValues([p.nilai]));
+  if (tambah.length) sh.getRange(sh.getLastRow() + 1, 1, tambah.length, lebar).setValues(tambah);
+
+  // Menurun supaya penghapusan satu baris tidak menggeser nomor baris
+  // berikutnya yang belum diproses.
+  const nomorDibuang = Object.keys(dibuang).map(Number).sort((a, b) => b - a);
+  nomorDibuang.forEach((n) => sh.deleteRow(n));
+
+  return {
+    ok: true,
+    inserted: tambah.length,
+    updated: perbarui.length,
+    dihapus: nomorDibuang.length,
+    spreadsheet: ss.getName(),
+    sheet: sh.getName(),
+  };
+}
+
+/**
  * Peta nama bulan ke indeks 0-11 — memuat SINGKATAN INDONESIA dan INGGRIS
  * sekaligus (mis. "Agu"/"Aug", "Okt"/"Oct", "Des"/"Dec") karena sample email
  * BCA dan Permata yang jadi acuan parser ini masing-masing memakai singkatan
@@ -2217,6 +2329,28 @@ function doPost(e) {
       return json({ ok: true, baris, sekarang: new Date().toISOString() });
     } catch (err) {
       return json({ ok: false, error: String(err && err.message || err) });
+    }
+  }
+
+  // AKUN/KATEGORI: upsert/hapus berdasarkan ID, di tab masing-masing —
+  // terpisah dari alur TRANSAKSI di bawah (yang berbasis hash & mendukung
+  // rapikan/selaras). Tetap butuh kunci: sama-sama menulis ke spreadsheet ini.
+  if (data.entity === 'akun' || data.entity === 'kategori') {
+    const kunciEntitas = LockService.getScriptLock();
+    try {
+      kunciEntitas.waitLock(30000);
+    } catch (err) {
+      return json({ ok: false, error: 'Sheet sedang dipakai proses lain, coba lagi sebentar' });
+    }
+    try {
+      const cfg = data.entity === 'akun'
+        ? { header: HEADER_AKUN, kolom: KOLOM_AKUN, nama: AKUN_SHEET_NAME }
+        : { header: HEADER_KATEGORI, kolom: KOLOM_KATEGORI, nama: KATEGORI_SHEET_NAME };
+      return json(tanganiEntitas(data, cfg.header, cfg.kolom, cfg.nama));
+    } catch (err) {
+      return json({ ok: false, error: String(err && err.message || err) });
+    } finally {
+      kunciEntitas.releaseLock();
     }
   }
 

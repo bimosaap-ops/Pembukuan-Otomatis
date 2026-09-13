@@ -546,3 +546,76 @@ export async function testWebhook() {
   await post(url, { ping: true, rows: [], dikirimPada: new Date().toISOString() });
   return true;
 }
+
+/* ==========================================================================
+   AKUN & KATEGORI — cadangan ke tab masing-masing, upsert per id.
+
+   Beda dari transaksi: baris di sini genuinely dibuat pengguna (halaman
+   Rekening/Kategori), bukan diturunkan dari isi statement, jadi `id` yang
+   sudah stabil sejak awal cukup jadi kunci — tidak perlu dihash untuk dedup.
+
+   Sengaja TANPA antrean retry seperti transaksi: kedua tabel ini kecil
+   (biasanya puluhan baris) dan jarang berubah, jadi kegagalan sesaat
+   (offline) cukup diperbaiki lewat "Kirim semua sekarang" di Pengaturan,
+   bukan lewat antrean tersendiri yang menambah state untuk kasus yang jarang
+   terjadi.
+   ========================================================================== */
+
+/** Diekspor supaya bisa diuji langsung tanpa IndexedDB — sama seperti barisUntukSheet. */
+export function barisAkunUntukSheet(a) {
+  return {
+    id: a.id || '',
+    bank: a.bank || '',
+    nomorRekening: a.nomorRekening || '',
+    namaPemilik: a.namaPemilik || '',
+    mataUang: a.mataUang || '',
+    jenis: a.jenis || '',
+    saldoAwal: Number(a.saldoAwal) || 0,
+    saldo: Number(a.saldo) || 0,
+    jumlahTransaksi: Number(a.jumlahTransaksi) || 0,
+    warna: a.warna || '',
+    catatan: a.catatan || '',
+    dibuatPada: a.dibuatPada || '',
+  };
+}
+
+export function barisKategoriUntukSheet(k) {
+  return {
+    id: k.id || '',
+    nama: k.nama || '',
+    tipe: k.tipe || '',
+    warna: k.warna || '',
+    ikon: k.ikon || '',
+    // Array digabung jadi satu string: Apps Script menerima JSON, tapi kolom
+    // Sheet-nya teks biasa — menaruh array di satu sel akan tampil "[object]".
+    polaKataKunci: Array.isArray(k.polaKataKunci) ? k.polaKataKunci.join(', ') : '',
+    prioritas: Number.isFinite(Number(k.prioritas)) ? Number(k.prioritas) : 50,
+    bawaan: Boolean(k.bawaan),
+    urutan: Number(k.urutan) || 0,
+  };
+}
+
+/**
+ * Kirim satu atau beberapa AKUN/KATEGORI ke tab masing-masing di Sheet.
+ * Dipanggil fire-and-forget dari halaman Rekening/Kategori setiap kali
+ * disimpan — pemanggil tidak menunggu ini, sama seperti syncAtauAntri.
+ * @param {'akun'|'kategori'} entity
+ */
+export async function syncEntitasKeSheets(entity, rows) {
+  const { url, aktif } = await bacaKonfigSheets();
+  if (!aktif || !url || !rows?.length) return { skipped: true };
+  const bentuk = entity === 'akun' ? barisAkunUntukSheet : barisKategoriUntukSheet;
+  return postUlang(url, {
+    entity,
+    rows: rows.map(bentuk),
+    dikirimPada: new Date().toISOString(),
+  }, BATAS_BONGKAH_MS);
+}
+
+/** Beri tahu Sheet bahwa AKUN/KATEGORI ini sudah dihapus di aplikasi. */
+export async function hapusEntitasDariSheets(entity, ids) {
+  const daftar = [...new Set((ids || []).filter(Boolean))];
+  const { url, aktif } = await bacaKonfigSheets();
+  if (!aktif || !url || !daftar.length) return { skipped: true };
+  return postUlang(url, { entity, hapus: daftar, dikirimPada: new Date().toISOString() }, BATAS_BONGKAH_MS);
+}
