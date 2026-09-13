@@ -156,11 +156,25 @@ const TOP_ANOMALI = 25;
 /** Baris tetap hasil pencarian di tab Cari Transaksi (lihat pastikanCariTransaksi). */
 const MAKS_HASIL_CARI = 500;
 
-const HEADER = ['Hash','Tanggal','Deskripsi','Nominal','Debit','Kredit','ID Kategori','Bank','No. Rekening','Nama Pemilik','Sumber','ID Upload','Dikirim Pada','Kategori','Transfer Internal','Saldo'];
-const LEBAR_KOLOM = [110, 95, 300, 120, 120, 120, 130, 90, 130, 150, 80, 110, 140, 150, 130, 130];
+/**
+ * Kolom Q "ID Transaksi" & R "Diubah Pada" ditambah di UJUNG (bukan disisip)
+ * supaya seluruh rumus Dashboard/Dashboard Full yang merujuk kolom lewat
+ * HURUF TETAP (A..P, lihat kol()/kolomMaya() di bawah) sama sekali tidak
+ * bergeser — tidak satu pun formula perlu disentuh untuk perubahan ini.
+ * Dipakai tarikTransaksi() untuk pull & resolusi konflik last-updated-wins
+ * (lihat services/transaksi-sync.js), TIDAK dipakai upsert (yang masih
+ * berbasis Hash seperti sebelumnya) maupun rumus Dashboard mana pun.
+ *
+ * Baris yang sudah ada sebelum kolom ini ditambahkan akan kosong di Q/R
+ * sampai terkirim ulang lewat "Kirim semua sekarang" — pull melewati baris
+ * tanpa ID Transaksi (lihat tarikTransaksi) daripada menariknya dengan id
+ * kosong yang bisa tertukar dengan baris lain.
+ */
+const HEADER = ['Hash','Tanggal','Deskripsi','Nominal','Debit','Kredit','ID Kategori','Bank','No. Rekening','Nama Pemilik','Sumber','ID Upload','Dikirim Pada','Kategori','Transfer Internal','Saldo','ID Transaksi','Diubah Pada'];
+const LEBAR_KOLOM = [110, 95, 300, 120, 120, 120, 130, 90, 130, 150, 80, 110, 140, 150, 130, 130, 130, 140];
 const KOLOM_RP = [4, 5, 6, 16];  // Nominal, Debit, Kredit, Saldo
 const KOLOM_WAKTU = 13;          // Dikirim Pada
-const KOLOM_SEMBUNYI = [1, 7, 12]; // Hash, ID Kategori, ID Upload — dipakai mesin, bukan mata
+const KOLOM_SEMBUNYI = [1, 7, 12, 17]; // Hash, ID Kategori, ID Upload, ID Transaksi — dipakai mesin, bukan mata
 /** Kolom terakhir yang perlu dibaca saat menyelaraskan: I, "No. Rekening". */
 const KOLOM_REKENING_AKHIR = 9;
 
@@ -2392,6 +2406,20 @@ function doPost(e) {
     }
   }
 
+  // Tarik TRANSAKSI juga murni baca — checkpoint berdasarkan waktu SERVER
+  // ("Dikirim Pada"/"Dihapus Pada", sama-sama distempel Code.gs), bukan jam
+  // klien, dengan alasan yang sama seperti tarikTransaksiEmail.
+  if (data.tarikTransaksi === true) {
+    try {
+      const sejak = data.sejak ? new Date(data.sejak) : null;
+      const sejakValid = sejak && !isNaN(sejak.getTime()) ? sejak : null;
+      const hasil = tarikTransaksi(sejakValid);
+      return json({ ok: true, baris: hasil.baris, dihapus: hasil.dihapus, sekarang: new Date().toISOString() });
+    } catch (err) {
+      return json({ ok: false, error: String(err && err.message || err) });
+    }
+  }
+
   // AKUN/KATEGORI: upsert/hapus berdasarkan ID, di tab masing-masing —
   // terpisah dari alur TRANSAKSI di bawah (yang berbasis hash & mendukung
   // rapikan/selaras). Tetap butuh kunci: sama-sama menulis ke spreadsheet ini.
@@ -2530,7 +2558,7 @@ function doPost(e) {
       // sah, sedangkan kosong berarti bank tidak menyebutkannya (transaksi
       // manual). Dashboard membedakan keduanya saat memeriksa kelengkapan bulan.
       const saldo = r.saldo === '' || r.saldo === null || r.saldo === undefined ? '' : Number(r.saldo);
-      const baru = [hash, r.tanggal||'', r.deskripsi||'', Number(r.nominal)||0, Number(r.debit)||0, Number(r.kredit)||0, r.kategoriId||'', r.bank||'', r.nomorRekening||'', r.namaPemilik||'', r.sumber||'', r.uploadedFileId||'', ts, r.kategoriNama||'', r.transferInternal === true, saldo];
+      const baru = [hash, r.tanggal||'', r.deskripsi||'', Number(r.nominal)||0, Number(r.debit)||0, Number(r.kredit)||0, r.kategoriId||'', r.bank||'', r.nomorRekening||'', r.namaPemilik||'', r.sumber||'', r.uploadedFileId||'', ts, r.kategoriNama||'', r.transferInternal === true, saldo, r.id||'', r.diubahPada||''];
       const baris = hash ? nomorBaris[hash] : null;
       if (baris && !dibuang[baris]) perbarui.push({ baris, nilai: baru });
       else if (!baris) tambah.push(baru);
@@ -2685,12 +2713,22 @@ function arsipkan(sh, nomor) {
     const isi = nomor.map((n) => jendela[n - awal]);
     if (!isi.length) return;
 
+    const headerArsip = ['Dihapus Pada'].concat(HEADER);
     let arsip = ss.getSheetByName(ARSIP_SHEET_NAME);
     if (!arsip) {
       arsip = ss.insertSheet(ARSIP_SHEET_NAME, ss.getNumSheets());
-      arsip.appendRow(['Dihapus Pada'].concat(HEADER));
+      arsip.appendRow(headerArsip);
       arsip.setFrozenRows(1);
       arsip.hideSheet();
+    } else if (arsip.getLastColumn() < headerArsip.length) {
+      // _Arsip dibuat sebelum kolom ID Transaksi/Diubah Pada ada di HEADER.
+      // Baris BARU yang ditulis di bawah selalu selebar HEADER sekarang (lihat
+      // `lebar`), jadi headernya wajib dilebarkan dulu — kalau tidak, dua
+      // kolom terakhir jadi data tanpa label, dan tarikTransaksi() (yang
+      // mencari kolom ID Transaksi/Dihapus Pada lewat NAMA header, bukan
+      // posisi tetap) tidak akan menemukannya sama sekali.
+      arsip.insertColumnsAfter(arsip.getLastColumn(), headerArsip.length - arsip.getLastColumn());
+      arsip.getRange(1, 1, 1, headerArsip.length).setValues([headerArsip]);
     }
     const cap = new Date();
     const baris = isi.map((r) => [cap].concat(r));
@@ -2700,6 +2738,85 @@ function arsipkan(sh, nomor) {
     // membatalkan penghapusan yang sudah diminta dan sudah dikonfirmasi.
     console.warn('Gagal mengarsipkan baris:', e);
   }
+}
+
+/** Kolom Date -> ISO string; nilai lain (string/angka/kosong) dikembalikan apa adanya. */
+function keIso(v) {
+  return v instanceof Date ? v.toISOString() : v;
+}
+
+/**
+ * Baca transaksi yang berubah (baru/diperbarui) DAN yang sudah dihapus sejak
+ * checkpoint — dipanggil dari doPost{tarikTransaksi:true}. Dipakai
+ * services/transaksi-sync.js untuk sync & restore lintas perangkat.
+ *
+ * Sengaja TIDAK menyentuh alur hapus TRANSAKSI yang sudah ada (hapusBaris
+ * tetap memindahkan baris ke _Arsip lalu membuangnya dari tab utama, persis
+ * seperti sebelum pull ada) — _Arsip SUDAH berfungsi sebagai catatan
+ * tombstone lengkap dengan waktu ("Dihapus Pada"), jadi tidak perlu
+ * membangun mekanisme tombstone baru khusus untuk TRANSAKSI. Ini juga berarti
+ * TIDAK SATU PUN rumus Dashboard/Dashboard Full perlu diubah: keduanya tetap
+ * membaca tab "Transaksi" yang isinya sudah bersih dari baris terhapus,
+ * persis seperti sebelumnya.
+ *
+ * Kolom dicari lewat NAMA header (bukan posisi tetap) supaya tetap benar
+ * walau _Arsip masih berisi baris lama dari sebelum migrasi kolom ID
+ * Transaksi/Diubah Pada (lihat arsipkan()) — baris semacam itu otomatis
+ * terlewati karena idnya kosong, bukan salah baca kolom lain.
+ */
+function tarikTransaksi(sejak) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = getSheet();
+  const idxId = HEADER.indexOf('ID Transaksi');
+  const idxDiubah = HEADER.indexOf('Diubah Pada');
+  const idxDikirim = HEADER.indexOf('Dikirim Pada');
+
+  const baris = [];
+  const last = sh.getLastRow();
+  if (last > 1) {
+    const nilai = sh.getRange(2, 1, last - 1, HEADER.length).getValues();
+    nilai.forEach((r) => {
+      const dikirim = r[idxDikirim] instanceof Date ? r[idxDikirim] : new Date(r[idxDikirim]);
+      if (sejak && !(dikirim > sejak)) return;
+      const id = String(r[idxId] || '');
+      if (!id) return; // baris dari sebelum migrasi -- belum bisa ditarik amannya, tunggu "Kirim semua sekarang"
+      baris.push({
+        id,
+        hash: String(r[0] || ''),
+        tanggal: r[1] instanceof Date ? Utilities.formatDate(r[1], Session.getScriptTimeZone(), 'yyyy-MM-dd') : String(r[1] || ''),
+        deskripsi: String(r[2] || ''),
+        nominal: Number(r[3]) || 0,
+        kategoriId: String(r[6] || ''),
+        bank: String(r[7] || ''),
+        nomorRekening: String(r[8] || ''),
+        namaPemilik: String(r[9] || ''),
+        sumber: String(r[10] || ''),
+        transferInternal: r[14] === true,
+        saldo: r[15] === '' || r[15] === null ? null : Number(r[15]),
+        diubahPada: keIso(r[idxDiubah]) || '',
+      });
+    });
+  }
+
+  const dihapus = [];
+  const arsip = ss.getSheetByName(ARSIP_SHEET_NAME);
+  const lastArsip = arsip ? arsip.getLastRow() : 0;
+  if (arsip && lastArsip > 1) {
+    const headerArsip = arsip.getRange(1, 1, 1, arsip.getLastColumn()).getValues()[0].map(String);
+    const idxDihapusPada = headerArsip.indexOf('Dihapus Pada');
+    const idxIdArsip = headerArsip.indexOf('ID Transaksi');
+    if (idxIdArsip !== -1) {
+      const nilaiArsip = arsip.getRange(2, 1, lastArsip - 1, headerArsip.length).getValues();
+      nilaiArsip.forEach((r) => {
+        const dihapusPada = r[idxDihapusPada] instanceof Date ? r[idxDihapusPada] : new Date(r[idxDihapusPada]);
+        if (sejak && !(dihapusPada > sejak)) return;
+        const id = String(r[idxIdArsip] || '');
+        if (id) dihapus.push(id);
+      });
+    }
+  }
+
+  return { baris, dihapus };
 }
 
 /**

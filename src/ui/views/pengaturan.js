@@ -21,6 +21,7 @@ import {
 } from '../../services/sheets-sync.js';
 import { tarikTransaksiEmail, statusTarikEmail } from '../../services/email-feed-sync.js';
 import { tarikDanGabungEntitas } from '../../services/entitas-sync.js';
+import { tarikDanGabungTransaksi } from '../../services/transaksi-sync.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
 import { toastSukses, toastGagal } from '../components/toast.js';
 import { pergiKe } from '../router.js';
@@ -487,6 +488,23 @@ async function kartuSheets(render) {
             b.textContent = labelAwal;
           }
         } }, 'Tarik Rekening & Kategori dari Sheets'),
+        h('button', { type: 'button', onclick: async (e) => {
+          const b = e.currentTarget; b.disabled = true;
+          const labelAwal = b.textContent;
+          try {
+            const r = await tarikDanGabungTransaksi();
+            if (r?.skipped) { toastGagal('Aktifkan Sheets & isi URL dulu'); return; }
+            toastSukses(`Transaksi: ${r.baru} baru, ${r.diperbarui} diperbarui`
+              + (r.dihapus ? `, ${r.dihapus} dihapus` : '') + '.');
+            emit(EVENT.DATA_BERUBAH, { sumber: 'transaksi-sync' });
+            render();
+          } catch (err) {
+            toastGagal(`Gagal menarik: ${err.message}`);
+          } finally {
+            b.disabled = false;
+            b.textContent = labelAwal;
+          }
+        } }, 'Tarik Transaksi dari Sheets'),
       ]),
       h('details.mt-3', null, [
         h('summary.redup', { text: 'Cara buat Sheet + Script (1 menit)' }),
@@ -495,7 +513,8 @@ async function kartuSheets(render) {
           h('div', { text: '2. Extensions → Apps Script → tempel Code.gs dari repo (lihat sheets/Code.gs) → Deploy → Web App → Anyone with link → copy URL → tempel di atas → Simpan → Test webhook.' }),
           h('div', { text: '3. Sheet terisi otomatis tiap upload. Tombol \"Kirim semua\" untuk backfill.' }),
           h('div', { text: '4. Rekening dan Kategori dicadangkan otomatis ke tab "Akun" dan "Kategori" setiap kali disimpan/dihapus, dan ikut terkirim ulang oleh "Kirim semua sekarang".' }),
-          h('div', { text: '5. "Tarik Rekening & Kategori dari Sheets" menarik balik ke perangkat ini — dipakai untuk memindahkan data ke device baru, atau menyamakan setelah mengedit di perangkat lain. Yang lebih baru menang kalau ada bentrok.' }),
+          h('div', { text: '5. "Tarik Rekening & Kategori dari Sheets" dan "Tarik Transaksi dari Sheets" menarik balik ke perangkat ini — dipakai untuk memindahkan data ke device baru, atau menyamakan setelah mengedit di perangkat lain. Yang lebih baru menang kalau ada bentrok.' }),
+          h('div', { text: '6. Sheet lama (dibuat sebelum fitur tarik ini ada) perlu satu kali "Kirim semua sekarang" dulu supaya baris lama dapat ID — tanpa itu, transaksi lama belum bisa ikut ditarik balik.' }),
         ]),
       ]),
     ]),

@@ -152,6 +152,36 @@ export function barisUntukSheet(t, akunMap, kategoriMap) {
     // berarti "bank tidak menyebutkan", dan Dashboard membedakan keduanya untuk
     // memeriksa kelengkapan data tiap bulan.
     saldo: t.saldo === null || t.saldo === undefined || t.saldo === '' ? '' : Number(t.saldo),
+    // Dua field terakhir ini TIDAK dipakai upsert (yang masih berbasis Hash
+    // di atas) — keduanya murni untuk pull & resolusi konflik last-updated-
+    // wins lintas perangkat (lihat services/transaksi-sync.js dan kolom
+    // "ID Transaksi"/"Diubah Pada" di sheets/Code.gs).
+    id: t.id || '',
+    diubahPada: t.diubahPada || '',
+  };
+}
+
+/**
+ * Kebalikan dari barisUntukSheet — ubah satu baris hasil
+ * tarikTransaksiDariSheets() jadi bentuk siap pakai untuk
+ * repo/transactions.js simpanSatu(). `accountId` SENGAJA tidak dipetakan di
+ * sini: baris dari Sheet hanya membawa bank/nomorRekening/namaPemilik
+ * (accountId lokal tidak portable antar perangkat), jadi resolusinya jadi
+ * tanggung jawab pemanggil lewat repo/accounts.js cariAtauBuat() — persis
+ * fungsi yang sama dipakai alur upload e-statement.
+ */
+export function transaksiDariBarisSheet(row) {
+  return {
+    id: row.id || '',
+    hash: row.hash || '',
+    tanggal: row.tanggal || '',
+    deskripsi: row.deskripsi || '',
+    nominal: Number(row.nominal) || 0,
+    kategoriId: row.kategoriId || '',
+    sumber: row.sumber || '',
+    transferInternal: Boolean(row.transferInternal),
+    saldo: row.saldo === null || row.saldo === undefined || row.saldo === '' ? null : Number(row.saldo),
+    diubahPada: row.diubahPada || '',
   };
 }
 
@@ -723,4 +753,22 @@ export async function tarikEntitasDariSheets(entity) {
   if (!aktif || !url) return { skipped: true };
   const jawab = await post(url, { tarikEntitas: true, entity }, BATAS_BONGKAH_MS);
   return { ok: true, baris: Array.isArray(jawab.baris) ? jawab.baris : [] };
+}
+
+/**
+ * Tarik TRANSAKSI yang berubah/dihapus sejak checkpoint — dipakai
+ * services/transaksi-sync.js. Beda dari tarikEntitasDariSheets: pakai
+ * checkpoint (`sejak`/`sekarang`, waktu SERVER seperti tarikTransaksiEmail),
+ * bukan full-pull — tabel ini bisa berisi ribuan baris.
+ */
+export async function tarikTransaksiDariSheets(sejak) {
+  const { url, aktif } = await bacaKonfigSheets();
+  if (!aktif || !url) return { skipped: true };
+  const jawab = await post(url, { tarikTransaksi: true, sejak: sejak || null }, BATAS_BONGKAH_MS);
+  return {
+    ok: true,
+    baris: Array.isArray(jawab.baris) ? jawab.baris : [],
+    dihapus: Array.isArray(jawab.dihapus) ? jawab.dihapus : [],
+    sekarang: jawab.sekarang,
+  };
 }

@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import {
   barisUntukSheet, validasiUrlWebhook, post, kirimBaris, kirimHapus, UKURAN_BONGKAH,
   barisAkunUntukSheet, barisKategoriUntukSheet, akunDariBarisSheet, kategoriDariBarisSheet,
+  transaksiDariBarisSheet,
 } from '../src/services/sheets-sync.js';
 import { buatTransaksi, buatAkun, buatKategori } from '../src/domain/entities.js';
 
@@ -105,6 +106,53 @@ test('barisUntukSheet mengirim penanda transfer internal, dan defaultnya false',
   // Nilai yang tidak pernah diisi harus jadi false, bukan undefined — sel
   // kosong di Sheet tidak bisa dibedakan dari "bukan transfer".
   assert.equal(typeof barisUntukSheet(biasa, new Map()).transferInternal, 'boolean');
+});
+
+test('barisUntukSheet membawa id dan diubahPada apa adanya (dipakai pull, bukan upsert)', () => {
+  const t = buatTransaksi({
+    id: 'trx1', hash: 'h10', tanggal: '2025-07-01', deskripsi: 'Tes', nominal: 1000,
+    diubahPada: '2026-01-01T00:00:00.000Z',
+  });
+  const baris = barisUntukSheet(t, new Map());
+  assert.equal(baris.id, 'trx1');
+  assert.equal(baris.diubahPada, '2026-01-01T00:00:00.000Z');
+});
+
+/* ==========================================================================
+   transaksiDariBarisSheet — kebalikan dari barisUntukSheet, dipakai saat
+   menerapkan hasil tarik dari Sheets (lihat transaksi-sync.js)
+   ========================================================================== */
+
+test('transaksiDariBarisSheet memetakan field inti apa adanya', () => {
+  const row = {
+    id: 'trx1', hash: 'h1', tanggal: '2025-07-01', deskripsi: 'Gaji', nominal: 5000000,
+    kategoriId: 'kat1', sumber: 'manual', transferInternal: false, saldo: 2000000,
+    diubahPada: '2026-01-01T00:00:00.000Z',
+  };
+  const trx = transaksiDariBarisSheet(row);
+  assert.equal(trx.id, 'trx1');
+  assert.equal(trx.hash, 'h1');
+  assert.equal(trx.nominal, 5000000);
+  assert.equal(trx.kategoriId, 'kat1');
+  assert.equal(trx.saldo, 2000000);
+  assert.equal(trx.diubahPada, '2026-01-01T00:00:00.000Z');
+  assert.equal('accountId' in trx, false, 'accountId sengaja tidak dipetakan -- itu tanggung jawab pemanggil');
+});
+
+test('transaksiDariBarisSheet mengubah saldo kosong jadi null, bukan 0 atau string kosong', () => {
+  assert.equal(transaksiDariBarisSheet({ id: 'trx2', saldo: '' }).saldo, null);
+  assert.equal(transaksiDariBarisSheet({ id: 'trx3' }).saldo, null);
+});
+
+test('transaksiDariBarisSheet lalu barisUntukSheet pulang-pergi tanpa kehilangan id/nominal/diubahPada', () => {
+  const asli = buatTransaksi({
+    id: 'trx9', hash: 'h9', tanggal: '2025-08-01', deskripsi: 'Kopi', nominal: -25000,
+    diubahPada: '2026-03-03T00:00:00.000Z',
+  });
+  const balik = transaksiDariBarisSheet(barisUntukSheet(asli, new Map()));
+  assert.equal(balik.id, 'trx9');
+  assert.equal(balik.nominal, -25000);
+  assert.equal(balik.diubahPada, '2026-03-03T00:00:00.000Z');
 });
 
 /* ==========================================================================
