@@ -35,6 +35,12 @@
  *     siklus bangun-ulang di atas. "Anggaran" hanya ditambah baris kategori
  *     baru yang belum ada, tidak pernah menimpa/menghapus baris lama.
  *
+ * Dua tab TAMBAHAN, "Akun" dan "Kategori", dibuat LAZY oleh tanganiEntitas()
+ * saat doPost{entity:'akun'|'kategori'} pertama kali dipanggil — sama seperti
+ * tab data utama dibuat lazy oleh getSheet(). Cadangan rekening/kas dan
+ * kategori, upsert per ID (bukan hash: baris di sini genuinely dibuat
+ * pengguna, bukan diturunkan dari isi statement).
+ *
  * Angka GABUNGAN mengecualikan transfer internal (kolom O) supaya pindah dana
  * antar rekening sendiri tidak terhitung dua kali; angka PER REKENING tetap
  * menghitungnya, karena uangnya memang keluar/masuk di rekening itu.
@@ -150,16 +156,59 @@ const TOP_ANOMALI = 25;
 /** Baris tetap hasil pencarian di tab Cari Transaksi (lihat pastikanCariTransaksi). */
 const MAKS_HASIL_CARI = 500;
 
-const HEADER = ['Hash','Tanggal','Deskripsi','Nominal','Debit','Kredit','ID Kategori','Bank','No. Rekening','Nama Pemilik','Sumber','ID Upload','Dikirim Pada','Kategori','Transfer Internal','Saldo'];
-const LEBAR_KOLOM = [110, 95, 300, 120, 120, 120, 130, 90, 130, 150, 80, 110, 140, 150, 130, 130];
+/**
+ * Kolom Q "ID Transaksi" & R "Diubah Pada" ditambah di UJUNG (bukan disisip)
+ * supaya seluruh rumus Dashboard/Dashboard Full yang merujuk kolom lewat
+ * HURUF TETAP (A..P, lihat kol()/kolomMaya() di bawah) sama sekali tidak
+ * bergeser — tidak satu pun formula perlu disentuh untuk perubahan ini.
+ * Dipakai tarikTransaksi() untuk pull & resolusi konflik last-updated-wins
+ * (lihat services/transaksi-sync.js), TIDAK dipakai upsert (yang masih
+ * berbasis Hash seperti sebelumnya) maupun rumus Dashboard mana pun.
+ *
+ * Baris yang sudah ada sebelum kolom ini ditambahkan akan kosong di Q/R
+ * sampai terkirim ulang lewat "Kirim semua sekarang" — pull melewati baris
+ * tanpa ID Transaksi (lihat tarikTransaksi) daripada menariknya dengan id
+ * kosong yang bisa tertukar dengan baris lain.
+ */
+const HEADER = ['Hash','Tanggal','Deskripsi','Nominal','Debit','Kredit','ID Kategori','Bank','No. Rekening','Nama Pemilik','Sumber','ID Upload','Dikirim Pada','Kategori','Transfer Internal','Saldo','ID Transaksi','Diubah Pada'];
+const LEBAR_KOLOM = [110, 95, 300, 120, 120, 120, 130, 90, 130, 150, 80, 110, 140, 150, 130, 130, 130, 140];
 const KOLOM_RP = [4, 5, 6, 16];  // Nominal, Debit, Kredit, Saldo
 const KOLOM_WAKTU = 13;          // Dikirim Pada
-const KOLOM_SEMBUNYI = [1, 7, 12]; // Hash, ID Kategori, ID Upload — dipakai mesin, bukan mata
+const KOLOM_SEMBUNYI = [1, 7, 12, 17]; // Hash, ID Kategori, ID Upload, ID Transaksi — dipakai mesin, bukan mata
 /** Kolom terakhir yang perlu dibaca saat menyelaraskan: I, "No. Rekening". */
 const KOLOM_REKENING_AKHIR = 9;
 
 const RP = '"Rp "#,##0;[RED]-"Rp "#,##0';
 const FORMAT_WAKTU = 'dd/mm/yyyy HH:mm';
+
+/**
+ * Tab "Akun" & "Kategori" — cadangan rekening/kas dan kategori, ditulis lewat
+ * doPost{entity:'akun'|'kategori'} (lihat tanganiEntitas) dan dibaca lewat
+ * doPost{tarikEntitas:true} (lihat tarikEntitas) untuk restore/sync ke
+ * perangkat lain. Berbeda dari tab Transaksi: baris di sini genuinely dibuat
+ * pengguna (halaman Rekening/Kategori), bukan diturunkan dari isi statement
+ * — kuncinya kolom ID (A), bukan hash konten seperti Transaksi. Tabelnya
+ * kecil (biasanya puluhan baris), jadi ditulis apa adanya tanpa optimasi
+ * blok/bongkah yang dipakai tab Transaksi untuk ribuan baris, dan ditarik
+ * UTUH setiap kali (tanpa checkpoint `sejak`) — beda dari
+ * tarikTransaksiEmail yang perlu checkpoint karena tabnya bisa panjang.
+ *
+ * "Diubah Pada" dikirim APA ADANYA oleh klien (waktu edit sungguhan di
+ * perangkat itu, dipakai resolusi konflik last-updated-wins di
+ * services/entitas-sync.js) — beda dari "Dikirim Pada" tab Transaksi yang
+ * distempel SERVER. "Dihapus Pada" sebaliknya SELALU distempel server saat
+ * tanganiEntitas memproses penghapusan: baris tidak pernah benar-benar
+ * dibuang (lihat AD-008 soal tombstone) supaya perangkat lain yang menarik
+ * data ini tahu record itu sudah dihapus, bukan mengiranya belum pernah ada
+ * lalu menghidupkannya kembali.
+ */
+const AKUN_SHEET_NAME = 'Akun';
+const HEADER_AKUN = ['ID', 'Bank', 'No. Rekening', 'Nama Pemilik', 'Mata Uang', 'Jenis', 'Saldo Awal', 'Saldo', 'Jumlah Transaksi', 'Warna', 'Catatan', 'Dibuat Pada', 'Diubah Pada', 'Dihapus Pada'];
+const KOLOM_AKUN = ['id', 'bank', 'nomorRekening', 'namaPemilik', 'mataUang', 'jenis', 'saldoAwal', 'saldo', 'jumlahTransaksi', 'warna', 'catatan', 'dibuatPada', 'diubahPada', 'dihapusPada'];
+
+const KATEGORI_SHEET_NAME = 'Kategori';
+const HEADER_KATEGORI = ['ID', 'Nama', 'Tipe', 'Warna', 'Ikon', 'Kata Kunci', 'Prioritas', 'Bawaan', 'Urutan', 'Dibuat Pada', 'Diubah Pada', 'Dihapus Pada'];
+const KOLOM_KATEGORI = ['id', 'nama', 'tipe', 'warna', 'ikon', 'polaKataKunci', 'prioritas', 'bawaan', 'urutan', 'dibuatPada', 'diubahPada', 'dihapusPada'];
 
 /* Palet laporan keuangan: kepala tabel dan pita seksi biru tua berteks putih,
    angka surplus hijau, defisit merah. */
@@ -196,6 +245,7 @@ function sheetData(ss) {
     DASHBOARD_SHEET_NAME, DASHBOARD_FULL_SHEET_NAME,
     ANGGARAN_SHEET_NAME, CARI_TRANSAKSI_SHEET_NAME, ARSIP_SHEET_NAME,
     KONFIGURASI_EMAIL_SHEET_NAME, EMAIL_MASUK_SHEET_NAME, TRANSAKSI_EMAIL_SHEET_NAME, LOG_EMAIL_SHEET_NAME,
+    AKUN_SHEET_NAME, KATEGORI_SHEET_NAME,
   ];
   const lain = ss.getSheets().filter((s) => bawaan.indexOf(s.getName()) === -1);
   return lain.length ? lain[0] : ss.insertSheet(DATA_SHEET_NAME, 0);
@@ -1272,6 +1322,127 @@ function pastikanLogEmail(ss) {
 }
 
 /**
+ * Buat tab entitas (Akun/Kategori) bila belum ada, dan perbaiki headernya bila
+ * berubah — sama seperti guard header di getSheet(), disederhanakan karena
+ * tab ini tidak punya rumus maupun urusan lokal (pemisah argumen, dst.) yang
+ * perlu dijaga.
+ */
+function pastikanTabEntitas(ss, nama, header) {
+  let sh = ss.getSheetByName(nama);
+  if (!sh) {
+    sh = ss.insertSheet(nama, ss.getNumSheets());
+    sh.appendRow(header);
+    sh.setFrozenRows(1);
+    sh.getRange(1, 1, 1, header.length)
+      .setFontWeight('bold').setFontColor('#ffffff').setBackground(BIRU_TUA)
+      .setVerticalAlignment('middle');
+    sh.setTabColor('#0b8043');
+    return sh;
+  }
+  if (sh.getMaxColumns() < header.length) {
+    sh.insertColumnsAfter(sh.getMaxColumns(), header.length - sh.getMaxColumns());
+  }
+  const h = sh.getRange(1, 1, 1, header.length).getValues()[0].map(String);
+  if (h.join('|') !== header.join('|')) sh.getRange(1, 1, 1, header.length).setValues([header]);
+  return sh;
+}
+
+/**
+ * Upsert/hapus baris AKUN atau KATEGORI berdasarkan ID (kolom A) — dipanggil
+ * dari doPost saat payload membawa `entity`. Sengaja terpisah dari alur
+ * TRANSAKSI (rows/hapus/selaras di doPost utama): tabelnya kecil, jadi
+ * seluruh baris yang berubah ditulis langsung tanpa optimasi blok/bongkah.
+ *
+ * Penghapusan TIDAK membuang barisnya seperti dulu — kolom "Dihapus Pada"
+ * distempel sebagai tombstone (lihat AD-008). Baris yang benar-benar dibuang
+ * dari Sheet berarti perangkat lain yang menariknya lewat tarikEntitas() sama
+ * sekali tidak tahu record itu pernah ada, dan bisa menghidupkannya kembali
+ * kalau device itu sendiri belum sempat menghapusnya secara lokal.
+ */
+function tanganiEntitas(data, header, kolom, namaTab) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = pastikanTabEntitas(ss, namaTab, header);
+  const lebar = header.length;
+  const kolomDihapusPada = kolom.indexOf('dihapusPada') + 1; // 1-based untuk getRange
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  const hapus = Array.isArray(data.hapus) ? data.hapus.map(String).filter(Boolean) : [];
+
+  const last = sh.getLastRow();
+  const lama = last > 1 ? sh.getRange(2, 1, last - 1, 1).getValues() : [];
+  const nomorBaris = {};
+  lama.forEach((r, i) => { const id = String(r[0] || ''); if (id) nomorBaris[id] = i + 2; });
+
+  const ditombstone = {};
+  hapus.forEach((id) => { if (nomorBaris[id]) ditombstone[nomorBaris[id]] = true; });
+
+  // Payload tidak seharusnya pernah berisi ID ganda, tapi tetap dijaga di
+  // sini seperti alur TRANSAKSI: kejadian terakhir yang dipakai.
+  const dedup = new Map();
+  rows.forEach((r) => { if (r && r.id) dedup.set(String(r.id), r); });
+
+  const tambah = [];
+  const perbarui = [];
+  for (const r of dedup.values()) {
+    const id = String(r.id);
+    const nilai = kolom.map((k) => {
+      const v = r[k];
+      return v === null || v === undefined ? '' : v;
+    });
+    const baris = nomorBaris[id];
+    if (baris && !ditombstone[baris]) perbarui.push({ baris, nilai });
+    else if (!baris) tambah.push(nilai);
+  }
+
+  perbarui.forEach((p) => sh.getRange(p.baris, 1, 1, lebar).setValues([p.nilai]));
+  if (tambah.length) sh.getRange(sh.getLastRow() + 1, 1, tambah.length, lebar).setValues(tambah);
+
+  const nomorTombstone = Object.keys(ditombstone).map(Number);
+  const sekarang = new Date();
+  nomorTombstone.forEach((n) => sh.getRange(n, kolomDihapusPada).setValue(sekarang));
+
+  return {
+    ok: true,
+    inserted: tambah.length,
+    updated: perbarui.length,
+    dihapus: nomorTombstone.length,
+    spreadsheet: ss.getName(),
+    sheet: sh.getName(),
+  };
+}
+
+/**
+ * Baca seluruh tab entitas (Akun/Kategori) untuk ditarik ke perangkat lain —
+ * dipanggil dari doPost{tarikEntitas:true}. Beda dari tarikTransaksiEmail:
+ * TIDAK memakai checkpoint `sejak` — tabelnya kecil, jadi seluruh baris
+ * (termasuk yang sudah ber-tombstone "Dihapus Pada") dikirim utuh setiap
+ * kali. Ini juga menghindari ketergantungan pada jam klien vs jam server
+ * yang justru jadi alasan tarikTransaksiEmail memakai checkpoint waktu
+ * SERVER — dengan full pull, pertanyaan itu tidak perlu dijawab sama sekali.
+ */
+function tarikEntitas(header, kolom, namaTab) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = pastikanTabEntitas(ss, namaTab, header);
+  const last = sh.getLastRow();
+  if (last < 2) return [];
+
+  const nilai = sh.getRange(2, 1, last - 1, header.length).getValues();
+  return nilai
+    .filter((r) => String(r[0] || '')) // baris tanpa ID (kosong) dilewati
+    .map((r) => {
+      const obj = {};
+      kolom.forEach((k, i) => {
+        const v = r[i];
+        // Date sungguhan (Diubah Pada/Dihapus Pada/Dibuat Pada) ditulis balik
+        // sebagai ISO string, sama seperti bangunBarisTarikTransaksiEmail —
+        // JSON.stringify sendiri akan mengubah objek Date jadi ISO, tapi
+        // eksplisit di sini lebih jelas dan tidak bergantung pada perilaku itu.
+        obj[k] = v instanceof Date ? v.toISOString() : v;
+      });
+      return obj;
+    });
+}
+
+/**
  * Peta nama bulan ke indeks 0-11 — memuat SINGKATAN INDONESIA dan INGGRIS
  * sekaligus (mis. "Agu"/"Aug", "Okt"/"Oct", "Des"/"Dec") karena sample email
  * BCA dan Permata yang jadi acuan parser ini masing-masing memakai singkatan
@@ -2220,6 +2391,57 @@ function doPost(e) {
     }
   }
 
+  // Tarik AKUN/KATEGORI juga murni baca — dijawab sebelum kunci diambil,
+  // sama seperti ping/tarikTransaksiEmail. Dipakai restore & sync ke
+  // perangkat lain (lihat services/entitas-sync.js).
+  if (data.tarikEntitas === true && (data.entity === 'akun' || data.entity === 'kategori')) {
+    try {
+      const cfg = data.entity === 'akun'
+        ? { header: HEADER_AKUN, kolom: KOLOM_AKUN, nama: AKUN_SHEET_NAME }
+        : { header: HEADER_KATEGORI, kolom: KOLOM_KATEGORI, nama: KATEGORI_SHEET_NAME };
+      const baris = tarikEntitas(cfg.header, cfg.kolom, cfg.nama);
+      return json({ ok: true, baris });
+    } catch (err) {
+      return json({ ok: false, error: String(err && err.message || err) });
+    }
+  }
+
+  // Tarik TRANSAKSI juga murni baca — checkpoint berdasarkan waktu SERVER
+  // ("Dikirim Pada"/"Dihapus Pada", sama-sama distempel Code.gs), bukan jam
+  // klien, dengan alasan yang sama seperti tarikTransaksiEmail.
+  if (data.tarikTransaksi === true) {
+    try {
+      const sejak = data.sejak ? new Date(data.sejak) : null;
+      const sejakValid = sejak && !isNaN(sejak.getTime()) ? sejak : null;
+      const hasil = tarikTransaksi(sejakValid);
+      return json({ ok: true, baris: hasil.baris, dihapus: hasil.dihapus, sekarang: new Date().toISOString() });
+    } catch (err) {
+      return json({ ok: false, error: String(err && err.message || err) });
+    }
+  }
+
+  // AKUN/KATEGORI: upsert/hapus berdasarkan ID, di tab masing-masing —
+  // terpisah dari alur TRANSAKSI di bawah (yang berbasis hash & mendukung
+  // rapikan/selaras). Tetap butuh kunci: sama-sama menulis ke spreadsheet ini.
+  if (data.entity === 'akun' || data.entity === 'kategori') {
+    const kunciEntitas = LockService.getScriptLock();
+    try {
+      kunciEntitas.waitLock(30000);
+    } catch (err) {
+      return json({ ok: false, error: 'Sheet sedang dipakai proses lain, coba lagi sebentar' });
+    }
+    try {
+      const cfg = data.entity === 'akun'
+        ? { header: HEADER_AKUN, kolom: KOLOM_AKUN, nama: AKUN_SHEET_NAME }
+        : { header: HEADER_KATEGORI, kolom: KOLOM_KATEGORI, nama: KATEGORI_SHEET_NAME };
+      return json(tanganiEntitas(data, cfg.header, cfg.kolom, cfg.nama));
+    } catch (err) {
+      return json({ ok: false, error: String(err && err.message || err) });
+    } finally {
+      kunciEntitas.releaseLock();
+    }
+  }
+
   // Dua perangkat yang menyinkron bersamaan sama-sama melakukan baca-ubah-tulis
   // di sheet yang sama; tanpa kunci, yang satu bisa menimpa hasil yang lain.
   const kunci = LockService.getScriptLock();
@@ -2336,7 +2558,7 @@ function doPost(e) {
       // sah, sedangkan kosong berarti bank tidak menyebutkannya (transaksi
       // manual). Dashboard membedakan keduanya saat memeriksa kelengkapan bulan.
       const saldo = r.saldo === '' || r.saldo === null || r.saldo === undefined ? '' : Number(r.saldo);
-      const baru = [hash, r.tanggal||'', r.deskripsi||'', Number(r.nominal)||0, Number(r.debit)||0, Number(r.kredit)||0, r.kategoriId||'', r.bank||'', r.nomorRekening||'', r.namaPemilik||'', r.sumber||'', r.uploadedFileId||'', ts, r.kategoriNama||'', r.transferInternal === true, saldo];
+      const baru = [hash, r.tanggal||'', r.deskripsi||'', Number(r.nominal)||0, Number(r.debit)||0, Number(r.kredit)||0, r.kategoriId||'', r.bank||'', r.nomorRekening||'', r.namaPemilik||'', r.sumber||'', r.uploadedFileId||'', ts, r.kategoriNama||'', r.transferInternal === true, saldo, r.id||'', r.diubahPada||''];
       const baris = hash ? nomorBaris[hash] : null;
       if (baris && !dibuang[baris]) perbarui.push({ baris, nilai: baru });
       else if (!baris) tambah.push(baru);
@@ -2491,12 +2713,22 @@ function arsipkan(sh, nomor) {
     const isi = nomor.map((n) => jendela[n - awal]);
     if (!isi.length) return;
 
+    const headerArsip = ['Dihapus Pada'].concat(HEADER);
     let arsip = ss.getSheetByName(ARSIP_SHEET_NAME);
     if (!arsip) {
       arsip = ss.insertSheet(ARSIP_SHEET_NAME, ss.getNumSheets());
-      arsip.appendRow(['Dihapus Pada'].concat(HEADER));
+      arsip.appendRow(headerArsip);
       arsip.setFrozenRows(1);
       arsip.hideSheet();
+    } else if (arsip.getLastColumn() < headerArsip.length) {
+      // _Arsip dibuat sebelum kolom ID Transaksi/Diubah Pada ada di HEADER.
+      // Baris BARU yang ditulis di bawah selalu selebar HEADER sekarang (lihat
+      // `lebar`), jadi headernya wajib dilebarkan dulu — kalau tidak, dua
+      // kolom terakhir jadi data tanpa label, dan tarikTransaksi() (yang
+      // mencari kolom ID Transaksi/Dihapus Pada lewat NAMA header, bukan
+      // posisi tetap) tidak akan menemukannya sama sekali.
+      arsip.insertColumnsAfter(arsip.getLastColumn(), headerArsip.length - arsip.getLastColumn());
+      arsip.getRange(1, 1, 1, headerArsip.length).setValues([headerArsip]);
     }
     const cap = new Date();
     const baris = isi.map((r) => [cap].concat(r));
@@ -2506,6 +2738,85 @@ function arsipkan(sh, nomor) {
     // membatalkan penghapusan yang sudah diminta dan sudah dikonfirmasi.
     console.warn('Gagal mengarsipkan baris:', e);
   }
+}
+
+/** Kolom Date -> ISO string; nilai lain (string/angka/kosong) dikembalikan apa adanya. */
+function keIso(v) {
+  return v instanceof Date ? v.toISOString() : v;
+}
+
+/**
+ * Baca transaksi yang berubah (baru/diperbarui) DAN yang sudah dihapus sejak
+ * checkpoint — dipanggil dari doPost{tarikTransaksi:true}. Dipakai
+ * services/transaksi-sync.js untuk sync & restore lintas perangkat.
+ *
+ * Sengaja TIDAK menyentuh alur hapus TRANSAKSI yang sudah ada (hapusBaris
+ * tetap memindahkan baris ke _Arsip lalu membuangnya dari tab utama, persis
+ * seperti sebelum pull ada) — _Arsip SUDAH berfungsi sebagai catatan
+ * tombstone lengkap dengan waktu ("Dihapus Pada"), jadi tidak perlu
+ * membangun mekanisme tombstone baru khusus untuk TRANSAKSI. Ini juga berarti
+ * TIDAK SATU PUN rumus Dashboard/Dashboard Full perlu diubah: keduanya tetap
+ * membaca tab "Transaksi" yang isinya sudah bersih dari baris terhapus,
+ * persis seperti sebelumnya.
+ *
+ * Kolom dicari lewat NAMA header (bukan posisi tetap) supaya tetap benar
+ * walau _Arsip masih berisi baris lama dari sebelum migrasi kolom ID
+ * Transaksi/Diubah Pada (lihat arsipkan()) — baris semacam itu otomatis
+ * terlewati karena idnya kosong, bukan salah baca kolom lain.
+ */
+function tarikTransaksi(sejak) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = getSheet();
+  const idxId = HEADER.indexOf('ID Transaksi');
+  const idxDiubah = HEADER.indexOf('Diubah Pada');
+  const idxDikirim = HEADER.indexOf('Dikirim Pada');
+
+  const baris = [];
+  const last = sh.getLastRow();
+  if (last > 1) {
+    const nilai = sh.getRange(2, 1, last - 1, HEADER.length).getValues();
+    nilai.forEach((r) => {
+      const dikirim = r[idxDikirim] instanceof Date ? r[idxDikirim] : new Date(r[idxDikirim]);
+      if (sejak && !(dikirim > sejak)) return;
+      const id = String(r[idxId] || '');
+      if (!id) return; // baris dari sebelum migrasi -- belum bisa ditarik amannya, tunggu "Kirim semua sekarang"
+      baris.push({
+        id,
+        hash: String(r[0] || ''),
+        tanggal: r[1] instanceof Date ? Utilities.formatDate(r[1], Session.getScriptTimeZone(), 'yyyy-MM-dd') : String(r[1] || ''),
+        deskripsi: String(r[2] || ''),
+        nominal: Number(r[3]) || 0,
+        kategoriId: String(r[6] || ''),
+        bank: String(r[7] || ''),
+        nomorRekening: String(r[8] || ''),
+        namaPemilik: String(r[9] || ''),
+        sumber: String(r[10] || ''),
+        transferInternal: r[14] === true,
+        saldo: r[15] === '' || r[15] === null ? null : Number(r[15]),
+        diubahPada: keIso(r[idxDiubah]) || '',
+      });
+    });
+  }
+
+  const dihapus = [];
+  const arsip = ss.getSheetByName(ARSIP_SHEET_NAME);
+  const lastArsip = arsip ? arsip.getLastRow() : 0;
+  if (arsip && lastArsip > 1) {
+    const headerArsip = arsip.getRange(1, 1, 1, arsip.getLastColumn()).getValues()[0].map(String);
+    const idxDihapusPada = headerArsip.indexOf('Dihapus Pada');
+    const idxIdArsip = headerArsip.indexOf('ID Transaksi');
+    if (idxIdArsip !== -1) {
+      const nilaiArsip = arsip.getRange(2, 1, lastArsip - 1, headerArsip.length).getValues();
+      nilaiArsip.forEach((r) => {
+        const dihapusPada = r[idxDihapusPada] instanceof Date ? r[idxDihapusPada] : new Date(r[idxDihapusPada]);
+        if (sejak && !(dihapusPada > sejak)) return;
+        const id = String(r[idxIdArsip] || '');
+        if (id) dihapus.push(id);
+      });
+    }
+  }
+
+  return { baris, dihapus };
 }
 
 /**

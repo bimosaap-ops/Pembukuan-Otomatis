@@ -32,6 +32,20 @@ export async function satu(id) {
   return ambil(STORE.TRANSACTIONS, id);
 }
 
+/**
+ * Cari transaksi lewat hash — dipakai services/transaksi-sync.js untuk
+ * menjaga index `hash` (unique di db.js) tidak pernah dilanggar saat
+ * menerapkan baris hasil pull: dua perangkat yang meng-upload statement yang
+ * sama secara independen menghasilkan hash sama tapi id acak berbeda, dan
+ * baris begitu harus dilewati (sudah ada lewat id lain), bukan disimpan
+ * sebagai transaksi baru.
+ */
+export async function satuLewatHash(hash) {
+  if (!hash) return null;
+  const rows = await ambilLewatIndex(STORE.TRANSACTIONS, 'hash', hash);
+  return rows[0] || null;
+}
+
 /** Mengambil beberapa transaksi sekaligus lewat id. Id yang sudah tidak ada dilewati. */
 export async function beberapa(ids) {
   const unik = [...new Set(ids)].filter(Boolean);

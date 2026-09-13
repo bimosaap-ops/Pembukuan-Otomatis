@@ -11,7 +11,7 @@ import * as trxRepo from '../../data/repo/transactions.js';
 import * as akunRepo from '../../data/repo/accounts.js';
 import { buatKategori, TIPE_KATEGORI, KATEGORI_LAINNYA_MASUK, KATEGORI_LAINNYA_KELUAR } from '../../domain/entities.js';
 import { tentukanKategori } from '../../domain/categorize.js';
-import { syncAtauAntri } from '../../services/sheets-sync.js';
+import { syncAtauAntri, syncEntitasKeSheets, hapusEntitasDariSheets } from '../../services/sheets-sync.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
 import { toastSukses, toastGagal } from '../components/toast.js';
 
@@ -172,7 +172,7 @@ function bukaForm(kategori, tipeAwal, selesai) {
         type: 'button',
         onclick: async () => {
           if (!fNama.value.trim()) { toastGagal('Nama kategori tidak boleh kosong.'); return; }
-          await kategoriRepo.simpanKategori(buatKategori({
+          const tersimpan = await kategoriRepo.simpanKategori(buatKategori({
             ...(kategori || {}),
             nama: fNama.value.trim(),
             ikon: fIkon.value.trim() || '🏷',
@@ -186,6 +186,7 @@ function bukaForm(kategori, tipeAwal, selesai) {
           m.tutup();
           emit(EVENT.DATA_BERUBAH, { sumber: 'kategori' });
           selesai?.();
+          syncEntitasKeSheets('kategori', [tersimpan]).catch((e) => console.warn('Sheets sync gagal:', e));
         },
       }, ubah ? 'Simpan perubahan' : 'Tambah kategori'),
     ],
@@ -211,6 +212,7 @@ async function hapus(kategori, selesai) {
     await trxRepo.ubahKategoriBanyak(terpakai.map((t) => t.id), penampung);
   }
   await kategoriRepo.hapusKategori(kategori.id);
+  hapusEntitasDariSheets('kategori', [kategori.id]).catch((e) => console.warn('Hapus kategori di Sheets gagal:', e));
   toastSukses('Kategori dihapus.');
   emit(EVENT.DATA_BERUBAH, { sumber: 'kategori' });
   selesai?.();

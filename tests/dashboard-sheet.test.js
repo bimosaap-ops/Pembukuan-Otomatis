@@ -150,7 +150,11 @@ function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
     return new Proxy(sh, { get: (o, k) => (k in o ? o[k] : () => o) });
   }
 
-  const lembar = { Transaksi: buatSheet('Transaksi', 16, 5000) };
+  // 18, bukan 16: HEADER Code.gs sejak kolom "ID Transaksi"/"Diubah Pada"
+  // ditambah di ujung (lihat kepala berkas Code.gs) -- Dashboard sendiri
+  // tidak menyentuh dua kolom itu, tapi grid tiruan harus cukup lebar
+  // supaya getRange(2,1,n,HEADER.length) tidak dianggap melampaui batas.
+  const lembar = { Transaksi: buatSheet('Transaksi', 18, 5000) };
   const ss = {
     getSheetByName: (n) => lembar[n] || null,
     insertSheet: (n) => { dibuat.push(n); lembar[n] = buatSheet(n); return lembar[n]; },
@@ -404,7 +408,9 @@ function barisPenuh(i) {
  * mungkin membedakan pembacaan 1 kolom dari pembacaan 16 kolom, dan justru itu
  * yang sedang dijaga di sini.
  */
-function jalankanDoPost({ barisAda = 0, payload, kunciMacet = false }) {
+function jalankanDoPost({
+  barisAda = 0, payload, kunciMacet = false, gridTambahan = [], arsipGrid = null,
+}) {
   const grid = [HEADER_UJI.slice()];
   for (let i = 0; i < barisAda; i += 1) {
     const b = barisPenuh(i);
@@ -412,6 +418,11 @@ function jalankanDoPost({ barisAda = 0, payload, kunciMacet = false }) {
       b.bank, b.nomorRekening, b.namaPemilik, b.sumber, b.uploadedFileId, new Date(),
       b.kategoriNama, false, b.saldo]);
   }
+  // Baris tambahan mentah (18 kolom, termasuk ID Transaksi/Diubah Pada) —
+  // dipakai tes tarikTransaksi yang butuh kontrol penuh atas isi baris,
+  // beda dari barisPenuh() yang cuma 16 kolom (bentuk payload dikirim, bukan
+  // isi Sheet yang sudah lengkap dengan kolom pull).
+  gridTambahan.forEach((r) => grid.push(r));
 
   const bacaan = [];   // {baris, kolom, tinggi, lebar}
   const tulisan = [];  // {baris, kolom, tinggi, lebar, nilai}
@@ -427,6 +438,7 @@ function jalankanDoPost({ barisAda = 0, payload, kunciMacet = false }) {
       getIndex: () => 1,
       getParent: () => ss,
       getMaxColumns: () => maxKolom,
+      getLastColumn: () => (isi[0] ? isi[0].length : 0),
       getMaxRows: () => Math.max(isi.length, 1000),
       getLastRow: () => isi.length,
       getBandings: () => [],
@@ -466,6 +478,7 @@ function jalankanDoPost({ barisAda = 0, payload, kunciMacet = false }) {
   }
 
   const lembar = { Transaksi: buatSheet('Transaksi', grid) };
+  if (arsipGrid) lembar._Arsip = buatSheet('_Arsip', arsipGrid);
   const ss = {
     getName: () => 'catatan keuangan',
     getId: () => 'ID_UJI',
@@ -551,6 +564,23 @@ test('hanyaSelaras tetap membuang baris yatim, dan mengarsipkannya dulu', () => 
   assert.equal(h.balasan.updated, 0);
 });
 
+test('arsipkan melebarkan header _Arsip lama (17 kolom) saat ada baris baru dibuang', () => {
+  // _Arsip yang sudah ada dari sebelum kolom ID Transaksi/Diubah Pada
+  // ditambah -- headernya harus diperbaiki, bukan dibiarkan lebih sempit
+  // dari baris yang baru ditulis di bawahnya (lihat catatan arsipkan()).
+  const headerLama = ['Dihapus Pada'].concat(HEADER_UJI);
+  const rows = Array.from({ length: 60 }, (_, i) => identitas(i));
+  const h = jalankanDoPost({
+    barisAda: 100,
+    arsipGrid: [headerLama],
+    payload: { selaras: true, hanyaSelaras: true, rows, jumlah: rows.length },
+  });
+
+  assert.equal(h.balasan.dihapus, 40);
+  const headerBaru = h.lembar._Arsip.getRange(1, 1, 1, h.lembar._Arsip.getLastColumn()).getValues()[0];
+  assert.deepEqual(headerBaru, HEADER_ARSIP_UJI, 'header _Arsip harus diperbaiki jadi 19 kolom');
+});
+
 test('permintaan yang membawa data tidak membangun Dashboard', () => {
   // Membangun Dashboard berarti membaca seluruh tab data dan menghitung ulang
   // QUERY di atasnya. Selama itu menumpang permintaan yang membawa transaksi,
@@ -612,7 +642,8 @@ test('pembaruan borong hanya menyentuh jendela baris yang berubah, bukan seluruh
   const h = jalankanDoPost({ barisAda: 2000, payload: { rows, jumlah: rows.length } });
 
   assert.equal(h.balasan.updated, 250, 'semuanya sudah ada, jadi diperbarui');
-  const tulisLebar = h.tulisan.filter((t) => t.sheet === 'Transaksi' && t.lebar === 16 && t.tinggi > 1);
+  // 18, bukan 16: HEADER.length sejak kolom "ID Transaksi"/"Diubah Pada" ditambah.
+  const tulisLebar = h.tulisan.filter((t) => t.sheet === 'Transaksi' && t.lebar === 18 && t.tinggi > 1);
   assert.equal(tulisLebar.length, 1, 'satu penulisan borong');
   assert.equal(tulisLebar[0].tinggi, 250, `menulis ${tulisLebar[0].tinggi} baris untuk 250 perubahan`);
 });
@@ -650,4 +681,92 @@ test('permintaan yang membawa data tetap menghormati kunci', () => {
   const h = jalankanDoPost({ barisAda: 10, payload: { rows, jumlah: rows.length }, kunciMacet: true });
   assert.equal(h.balasan.ok, false);
   assert.match(h.balasan.error, /sedang dipakai proses lain/);
+});
+
+/* ==========================================================================
+   tarikTransaksi — pull checkpoint-based dari tab Transaksi + _Arsip
+   ========================================================================== */
+
+/** Satu baris mentah 18 kolom persis seperti isi tab Transaksi sungguhan. */
+function barisTransaksiMentah({
+  hash, tanggal = '2025-07-01', nominal = -1000, kategoriId = 'kat1', dikirim, id, diubahPada,
+}) {
+  return [hash, tanggal, `Desc ${hash}`, nominal, Math.abs(nominal), 0, kategoriId,
+    'BCA', '111', 'Budi', 'pdf', '', dikirim, 'KategoriA', false, 5000, id, diubahPada];
+}
+
+const HEADER_ARSIP_UJI = ['Dihapus Pada'].concat(HEADER_UJI, ['ID Transaksi', 'Diubah Pada']);
+
+test('tarikTransaksi hanya mengembalikan baris lebih baru dari sejak, dan melewati baris tanpa ID Transaksi', () => {
+  const sejak = new Date('2026-01-01T00:00:00.000Z');
+  const gridTambahan = [
+    // Lebih baru dari sejak, punya ID -> harus ikut.
+    barisTransaksiMentah({
+      hash: 'hA', dikirim: new Date('2026-01-02T00:00:00.000Z'), id: 'trxA', diubahPada: '2026-01-02T00:00:00.000Z',
+    }),
+    // Tanpa ID Transaksi (baris lama sebelum migrasi) -> harus dilewati walau baru.
+    barisTransaksiMentah({
+      hash: 'hB', dikirim: new Date('2026-01-02T00:00:00.000Z'), id: '', diubahPada: '',
+    }),
+    // Punya ID, tapi LEBIH LAMA dari sejak -> harus dilewati.
+    barisTransaksiMentah({
+      hash: 'hC', dikirim: new Date('2025-01-01T00:00:00.000Z'), id: 'trxC', diubahPada: '2025-01-01T00:00:00.000Z',
+    }),
+  ];
+
+  const h = jalankanDoPost({ gridTambahan, payload: { tarikTransaksi: true, sejak: sejak.toISOString() } });
+
+  assert.equal(h.balasan.ok, true);
+  assert.deepEqual(h.balasan.baris.map((b) => b.id), ['trxA']);
+  assert.equal(h.balasan.baris[0].hash, 'hA');
+  assert.equal(h.balasan.baris[0].diubahPada, '2026-01-02T00:00:00.000Z');
+});
+
+test('tarikTransaksi tanpa sejak (null) mengembalikan seluruh baris yang punya ID Transaksi', () => {
+  const gridTambahan = [
+    barisTransaksiMentah({ hash: 'hA', dikirim: new Date('2020-01-01'), id: 'trxA', diubahPada: '2020-01-01T00:00:00.000Z' }),
+    barisTransaksiMentah({ hash: 'hB', dikirim: new Date('2024-01-01'), id: 'trxB', diubahPada: '2024-01-01T00:00:00.000Z' }),
+  ];
+  const h = jalankanDoPost({ gridTambahan, payload: { tarikTransaksi: true, sejak: null } });
+  assert.deepEqual(h.balasan.baris.map((b) => b.id).sort(), ['trxA', 'trxB']);
+});
+
+test('tarikTransaksi membaca _Arsip untuk baris yang sudah dihapus sejak checkpoint', () => {
+  const sejak = new Date('2026-01-01T00:00:00.000Z');
+  const arsipGrid = [
+    HEADER_ARSIP_UJI,
+    // Dihapus SETELAH sejak -> harus dilaporkan.
+    [new Date('2026-01-05T00:00:00.000Z')].concat(barisTransaksiMentah({
+      hash: 'hD', dikirim: new Date('2025-06-01'), id: 'trxD', diubahPada: '2025-06-01T00:00:00.000Z',
+    })),
+    // Dihapus SEBELUM sejak -> tidak boleh ikut (sudah pernah dilaporkan di pull sebelumnya).
+    [new Date('2025-01-01T00:00:00.000Z')].concat(barisTransaksiMentah({
+      hash: 'hE', dikirim: new Date('2024-01-01'), id: 'trxE', diubahPada: '2024-01-01T00:00:00.000Z',
+    })),
+  ];
+
+  const h = jalankanDoPost({
+    gridTambahan: [], arsipGrid, payload: { tarikTransaksi: true, sejak: sejak.toISOString() },
+  });
+
+  assert.deepEqual(h.balasan.dihapus, ['trxD']);
+});
+
+test('tarikTransaksi mengabaikan _Arsip lama yang belum bermigrasi (tanpa kolom ID Transaksi)', () => {
+  // _Arsip dari sebelum kolom ID Transaksi/Diubah Pada ada -- headernya masih
+  // 17 kolom lama. tarikTransaksi harus diam-diam melewati baris seperti ini,
+  // bukan salah baca kolom lain sebagai id.
+  const headerLama = ['Dihapus Pada'].concat(HEADER_UJI);
+  const arsipGrid = [
+    headerLama,
+    [new Date('2026-01-05T00:00:00.000Z'), 'hF', '2025-01-01', 'Desc', -100, 100, 0, 'kat1',
+      'BCA', '111', 'Budi', 'pdf', '', new Date('2024-01-01'), 'KategoriA', false, 100],
+  ];
+
+  const h = jalankanDoPost({
+    gridTambahan: [], arsipGrid,
+    payload: { tarikTransaksi: true, sejak: new Date('2020-01-01').toISOString() },
+  });
+
+  assert.deepEqual(h.balasan.dihapus, []);
 });

@@ -19,10 +19,31 @@ export async function satu(id) {
   return ambil(STORE.ACCOUNTS, id);
 }
 
+/**
+ * `diubahPada` distempel di sini (bukan di buatAkun) ke waktu SEKARANG kalau
+ * pemanggil tidak menyebutnya eksplisit — dipakai resolusi konflik
+ * last-updated-wins saat sync (lihat services/entitas-sync.js). Pull dari
+ * Sheets memanggil ini dengan `diubahPada` baris remote apa adanya, supaya
+ * waktunya tetap mencerminkan kapan record itu SUNGGUH diubah, bukan kapan
+ * kebetulan disinkronkan.
+ */
 export async function simpanAkun(data) {
-  const akun = buatAkun(data);
+  const akun = buatAkun({ ...data, diubahPada: data.diubahPada || new Date().toISOString() });
   await simpan(STORE.ACCOUNTS, akun);
   return akun;
+}
+
+/**
+ * Hapus rekening TANPA ikut menghapus transaksi/upload terkait — dipakai saat
+ * menerapkan tombstone hasil pull dari Sheets. Beda dari hapusAkun(): hapus
+ * lewat UI adalah keputusan sadar pengguna atas SEMUA transaksinya, sedangkan
+ * tombstone dari perangkat lain hanya bicara soal rekening itu sendiri.
+ * Menghapus transaksi orang lain secara otomatis lewat sync melanggar aturan
+ * non-destructive (PRD AD-015) — transaksi yang accountId-nya jadi yatim
+ * dibiarkan apa adanya, bukan ikut dihapus.
+ */
+export async function hapusAkunSajaRecord(id) {
+  return hapus(STORE.ACCOUNTS, id);
 }
 
 /**

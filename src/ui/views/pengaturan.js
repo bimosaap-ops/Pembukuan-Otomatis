@@ -17,9 +17,11 @@ import { versiBerjalan, periksaPembaruan } from '../versi.js';
 import { unduhBackup, pulihkanBackup, dukunganPilihFolder } from '../../services/export.js';
 import {
   bacaKonfigSheets, simpanKonfigSheets, testWebhook, syncKeSheets, jumlahAntrean, praTinjauSelaras,
-  statusSheets,
+  statusSheets, syncEntitasKeSheets,
 } from '../../services/sheets-sync.js';
 import { tarikTransaksiEmail, statusTarikEmail } from '../../services/email-feed-sync.js';
+import { tarikDanGabungEntitas } from '../../services/entitas-sync.js';
+import { tarikDanGabungTransaksi } from '../../services/transaksi-sync.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
 import { toastSukses, toastGagal } from '../components/toast.js';
 import { pergiKe } from '../router.js';
@@ -46,7 +48,7 @@ export async function mount(wadah) {
     ganti(isi, [
       kartuTampilan(render),
       kartuFolder(),
-      await kartuSheets(),
+      await kartuSheets(render),
       await kartuEmailFeed(),
       kartuDatabase({ akun, transaksi, upload, kategori, penyimpanan }, render),
       kartuVersi(versi),
@@ -325,7 +327,7 @@ async function laporkanBackfillGagal(err) {
     + `tidak akan digandakan. (${err.message})`);
 }
 
-async function kartuSheets() {
+async function kartuSheets(render) {
   const [{ url, aktif }, antrean] = await Promise.all([bacaKonfigSheets(), jumlahAntrean()]);
   let urlVal = url;
   let aktifVal = aktif;
@@ -442,6 +444,19 @@ async function kartuSheets() {
             } else {
               toastSukses(`Terkirim${tujuan}: ${rincian} · total ${r.total} baris${milikLain}.`);
             }
+
+            // Rekening & kategori: tabelnya kecil, jadi dikirim utuh sekali
+            // jalan (bukan per bongkah seperti transaksi) dan kegagalannya
+            // dilaporkan terpisah — transaksi yang sudah terkirim di atas
+            // tidak boleh ikut dianggap gagal gara-gara ini.
+            try {
+              await Promise.all([
+                syncEntitasKeSheets('akun', [...akun.values()]),
+                syncEntitasKeSheets('kategori', [...kategori.values()]),
+              ]);
+            } catch (errEntitas) {
+              toastGagal(`Rekening/kategori gagal terkirim: ${errEntitas.message}`);
+            }
           } catch (err) {
             await laporkanBackfillGagal(err);
           } finally {
@@ -450,12 +465,56 @@ async function kartuSheets() {
           }
         } }, 'Kirim semua sekarang'),
       ]),
+      h('.baris.bungkus.mt-2', null, [
+        h('button', { type: 'button', onclick: async (e) => {
+          const b = e.currentTarget; b.disabled = true;
+          const labelAwal = b.textContent;
+          try {
+            const [rAkun, rKategori] = await Promise.all([
+              tarikDanGabungEntitas('akun'),
+              tarikDanGabungEntitas('kategori'),
+            ]);
+            if (rAkun?.skipped || rKategori?.skipped) { toastGagal('Aktifkan Sheets & isi URL dulu'); return; }
+
+            const ringkas = (r) => `${r.baru} baru, ${r.diperbarui} diperbarui`
+              + (r.dihapus ? `, ${r.dihapus} dihapus` : '');
+            toastSukses(`Rekening: ${ringkas(rAkun)}. Kategori: ${ringkas(rKategori)}.`);
+            emit(EVENT.DATA_BERUBAH, { sumber: 'entitas-sync' });
+            render();
+          } catch (err) {
+            toastGagal(`Gagal menarik: ${err.message}`);
+          } finally {
+            b.disabled = false;
+            b.textContent = labelAwal;
+          }
+        } }, 'Tarik Rekening & Kategori dari Sheets'),
+        h('button', { type: 'button', onclick: async (e) => {
+          const b = e.currentTarget; b.disabled = true;
+          const labelAwal = b.textContent;
+          try {
+            const r = await tarikDanGabungTransaksi();
+            if (r?.skipped) { toastGagal('Aktifkan Sheets & isi URL dulu'); return; }
+            toastSukses(`Transaksi: ${r.baru} baru, ${r.diperbarui} diperbarui`
+              + (r.dihapus ? `, ${r.dihapus} dihapus` : '') + '.');
+            emit(EVENT.DATA_BERUBAH, { sumber: 'transaksi-sync' });
+            render();
+          } catch (err) {
+            toastGagal(`Gagal menarik: ${err.message}`);
+          } finally {
+            b.disabled = false;
+            b.textContent = labelAwal;
+          }
+        } }, 'Tarik Transaksi dari Sheets'),
+      ]),
       h('details.mt-3', null, [
         h('summary.redup', { text: 'Cara buat Sheet + Script (1 menit)' }),
         h('.redup-2.mt-2', { style: { fontSize: '.82rem', lineHeight: '1.6' } }, [
           h('div', { text: '1. Buat Google Sheet baru, header baris 1: hash | tanggal | deskripsi | nominal | debit | kredit | kategoriId | bank | nomorRekening | namaPemilik | sumber' }),
           h('div', { text: '2. Extensions → Apps Script → tempel Code.gs dari repo (lihat sheets/Code.gs) → Deploy → Web App → Anyone with link → copy URL → tempel di atas → Simpan → Test webhook.' }),
           h('div', { text: '3. Sheet terisi otomatis tiap upload. Tombol \"Kirim semua\" untuk backfill.' }),
+          h('div', { text: '4. Rekening dan Kategori dicadangkan otomatis ke tab "Akun" dan "Kategori" setiap kali disimpan/dihapus, dan ikut terkirim ulang oleh "Kirim semua sekarang".' }),
+          h('div', { text: '5. "Tarik Rekening & Kategori dari Sheets" dan "Tarik Transaksi dari Sheets" menarik balik ke perangkat ini — dipakai untuk memindahkan data ke device baru, atau menyamakan setelah mengedit di perangkat lain. Yang lebih baru menang kalau ada bentrok.' }),
+          h('div', { text: '6. Sheet lama (dibuat sebelum fitur tarik ini ada) perlu satu kali "Kirim semua sekarang" dulu supaya baris lama dapat ID — tanpa itu, transaksi lama belum bisa ikut ditarik balik.' }),
         ]),
       ]),
     ]),
