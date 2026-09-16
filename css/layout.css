@@ -67,7 +67,7 @@
   /* Ruang agar konten terakhir tidak tertutup bottom navigation. */
   padding-bottom: calc(var(--bottomnav-h) + env(safe-area-inset-bottom) + var(--sp-4));
 }
-.halaman { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--pias); }
+.halaman { display: flex; flex-direction: column; gap: var(--pias); }
 
 /* Kepala halaman adalah panel kaca tersendiri, sejajar dengan panel isi di
    bawahnya — bukan teks telanjang di atas latar. */
@@ -304,6 +304,3 @@
   .grid-2--lebar-kiri { grid-template-columns: 1.4fr 1fr; }
 }
 
-@media (min-width: 1440px) {
-  .halaman { max-width: 1360px; }
-}

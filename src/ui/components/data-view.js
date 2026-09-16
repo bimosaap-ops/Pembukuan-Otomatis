@@ -68,7 +68,24 @@ function bentukTabel({ kolom, baris, kelasBaris, aksi, kunciBaris }) {
     ]);
   }));
 
-  return h('.dv__gulir', null, h('table.dv__tabel', null, [thead, tbody]));
+  const gulir = h('.dv__gulir', null, h('table.dv__tabel', null, [thead, tbody]));
+  pasangIndikatorGeser(gulir);
+  return gulir;
+}
+
+/**
+ * Kolom yang kepotong di ujung layar (mis. Saldo di tabel Transaksi) terlihat
+ * seperti data rusak, padahal tabelnya memang sengaja dibiarkan lebar dan
+ * digeser mendatar (lihat catatan di atas). Bayangan tipis di tepi kiri/kanan
+ * ini memberi tahu masih ada kolom lain yang bisa dilihat dengan menggeser.
+ */
+function pasangIndikatorGeser(gulir) {
+  const perbarui = () => {
+    gulir.classList.toggle('dv__gulir--kiri', gulir.scrollLeft > 4);
+    gulir.classList.toggle('dv__gulir--kanan', gulir.scrollLeft + gulir.clientWidth < gulir.scrollWidth - 4);
+  };
+  gulir.addEventListener('scroll', perbarui, { passive: true });
+  new ResizeObserver(perbarui).observe(gulir);
 }
 
 function bentukKartu({ kolom, baris, kelasBaris, aksi, kunciBaris }) {
