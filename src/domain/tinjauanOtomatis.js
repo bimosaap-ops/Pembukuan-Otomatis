@@ -83,7 +83,8 @@ export function analisaTinjauanAmbiguous(data, opsi = {}) {
 
     const [terbaik, kedua] = dinilai;
 
-    if (terbaik && terbaik.skor >= skorMenangMinimal && (!kedua || terbaik.skor - kedua.skor >= bedaMenangMinimal)) {
+    if (terbaik && terbaik.merchantCocok && terbaik.skor >= skorMenangMinimal
+      && (!kedua || terbaik.skor - kedua.skor >= bedaMenangMinimal)) {
       keputusan.push({
         gmailMessageId: trx.gmailMessageId,
         aksi: 'tautkan',

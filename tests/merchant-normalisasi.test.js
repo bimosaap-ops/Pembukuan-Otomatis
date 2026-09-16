@@ -59,6 +59,29 @@ test('normalisasiMerchant: fallback keamanan dipakai kalau hasil penyaringan jad
   assert.equal(normalisasiMerchant('MID TID TERMINAL'), 'MID TID TERMINAL');
 });
 
+test('normalisasiMerchant: boilerplate "TRANSAKSI DEBIT TGL... 00000.00<merchant>" statement kartu/QR BCA dibuang', () => {
+  // Pola nyata dari statement BCA -- nama merchant nempel langsung di
+  // belakang placeholder nominal tanpa spasi ("...00000.00IDM INDOMA"),
+  // hasil ekstraksi teks PDF yang menggabungkan kolom nominal & keterangan.
+  assert.equal(normalisasiMerchant('TRANSAKSI DEBIT TGL: 14/06 QRC014 00000.00IDM INDOMA'), 'IDM INDOMA');
+  assert.equal(normalisasiMerchant('TRANSAKSI DEBIT TGL: 13/06 00000.00Kerak Telo'), 'KERAK TELO');
+  assert.equal(normalisasiMerchant('TRANSAKSI DEBIT TGL: 20/06 QR 008 00000.00SPBU 34-13'), 'SPBU 34 13');
+  assert.equal(normalisasiMerchant('TRANSAKSI DEBIT TGL: 16/06 QR 014 00000.00SUSHIRO K'), 'SUSHIRO K');
+
+  // Efek yang dicari: merchant_key-nya jadi cukup dekat dengan versi email
+  // supaya kemiripan merchant (rekonsiliasiEmail.js/tinjauanOtomatis.js)
+  // bisa terdeteksi -- sebelum perbaikan ini, noise TGL/kode QR/sisa angka
+  // nominal membuat keduanya tidak pernah beririsan sama sekali.
+  const dariStatement = normalisasiMerchant('TRANSAKSI DEBIT TGL: 14/06 QRC014 00000.00IDM INDOMA');
+  const dariEmail = normalisasiMerchant('IDM INDOMARET D');
+  assert.ok(dariEmail.includes(dariStatement), `"${dariEmail}" harus memuat "${dariStatement}"`);
+});
+
+test('normalisasiMerchant: teks yang bukan format boilerplate statement debit tidak ikut berubah', () => {
+  assert.equal(normalisasiMerchant('GOJEK RIDE JAKARTA'), 'GOJEK RIDE JAKARTA');
+  assert.equal(normalisasiMerchant('TRANSAKSI QRIS TOKO MAJU'), 'TOKO MAJU');
+});
+
 test('normalisasiMerchant: dua merchant yang berbeda tidak jatuh ke kunci yang sama', () => {
   const a = normalisasiMerchant('QRIS WARUNG A MID 11112222');
   const b = normalisasiMerchant('QRIS WARUNG B MID 33334444');
