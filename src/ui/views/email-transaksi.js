@@ -228,12 +228,19 @@ export async function mount(wadah) {
   function seksi(status, daftar, daftarKategori, kandidatMap) {
     if (!daftar.length) return null;
     const label = LABEL_STATUS[status];
+    const grup = kelompokkanPerTanggal(daftar);
     return h('.kartu', null, [
       h('.kartu__kepala', null, h('div', null, [
         h('.kartu__judul', { text: `${label.judul} (${daftar.length})` }),
         h('.kartu__ket', { text: label.ket }),
       ])),
-      h('.tumpuk', null, daftar.map((t) => kartuTransaksi(t, daftarKategori, kandidatMap.get(t.transaksiCocokId)))),
+      h('.tumpuk', null, grup.flatMap((g) => [
+        h('.baris-antara', { style: { borderBottom: '1px solid var(--line)', paddingBottom: '4px' } }, [
+          h('span.tebal', { style: { fontSize: '.82rem' }, text: judulTanggalGrup(g.contoh) }),
+          h('span.redup-2', { style: { fontSize: '.78rem' }, text: `${g.daftar.length} transaksi` }),
+        ]),
+        ...g.daftar.map((t) => kartuTransaksi(t, daftarKategori, kandidatMap.get(t.transaksiCocokId))),
+      ])),
     ]);
   }
 
@@ -251,15 +258,17 @@ export async function mount(wadah) {
     const checkIngat = h('input', { type: 'checkbox', checked: true });
 
     return h('.kartu.kartu--rapat', { style: { border: '1px solid var(--line)' } }, [
-      h('.baris-antara', null, [
-        h('div', null, [
-          h('div.tebal', { text: trx.merchantMentah || '(tanpa nama merchant)' }),
-          h('.redup-2', { text: `${trx.bank || '—'} · ${formatWaktu(trx.waktuTransaksi)}` }),
+      h('.baris-antara', { style: { alignItems: 'flex-start' } }, [
+        h('div', { style: { minWidth: 0, flex: '1 1 auto' } }, [
+          h('div.tebal.satu-baris', { text: trx.merchantMentah || '(tanpa nama merchant)' }),
         ]),
-        h('div', { style: { textAlign: 'right' } }, [
+        h('div', { style: { textAlign: 'right', flex: '0 0 auto' } }, [
           h(`div.tebal.${nominalTanda >= 0 ? 'masuk' : 'keluar'}`, { text: rupiah(nominalTanda, { tanda: true }) }),
-          h(`span.lencana.lencana--${LABEL_STATUS[trx.statusCocok].lencana}`, { text: LABEL_STATUS[trx.statusCocok].judul }),
         ]),
+      ]),
+      h('.baris-antara.mt-2', { style: { alignItems: 'center' } }, [
+        h('span.redup-2', { style: { fontSize: '.8rem', minWidth: 0 }, text: `${trx.bank || '—'} · ${formatJam(trx.waktuTransaksi)}` }),
+        h(`span.lencana.lencana--${LABEL_STATUS[trx.statusCocok].lencana}`, { style: { flex: '0 0 auto' }, text: LABEL_STATUS[trx.statusCocok].judul }),
       ]),
 
       trx.alasanCocok ? h('.redup-2.mt-2', { style: { fontSize: '.78rem' }, text: `Alasan: ${trx.alasanCocok}` }) : null,
@@ -391,4 +400,45 @@ function formatWaktu(iso) {
   return d.toLocaleString('id-ID', {
     day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
   });
+}
+
+/** Hanya jam:menit — dipakai di dalam kartu transaksi karena tanggalnya sudah
+ *  muncul sebagai kepala kelompok, tidak perlu diulang di tiap baris. */
+function formatJam(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+}
+
+/** Kunci tanggal lokal 'YYYY-MM-DD' dari sebuah waktu transaksi (bukan UTC),
+ *  supaya pengelompokan cocok dengan tanggal yang terlihat oleh pengguna. */
+function kunciTanggalWaktu(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function judulTanggalGrup(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso || '—';
+  return d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+/** Mengelompokkan transaksi per tanggal (terbaru dulu), tiap kelompok juga
+ *  terurut dari yang terbaru ke yang terlama — dipakai supaya daftar
+ *  exception yang menumpuk tetap gampang dipindai per hari. */
+function kelompokkanPerTanggal(daftar) {
+  const terurut = [...daftar].sort((a, b) => new Date(b.waktuTransaksi) - new Date(a.waktuTransaksi));
+  const grup = [];
+  let kunciTerakhir = null;
+  terurut.forEach((t) => {
+    const kunci = kunciTanggalWaktu(t.waktuTransaksi);
+    if (kunci !== kunciTerakhir) {
+      grup.push({ kunci, contoh: t.waktuTransaksi, daftar: [] });
+      kunciTerakhir = kunci;
+    }
+    grup[grup.length - 1].daftar.push(t);
+  });
+  return grup;
 }
