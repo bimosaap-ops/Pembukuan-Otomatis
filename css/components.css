@@ -118,21 +118,36 @@
    Pemisah barisnya garis putih tipis, bukan abu — di atas kaca, garis terang
    terbaca sebagai lipatan cahaya, garis gelap sebagai kotor. */
 .dv__gulir {
+  position: relative;
   overflow-x: auto;
   padding: var(--sp-2) var(--sp-5);
   background: var(--kaca);
   border: 1px solid var(--kaca-garis);
   border-radius: var(--r-xl);
-  box-shadow: var(--kaca-bayang);
+  --dv-bayang-tepi: none;
+  box-shadow: var(--kaca-bayang), var(--dv-bayang-tepi);
   backdrop-filter: var(--kaca-blur);
   -webkit-backdrop-filter: var(--kaca-blur);
+  transition: box-shadow .15s;
+}
+/* Kolom yang kepotong di ujung tabel (mis. Saldo di layar tablet) terlihat
+   seperti error kalau tidak ada tanda kalau tabelnya bisa digeser mendatar.
+   Bayangan tipis ini muncul di tepi yang masih punya kolom tersembunyi,
+   diperbarui lewat data-view.js setiap kali tabel di-scroll/diubah ukuran.
+   Lewat custom property supaya tetap tampil walau `.kartu .dv__gulir` di
+   bawah menghapus box-shadow dasarnya (dipakai saat tabel bersarang di
+   dalam kartu lain, mis. Laporan). */
+.dv__gulir--kiri { --dv-bayang-tepi: inset 16px 0 12px -12px rgba(0, 0, 0, .18); }
+.dv__gulir--kanan { --dv-bayang-tepi: inset -16px 0 12px -12px rgba(0, 0, 0, .18); }
+.dv__gulir--kiri.dv__gulir--kanan {
+  --dv-bayang-tepi: inset 16px 0 12px -12px rgba(0, 0, 0, .18), inset -16px 0 12px -12px rgba(0, 0, 0, .18);
 }
 .kartu .dv__gulir {
   padding: 0 var(--sp-5) var(--sp-2);
   background: transparent;
   border: 0;
   border-radius: 0;
-  box-shadow: none;
+  box-shadow: var(--dv-bayang-tepi);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
