@@ -30,6 +30,7 @@ import { STATUS_COCOK_EMAIL, STATUS_RESOLUSI_EMAIL } from '../../domain/entities
 import { tarikTransaksiEmail, rentangTanggalKandidat } from '../../services/email-feed-sync.js';
 import { eksporUntukTinjauan, terapkanHasilTinjauan } from '../../services/email-review.js';
 import { unduhBlob } from '../../services/export.js';
+import { dataView } from '../components/data-view.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
 import { toastSukses, toastGagal } from '../components/toast.js';
 
@@ -228,91 +229,83 @@ export async function mount(wadah) {
   function seksi(status, daftar, daftarKategori, kandidatMap) {
     if (!daftar.length) return null;
     const label = LABEL_STATUS[status];
-    const grup = kelompokkanPerTanggal(daftar);
+    const urut = [...daftar].sort((a, b) => new Date(b.waktuTransaksi) - new Date(a.waktuTransaksi));
+    const punyaKandidat = status !== STATUS_COCOK_EMAIL.MISSING;
+
     return h('.kartu', null, [
       h('.kartu__kepala', null, h('div', null, [
         h('.kartu__judul', { text: `${label.judul} (${daftar.length})` }),
         h('.kartu__ket', { text: label.ket }),
       ])),
-      h('.tumpuk', null, grup.flatMap((g) => [
-        h('.baris-antara', { style: { borderBottom: '1px solid var(--line)', paddingBottom: '4px' } }, [
-          h('span.tebal', { style: { fontSize: '.82rem' }, text: judulTanggalGrup(g.contoh) }),
-          h('span.redup-2', { style: { fontSize: '.78rem' }, text: `${g.daftar.length} transaksi` }),
-        ]),
-        ...g.daftar.map((t) => kartuTransaksi(t, daftarKategori, kandidatMap.get(t.transaksiCocokId))),
-      ])),
+      dataView({
+        kolom: kolomEmail(daftarKategori, kandidatMap, punyaKandidat),
+        baris: urut,
+        aksi: (t) => {
+          const kandidat = kandidatMap.get(t.transaksiCocokId);
+          return [
+            h('button.btn-kecil', { type: 'button', onclick: () => bukaTautkanManual(t) }, 'Tautkan manual'),
+            kandidat ? h('button.btn-kecil', { type: 'button', onclick: () => terimaTautan(t) }, 'Terima tautan ini') : null,
+            h('button.btn-kecil.btn-halus', { type: 'button', onclick: () => abaikan(t) }, 'Abaikan'),
+          ];
+        },
+      }),
     ]);
   }
 
-  function kartuTransaksi(trx, daftarKategori, kandidat) {
-    const nominalTanda = trx.arah === 'debit' ? -Math.abs(trx.nominal) : Math.abs(trx.nominal);
-    const tipeDicari = trx.arah === 'debit' ? 'pengeluaran' : 'pemasukan';
-    const kategoriTerpilih = trx.kategoriFinal || trx.kategoriSaran || '';
-
-    const selectKategori = h('select', null, [
-      h('option', { value: '', selected: !kategoriTerpilih, text: 'Pilih kategori…' }),
-      ...daftarKategori
-        .filter((k) => k.tipe === tipeDicari)
-        .map((k) => h('option', { value: k.id, selected: k.id === kategoriTerpilih, text: `${k.ikon} ${k.nama}` })),
-    ]);
-    const checkIngat = h('input', { type: 'checkbox', checked: true });
-
-    return h('.kartu.kartu--rapat', { style: { border: '1px solid var(--line)' } }, [
-      h('.baris-antara', { style: { alignItems: 'flex-start' } }, [
-        h('div', { style: { minWidth: 0, flex: '1 1 auto' } }, [
-          h('div.tebal.satu-baris', { text: trx.merchantMentah || '(tanpa nama merchant)' }),
+  function kolomEmail(daftarKategori, kandidatMap, punyaKandidat) {
+    const kolom = [
+      { kunci: 'waktu', judul: 'Waktu', lebar: '150px', render: (t) => formatWaktu(t.waktuTransaksi) },
+      {
+        kunci: 'merchant', judul: 'Merchant', kartu: 'utama', lebar: '220px',
+        render: (t) => h('div', null, [
+          h('div.putus', { text: t.merchantMentah || '(tanpa nama merchant)' }),
+          h('div.redup-2', { style: { fontSize: '.76rem' }, text: `${t.bank || '—'}${t.alasanCocok ? ` · ${t.alasanCocok}` : ''}` }),
         ]),
-        h('div', { style: { textAlign: 'right', flex: '0 0 auto' } }, [
-          h(`div.tebal.${nominalTanda >= 0 ? 'masuk' : 'keluar'}`, { text: rupiah(nominalTanda, { tanda: true }) }),
-        ]),
-      ]),
-      h('.baris-antara.mt-2', { style: { alignItems: 'center' } }, [
-        h('span.redup-2', { style: { fontSize: '.8rem', minWidth: 0 }, text: `${trx.bank || '—'} · ${formatJam(trx.waktuTransaksi)}` }),
-        h(`span.lencana.lencana--${LABEL_STATUS[trx.statusCocok].lencana}`, { style: { flex: '0 0 auto' }, text: LABEL_STATUS[trx.statusCocok].judul }),
-      ]),
+      },
+      {
+        kunci: 'nominal', judul: 'Nominal', kanan: true, angka: true, lebar: '130px', kartu: 'nilai',
+        render: (t) => {
+          const tanda = t.arah === 'debit' ? -Math.abs(t.nominal) : Math.abs(t.nominal);
+          return h(`span.${tanda >= 0 ? 'masuk' : 'keluar'}`, { text: rupiah(tanda, { tanda: true }) });
+        },
+      },
+    ];
 
-      trx.alasanCocok ? h('.redup-2.mt-2', { style: { fontSize: '.78rem' }, text: `Alasan: ${trx.alasanCocok}` }) : null,
+    if (punyaKandidat) {
+      kolom.push({
+        kunci: 'kandidat', judul: 'Kandidat di E-statement', lebar: '220px',
+        render: (t) => {
+          const k = kandidatMap.get(t.transaksiCocokId);
+          if (!k) return '—';
+          return `${k.deskripsi || '(tanpa keterangan)'} · ${tanggalTampil(k.tanggal)} · ${rupiah(k.nominal, { tanda: true })}`;
+        },
+      });
+    }
 
-      kandidat ? h('.info-kotak.mt-2', null, [
-        ikon('cek', 16),
-        h('div', null, [
-          h('b', { text: 'Kandidat di e-statement: ' }),
-          `${kandidat.deskripsi || '(tanpa keterangan)'} · ${tanggalTampil(kandidat.tanggal)} · ${rupiah(kandidat.nominal, { tanda: true })}`,
-        ]),
-      ]) : null,
+    kolom.push({
+      kunci: 'kategori', judul: 'Kategori', lebar: '190px',
+      render: (t) => {
+        const tipeDicari = t.arah === 'debit' ? 'pengeluaran' : 'pemasukan';
+        const kategoriTerpilih = t.kategoriFinal || t.kategoriSaran || '';
+        return h('select', {
+          style: { minHeight: '36px', fontSize: '.82rem', padding: '4px 8px' },
+          onchange: (e) => simpanKategori(t, e.target.value),
+        }, [
+          h('option', { value: '', selected: !kategoriTerpilih, text: 'Pilih kategori…' }),
+          ...daftarKategori
+            .filter((k) => k.tipe === tipeDicari)
+            .map((k) => h('option', { value: k.id, selected: k.id === kategoriTerpilih, text: `${k.ikon} ${k.nama}` })),
+        ]);
+      },
+    });
 
-      h('.form-grid.mt-3', null, [
-        h('div', null, [h('label', { text: 'Kategori' }), selectKategori]),
-        h('div.penuh', null, h('label.baris', { style: { alignItems: 'center', gap: '8px' } }, [
-          checkIngat, h('span', { text: 'Ingat kategori ini untuk merchant yang sama' }),
-        ])),
-      ]),
-
-      h('.baris.bungkus.mt-3', null, [
-        h('button.btn-primary.btn-kecil', {
-          type: 'button',
-          onclick: () => simpanKategori(trx, selectKategori.value, checkIngat.checked),
-        }, 'Simpan kategori'),
-        h('button.btn-kecil', {
-          type: 'button',
-          onclick: () => bukaTautkanManual(trx),
-        }, 'Tautkan manual'),
-        kandidat ? h('button.btn-kecil', {
-          type: 'button',
-          onclick: () => terimaTautan(trx),
-        }, 'Terima tautan ini') : null,
-        h('button.btn-kecil.btn-halus', {
-          type: 'button',
-          onclick: () => abaikan(trx),
-        }, 'Abaikan'),
-      ]),
-    ]);
+    return kolom;
   }
 
-  async function simpanKategori(trx, kategoriId, ingat) {
+  async function simpanKategori(trx, kategoriId) {
     if (!kategoriId) { toastGagal('Pilih kategori dulu.'); return; }
     await emailTrxRepo.simpanSatu({ ...trx, kategoriFinal: kategoriId, overrideUser: true });
-    if (ingat && trx.merchantKey) await kamusRepo.tetapkan(trx.merchantKey, kategoriId);
+    if (trx.merchantKey) await kamusRepo.tetapkan(trx.merchantKey, kategoriId);
     toastSukses('Kategori disimpan.');
     emit(EVENT.DATA_BERUBAH, { sumber: 'email-kategori' });
   }
@@ -400,45 +393,4 @@ function formatWaktu(iso) {
   return d.toLocaleString('id-ID', {
     day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
   });
-}
-
-/** Hanya jam:menit — dipakai di dalam kartu transaksi karena tanggalnya sudah
- *  muncul sebagai kepala kelompok, tidak perlu diulang di tiap baris. */
-function formatJam(iso) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-}
-
-/** Kunci tanggal lokal 'YYYY-MM-DD' dari sebuah waktu transaksi (bukan UTC),
- *  supaya pengelompokan cocok dengan tanggal yang terlihat oleh pengguna. */
-function kunciTanggalWaktu(iso) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
-
-function judulTanggalGrup(iso) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso || '—';
-  return d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-}
-
-/** Mengelompokkan transaksi per tanggal (terbaru dulu), tiap kelompok juga
- *  terurut dari yang terbaru ke yang terlama — dipakai supaya daftar
- *  exception yang menumpuk tetap gampang dipindai per hari. */
-function kelompokkanPerTanggal(daftar) {
-  const terurut = [...daftar].sort((a, b) => new Date(b.waktuTransaksi) - new Date(a.waktuTransaksi));
-  const grup = [];
-  let kunciTerakhir = null;
-  terurut.forEach((t) => {
-    const kunci = kunciTanggalWaktu(t.waktuTransaksi);
-    if (kunci !== kunciTerakhir) {
-      grup.push({ kunci, contoh: t.waktuTransaksi, daftar: [] });
-      kunciTerakhir = kunci;
-    }
-    grup[grup.length - 1].daftar.push(t);
-  });
-  return grup;
 }
