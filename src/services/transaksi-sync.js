@@ -69,12 +69,34 @@ async function terapkanBarisTransaksi(row) {
 
   if (!remoteLebihBaru(lokal, mapped)) return { status: 'dilewati', accountId: lokal.accountId };
 
+  // Bank/No. Rekening bisa diedit manual langsung di Sheet ("Fase A": Sheets
+  // jadi editor utama untuk Transaksi) -- accountId tidak portable antar
+  // perangkat/Sheet, jadi diresolusi ULANG lewat cariAtauBuat() setiap kali
+  // baris hasil pull menunjuk bank/nomor rekening BERBEDA dari akun lokal
+  // saat ini, bukan sekadar dipertahankan apa adanya seperti sebelumnya.
+  // Tanpa ini, memindahkan transaksi ke rekening lain lewat Sheet tidak
+  // akan pernah benar-benar berpindah di PWA.
+  const akunLokal = await akunRepo.satu(lokal.accountId);
+  const akunSama = akunLokal
+    && akunLokal.bank === row.bank
+    && akunRepo.normalkanNomor(akunLokal.nomorRekening) === akunRepo.normalkanNomor(row.nomorRekening);
+
+  let accountId = lokal.accountId;
+  let accountIdLama = null;
+  if (!akunSama) {
+    const { akun } = await akunRepo.cariAtauBuat({
+      bank: row.bank, nomorRekening: row.nomorRekening, namaPemilik: row.namaPemilik,
+    });
+    accountId = akun.id;
+    accountIdLama = lokal.accountId;
+  }
+
   // Digabung dengan record lokal (bukan dipakai apa adanya): field yang
   // tidak ikut disinkronkan (catatan, uploadedFileId, urutan, dibuatPada,
   // baseHash, deskripsiRaw) harus tetap seperti semula, bukan tertimpa
   // default kosong dari buatTransaksi().
-  await trxRepo.simpanSatu({ ...lokal, ...mapped, accountId: lokal.accountId });
-  return { status: 'diperbarui', accountId: lokal.accountId };
+  await trxRepo.simpanSatu({ ...lokal, ...mapped, accountId });
+  return { status: 'diperbarui', accountId, accountIdLama };
 }
 
 /**
@@ -101,8 +123,9 @@ export async function tarikDanGabungTransaksi() {
 
   for (const row of hasil.baris) {
     if (!row.id) continue;
-    const { status, accountId } = await terapkanBarisTransaksi(row);
+    const { status, accountId, accountIdLama } = await terapkanBarisTransaksi(row);
     if (accountId) tersentuh.add(accountId);
+    if (accountIdLama) tersentuh.add(accountIdLama);
     ringkasan[status] += 1;
   }
 

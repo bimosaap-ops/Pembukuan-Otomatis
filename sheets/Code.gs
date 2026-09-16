@@ -222,11 +222,103 @@ function onOpen() {
     .createMenu('Pembukuan')
     .addItem('Bangun ulang Dashboard & rapikan data', 'bangunUlangDashboard')
     .addItem('Diagnosa', 'diagnosaDashboard')
+    .addItem('Diagnosa Dikirim Pada (Fase A)', 'diagnosaWaktuKirim')
+    .addItem('Pasang Proteksi Kolom Kunci (Fase A)', 'pasangProteksiKolomKunci')
     .addItem('Proses Email Transaksi Sekarang', 'prosesEmailSekarang')
     .addItem('Tarik Email Lama (Backfill)', 'backfillEmailTransaksi')
     .addItem('Aktifkan Pemantauan Email Transaksi', 'aktifkanPemantauanEmail')
     .addItem('Nonaktifkan Pemantauan Email', 'nonaktifkanPemantauanEmail')
     .addToUi();
+}
+
+/**
+ * Simple trigger bawaan Spreadsheet — dipanggil otomatis oleh Google Sheets
+ * setiap kali MANUSIA mengedit sel lewat UI (tidak pernah terpicu oleh
+ * tulisan skrip sendiri lewat SpreadsheetApp, jadi aman dari infinite loop
+ * LINTAS invocation; loop DALAM satu invocation tetap dicegah lewat guard
+ * kolom di bawah). Rencana implementasi "Fase A": tujuannya semata
+ * menstempel "kapan baris ini sungguh berubah" (kolom "Diubah Pada", dan
+ * untuk tab Transaksi juga "Dikirim Pada" — lihat catatan KOLOM_WAKTU di
+ * kepala berkas soal kenapa kolom itu yang dibaca tarikTransaksi()) supaya
+ * auto-pull PWA & checkpoint pull bisa menangkap edit manual, yang sebelum
+ * ini SAMA SEKALI tidak terdeteksi sinkronisasi manapun.
+ *
+ * SENGAJA simple trigger, bukan installable: cakupannya sempit (baca/tulis
+ * ke spreadsheet aktif sendiri saja, tidak butuh LockService lintas-
+ * invocation atau layanan terotorisasi lain), dan menghindari trigger
+ * terpasang yang gampang lupa dipasang ulang setelah salin/deploy ulang.
+ *
+ * Catatan penting soal Hash: fungsi ini TIDAK menghitung ulang kolom Hash
+ * saat Tanggal/Deskripsi/Nominal diedit manual. Ini aman untuk arah PULL
+ * (services/transaksi-sync.js mencocokkan baris lewat ID Transaksi, bukan
+ * Hash — lihat catatan kolom Q/R di atas), dan tidak berisiko arah PUSH
+ * (doPost menulis baris EXISTING lewat pencarian Hash, tapi PWA read-only
+ * "Fase A" tidak lagi memiliki jalur yang mem-push ULANG transaksi yang
+ * sudah tersinkron — hanya baris genuinely baru yang dikirim).
+ */
+function onEdit(e) {
+  if (!e || !e.range) return;
+  const sh = e.range.getSheet();
+  const nama = sh.getName();
+  const baris = e.range.getRow();
+  if (baris < 2) return; // header, atau bukan baris data
+
+  const cfg = {
+    [DATA_SHEET_NAME]: { idxDiubah: HEADER.indexOf('Diubah Pada') + 1, idxDikirim: KOLOM_WAKTU },
+    [AKUN_SHEET_NAME]: { idxDiubah: HEADER_AKUN.indexOf('Diubah Pada') + 1, idxDikirim: null },
+    [KATEGORI_SHEET_NAME]: { idxDiubah: HEADER_KATEGORI.indexOf('Diubah Pada') + 1, idxDikirim: null },
+  }[nama];
+  if (!cfg) return; // tab lain (Dashboard, Anggaran, dst.) diabaikan total
+
+  const kolom = e.range.getColumn();
+  const kolomAkhir = e.range.getLastColumn();
+
+  // Guard anti-reentrancy STRUKTURAL: kalau edit ini sendiri menyentuh salah
+  // satu kolom timestamp yang mau kita tulis, jangan tulis lagi -- ini yang
+  // memutus rantai onEdit memicu onEdit, tanpa perlu flag/lock lintas eksekusi.
+  const kenaKolomWaktu = (kolom <= cfg.idxDiubah && cfg.idxDiubah <= kolomAkhir)
+    || (cfg.idxDikirim && kolom <= cfg.idxDikirim && cfg.idxDikirim <= kolomAkhir);
+  if (kenaKolomWaktu) return;
+
+  const now = new Date();
+  const barisAkhir = e.range.getLastRow();
+  for (let r = baris; r <= barisAkhir; r++) {
+    sh.getRange(r, cfg.idxDiubah).setValue(now);
+    if (cfg.idxDikirim) sh.getRange(r, cfg.idxDikirim).setValue(now);
+  }
+}
+
+/**
+ * Pasang proteksi "hanya pemilik skrip yang boleh edit lewat UI" pada kolom
+ * kunci yang tidak boleh berubah karena salah pencet -- Hash & ID Transaksi
+ * (Transaksi), ID (Akun/Kategori). Idempoten: aman dijalankan berkali-kali
+ * dari menu, tidak menumpuk proteksi ganda pada rentang yang sama. Skrip
+ * (onEdit di atas) TETAP bisa menulis ke baris yang sama karena proteksi
+ * hanya membatasi editor lain lewat UI, bukan skrip yang berjalan sebagai
+ * pemilik proyek.
+ */
+function pasangProteksiKolomKunci() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const target = [
+    { sh: sheetData(ss), kolomIdx: [1, 17], deskripsi: 'Hash & ID Transaksi (Transaksi)' },
+    { sh: ss.getSheetByName(AKUN_SHEET_NAME), kolomIdx: [1], deskripsi: 'ID (Akun)' },
+    { sh: ss.getSheetByName(KATEGORI_SHEET_NAME), kolomIdx: [1], deskripsi: 'ID (Kategori)' },
+  ];
+
+  target.forEach(({ sh, kolomIdx, deskripsi }) => {
+    if (!sh) return;
+    const existing = sh.getProtections(SpreadsheetApp.ProtectionType.RANGE)
+      .map((p) => p.getRange().getA1Notation());
+    kolomIdx.forEach((k) => {
+      const range = sh.getRange(2, k, Math.max(sh.getMaxRows() - 1, 1), 1);
+      if (existing.indexOf(range.getA1Notation()) !== -1) return; // sudah dipasang
+      const p = range.protect().setDescription(`Kunci mesin -- ${deskripsi}`);
+      p.removeEditors(p.getEditors());
+      if (p.canDomainEdit()) p.setDomainEdit(false);
+    });
+  });
+
+  SpreadsheetApp.getUi().alert('Proteksi kolom kunci', 'Selesai dipasang/diverifikasi.', SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
 /**
@@ -2346,6 +2438,61 @@ function diagnosaDashboard() {
     });
   }
   ui.alert('Diagnosa Pembukuan', baris.join('\n'), ui.ButtonSet.OK);
+}
+
+/**
+ * Diagnostik read-only ("Fase A.0" di rencana implementasi) — jalankan
+ * sebelum mempercayai kolom "Dikirim Pada" sebagai penanda "kapan baris ini
+ * terakhir berubah" untuk onEdit()/checkpoint tarikTransaksi(). Analisis
+ * data produksi menemukan nilai TAMPILAN kolom ini identik di semua baris;
+ * fungsi ini membaca nilai RAW (bukan display) untuk membedakan 3
+ * kemungkinan dengan implikasi berbeda:
+ *   1. Residu SATU backfill ("Kirim semua sekarang" dijalankan sekali untuk
+ *      histori lama) -- nilai raw memang identik sampai ke detik, tapi
+ *      bukan bug tulis berkelanjutan. Aman lanjut Fase A apa adanya.
+ *   2. Cuma pembulatan TAMPILAN (format "dd/mm/yyyy HH:mm" membulatkan ke
+ *      menit) -- nilai raw sebenarnya bervariasi wajar. Tidak ada anomali.
+ *   3. ADA proses yang menimpa kolom ini untuk banyak baris setiap kali
+ *      jalan (mis. rebuild dashboard) -- bug aktif, harus diperbaiki DULU
+ *      sebelum checkpoint pull manapun bisa dipercaya sebagai incremental.
+ * Tidak menulis apa pun ke sheet.
+ */
+function diagnosaWaktuKirim() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const sh = sheetData(ss);
+  if (!sh) { ui.alert('Diagnosa Dikirim Pada', 'Sheet data tidak ditemukan.', ui.ButtonSet.OK); return; }
+
+  const last = sh.getLastRow();
+  if (last <= 1) { ui.alert('Diagnosa Dikirim Pada', 'Tidak ada baris data.', ui.ButtonSet.OK); return; }
+
+  const nilai = sh.getRange(2, KOLOM_WAKTU, last - 1, 1).getValues().map((r) => r[0]);
+  const waktuMs = nilai.map((v) => (v instanceof Date ? v.getTime() : null)).filter((t) => t !== null);
+
+  const unikDetik = new Set(waktuMs.map((t) => Math.floor(t / 1000)));
+  const unikMenit = new Set(waktuMs.map((t) => Math.floor(t / 60000)));
+  const min = waktuMs.length ? new Date(Math.min.apply(null, waktuMs)) : null;
+  const max = waktuMs.length ? new Date(Math.max.apply(null, waktuMs)) : null;
+
+  let kesimpulan;
+  if (unikDetik.size <= 1) {
+    kesimpulan = 'SEMUA baris punya timestamp identik sampai ke DETIK -- kemungkinan besar kasus 1 (residu satu backfill). Aman lanjut Fase A apa adanya, tapi cek dulu tanggal min/max di atas masuk akal sebagai "sekali jalan backfill" (rentang pendek, bukan tersebar berbulan-bulan).';
+  } else if (unikDetik.size < waktuMs.length / 10) {
+    kesimpulan = 'Nilai unik JAUH lebih sedikit dari jumlah baris (kasus 3) -- indikasi ada proses yang menimpa kolom ini untuk banyak baris sekaligus. INVESTIGASI DULU (cari pemanggil sh.getRange(...).setValue di jalur rebuild/rapikan) sebelum lanjut ke onEdit/checkpoint Fase A.1-A.3.';
+  } else {
+    kesimpulan = 'Nilai bervariasi wajar antar baris (kasus 2, cuma pembulatan tampilan menit) -- tidak ada anomali aktif, lanjutkan Fase A apa adanya.';
+  }
+
+  const baris = [
+    `Total baris dibaca          : ${nilai.length}`,
+    `Baris ber-Date valid        : ${waktuMs.length}`,
+    `Nilai unik (resolusi detik) : ${unikDetik.size}`,
+    `Nilai unik (resolusi menit) : ${unikMenit.size}`,
+    `Rentang raw                 : ${min ? min.toISOString() : '-'}  s.d.  ${max ? max.toISOString() : '-'}`,
+    '',
+    kesimpulan,
+  ];
+  ui.alert('Diagnosa Dikirim Pada', baris.join('\n'), ui.ButtonSet.OK);
 }
 
 function doPost(e) {

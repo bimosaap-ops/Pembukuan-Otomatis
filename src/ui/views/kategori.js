@@ -5,6 +5,7 @@
 
 import { h, ikon, ganti } from '../../core/dom.js';
 import { rupiah } from '../../core/format.js';
+import { MODE_BACA_SAJA_SHEETS } from '../../core/mode.js';
 import { on, emit, EVENT } from '../../core/events.js';
 import * as kategoriRepo from '../../data/repo/categories.js';
 import * as trxRepo from '../../data/repo/transactions.js';
@@ -30,9 +31,11 @@ export async function mount(wadah) {
         h('.halaman__judul', { text: 'Kategori' }),
         h('.halaman__ket', { text: 'Kata kunci di sini dipakai untuk mengelompokkan transaksi secara otomatis saat e-statement di-upload.' }),
       ]),
-      h('button.btn-primary.btn-kecil', {
-        type: 'button', onclick: () => bukaForm(null, tipeAktif, render),
-      }, [ikon('tambah', 17), h('span', { text: 'Tambah' })]),
+      MODE_BACA_SAJA_SHEETS
+        ? null
+        : h('button.btn-primary.btn-kecil', {
+          type: 'button', onclick: () => bukaForm(null, tipeAktif, render),
+        }, [ikon('tambah', 17), h('span', { text: 'Tambah' })]),
     ]),
     isi,
   );
@@ -59,15 +62,23 @@ export async function mount(wadah) {
 
       h('.grid-3', null, tampil.map((k) => kartuKategori(k, pakai.get(k.id), render))),
 
-      h('.info-kotak', null, [
-        ikon('cek', 18),
-        h('div', null, [
-          h('b', { text: 'Aturan bisa belajar sendiri. ' }),
-          'Saat Anda mengganti kategori sebuah transaksi di halaman Transaksi, aplikasi menawarkan untuk mengingat kata kuncinya supaya upload berikutnya langsung masuk kategori yang benar.',
+      MODE_BACA_SAJA_SHEETS
+        ? h('.info-kotak', null, [
+          ikon('cek', 18),
+          h('div', null, [
+            h('b', { text: 'Kategori diedit di Google Sheets. ' }),
+            'Tambah, ubah, atau hapus kategori langsung di tab "Kategori" pada spreadsheet. Perubahan otomatis muncul di sini dalam waktu singkat, tanpa perlu tekan tombol apa pun.',
+          ]),
+        ])
+        : h('.info-kotak', null, [
+          ikon('cek', 18),
+          h('div', null, [
+            h('b', { text: 'Aturan bisa belajar sendiri. ' }),
+            'Saat Anda mengganti kategori sebuah transaksi di halaman Transaksi, aplikasi menawarkan untuk mengingat kata kuncinya supaya upload berikutnya langsung masuk kategori yang benar.',
+          ]),
         ]),
-      ]),
 
-      h('.kartu', null, [
+      MODE_BACA_SAJA_SHEETS ? null : h('.kartu', null, [
         h('.kartu__kepala', null, h('div', null, [
           h('.kartu__judul', { text: 'Kelompokkan ulang transaksi' }),
           h('.kartu__ket', { text: 'Menerapkan aturan kata kunci terbaru ke seluruh transaksi yang sudah tersimpan.' }),
@@ -118,14 +129,18 @@ function kartuKategori(kategori, pakai, selesai) {
       ? h('.redup-2.mt-2', { style: { fontSize: '.78rem' }, text: `+${kategori.polaKataKunci.length - 12} kata kunci lain` })
       : null,
 
-    h('.baris.bungkus.mt-3', null, [
-      h('button.btn-kecil', { type: 'button', onclick: () => bukaForm(kategori, kategori.tipe, selesai) },
-        [ikon('edit', 15), 'Ubah']),
-      bawaan
-        ? h('span.lencana.lencana--info', { text: 'Kategori penampung' })
-        : h('button.btn-kecil.btn-bahaya', { type: 'button', onclick: () => hapus(kategori, selesai) },
-          [ikon('hapus', 15), 'Hapus']),
-    ]),
+    MODE_BACA_SAJA_SHEETS
+      ? (bawaan ? h('.baris.bungkus.mt-3', null, [
+        h('span.lencana.lencana--info', { text: 'Kategori penampung' }),
+      ]) : null)
+      : h('.baris.bungkus.mt-3', null, [
+        h('button.btn-kecil', { type: 'button', onclick: () => bukaForm(kategori, kategori.tipe, selesai) },
+          [ikon('edit', 15), 'Ubah']),
+        bawaan
+          ? h('span.lencana.lencana--info', { text: 'Kategori penampung' })
+          : h('button.btn-kecil.btn-bahaya', { type: 'button', onclick: () => hapus(kategori, selesai) },
+            [ikon('hapus', 15), 'Hapus']),
+      ]),
   ]);
 }
 

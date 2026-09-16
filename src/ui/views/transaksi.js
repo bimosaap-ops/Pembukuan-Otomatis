@@ -9,6 +9,7 @@
 import { h, ikon, ganti, debounce } from '../../core/dom.js';
 import { rupiah, toNum, angka } from '../../core/format.js';
 import { tanggalTampil, hariIni } from '../../core/dates.js';
+import { MODE_BACA_SAJA_SHEETS } from '../../core/mode.js';
 import { on, emit, EVENT } from '../../core/events.js';
 import * as akunRepo from '../../data/repo/accounts.js';
 import * as trxRepo from '../../data/repo/transactions.js';
@@ -48,12 +49,18 @@ export async function mount(wadah) {
     h('.halaman__kepala', null, [
       h('div', null, [
         h('.halaman__judul', { text: 'Transaksi' }),
-        h('.halaman__ket', { text: 'Seluruh transaksi dari e-statement dan catatan kas manual.' }),
+        h('.halaman__ket', {
+          text: MODE_BACA_SAJA_SHEETS
+            ? 'Seluruh transaksi dari e-statement dan catatan kas manual. Koreksi dilakukan langsung di tab "Transaksi" pada Google Sheets.'
+            : 'Seluruh transaksi dari e-statement dan catatan kas manual.',
+        }),
       ]),
-      h('button.btn-primary.btn-kecil', {
-        type: 'button',
-        onclick: () => bukaFormManual(null, akun, kategori, () => render()),
-      }, [ikon('tambah', 17), h('span', { text: 'Transaksi Manual' })]),
+      MODE_BACA_SAJA_SHEETS
+        ? null
+        : h('button.btn-primary.btn-kecil', {
+          type: 'button',
+          onclick: () => bukaFormManual(null, akun, kategori, () => render()),
+        }, [ikon('tambah', 17), h('span', { text: 'Transaksi Manual' })]),
     ]),
     areaFilter,
     areaDaftar,
@@ -173,7 +180,7 @@ export async function mount(wadah) {
           ? 'Upload e-statement atau tambahkan transaksi manual untuk mulai membukukan.'
           : 'Coba longgarkan filter atau kata kuncinya.',
         kelasBaris: (t) => (t.transferInternal ? 'baris--duplikat' : ''),
-        aksi: (t) => [
+        aksi: MODE_BACA_SAJA_SHEETS ? null : (t) => [
           h('button.btn-kecil', {
             type: 'button',
             onclick: () => bukaFormManual(t, akun, kategori, render),
@@ -244,12 +251,18 @@ function kolom(petaAkun, petaKategori, petaUpload, daftarKategori, render) {
     },
     {
       kunci: 'kategori', judul: 'Kategori', lebar: '190px',
-      render: (t) => h('select', {
-        style: { minHeight: '36px', fontSize: '.82rem', padding: '4px 8px' },
-        onchange: (e) => gantiKategori(t, e.target.value, daftarKategori, render),
-      }, daftarKategori
-        .filter((k) => (t.nominal >= 0 ? k.tipe === 'pemasukan' : k.tipe === 'pengeluaran'))
-        .map((k) => h('option', { value: k.id, selected: k.id === t.kategoriId, text: `${k.ikon} ${k.nama}` }))),
+      render: (t) => {
+        if (MODE_BACA_SAJA_SHEETS) {
+          const k = petaKategori.get(t.kategoriId);
+          return k ? `${k.ikon} ${k.nama}` : '—';
+        }
+        return h('select', {
+          style: { minHeight: '36px', fontSize: '.82rem', padding: '4px 8px' },
+          onchange: (e) => gantiKategori(t, e.target.value, daftarKategori, render),
+        }, daftarKategori
+          .filter((k) => (t.nominal >= 0 ? k.tipe === 'pemasukan' : k.tipe === 'pengeluaran'))
+          .map((k) => h('option', { value: k.id, selected: k.id === t.kategoriId, text: `${k.ikon} ${k.nama}` })));
+      },
     },
     {
       kunci: 'rekening', judul: 'Rekening', lebar: '150px',

@@ -14,6 +14,7 @@ import { cegahDropDiLuar } from './components/dropzone.js';
 import { toastGagal, toastSukses } from './components/toast.js';
 import { on, EVENT } from '../core/events.js';
 import { pantauKoneksiSheets } from '../services/sheets-sync.js';
+import { jalankanAutoPull } from '../services/auto-pull.js';
 import { jalankanMigrasi, migrasiKataKunciBawaan, migrasiKategoriInvestasi } from '../data/migrasi.js';
 
 /**
@@ -122,6 +123,11 @@ async function mulai() {
     // Antrean retry Sheets (kalau ada, dari sesi sebelumnya yang gagal
     // tersinkron) dicoba lagi begitu database siap, dan tiap kali koneksi pulih.
     pantauKoneksiSheets();
+
+    // "Fase A": Sheets jadi editor utama Transaksi/Akun/Kategori -- tarik
+    // otomatis berkala supaya edit manual di Sheets sampai ke PWA tanpa
+    // perlu tombol manual (yang tetap ada di Pengaturan sebagai fallback).
+    jalankanAutoPull();
   } catch (e) {
     console.error('Gagal menyiapkan database:', e);
     toastGagal(`Database tidak bisa dibuka: ${e.message}. Coba buka lewat browser biasa (bukan mode penyamaran).`);

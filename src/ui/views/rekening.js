@@ -5,6 +5,7 @@
 
 import { h, ikon, ganti } from '../../core/dom.js';
 import { rupiah, toNum } from '../../core/format.js';
+import { MODE_BACA_SAJA_SHEETS } from '../../core/mode.js';
 import { on, emit, EVENT } from '../../core/events.js';
 import * as akunRepo from '../../data/repo/accounts.js';
 import { hapusDariSheets, syncEntitasKeSheets, hapusEntitasDariSheets } from '../../services/sheets-sync.js';
@@ -23,11 +24,17 @@ export async function mount(wadah) {
     h('.halaman__kepala', null, [
       h('div', null, [
         h('.halaman__judul', { text: 'Rekening' }),
-        h('.halaman__ket', { text: 'Rekening bank terbentuk otomatis saat e-statement di-upload. Akun kas ditambahkan sendiri.' }),
+        h('.halaman__ket', {
+          text: MODE_BACA_SAJA_SHEETS
+            ? 'Rekening bank terbentuk otomatis saat e-statement di-upload. Tambah/ubah rekening lewat tab "Akun" di Google Sheets.'
+            : 'Rekening bank terbentuk otomatis saat e-statement di-upload. Akun kas ditambahkan sendiri.',
+        }),
       ]),
-      h('button.btn-primary.btn-kecil', {
-        type: 'button', onclick: () => bukaForm(null, render),
-      }, [ikon('tambah', 17), h('span', { text: 'Tambah' })]),
+      MODE_BACA_SAJA_SHEETS
+        ? null
+        : h('button.btn-primary.btn-kecil', {
+          type: 'button', onclick: () => bukaForm(null, render),
+        }, [ikon('tambah', 17), h('span', { text: 'Tambah' })]),
     ]),
     isi,
   );
@@ -69,7 +76,9 @@ export async function mount(wadah) {
         kosong: 'Belum ada rekening',
         kosongKet: 'Upload e-statement — rekening akan dibuat otomatis dari kepala berkas.',
         aksi: (a) => [
-          h('button.btn-kecil', { type: 'button', onclick: () => bukaForm(a, render) }, [ikon('edit', 15), 'Ubah']),
+          MODE_BACA_SAJA_SHEETS
+            ? null
+            : h('button.btn-kecil', { type: 'button', onclick: () => bukaForm(a, render) }, [ikon('edit', 15), 'Ubah']),
           h('button.btn-kecil', {
             type: 'button',
             title: 'Hitung ulang saldo dari seluruh transaksi',
@@ -79,7 +88,9 @@ export async function mount(wadah) {
               emit(EVENT.DATA_BERUBAH, { sumber: 'rekening' });
             },
           }, 'Hitung ulang'),
-          h('button.btn-kecil.btn-bahaya', { type: 'button', onclick: () => hapus(a, render) }, [ikon('hapus', 15)]),
+          MODE_BACA_SAJA_SHEETS
+            ? null
+            : h('button.btn-kecil.btn-bahaya', { type: 'button', onclick: () => hapus(a, render) }, [ikon('hapus', 15)]),
         ],
       }),
 
