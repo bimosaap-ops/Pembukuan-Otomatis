@@ -31,6 +31,7 @@ import * as pengaturanRepo from '../data/repo/settings.js';
 import * as trxRepo from '../data/repo/transactions.js';
 import * as akunRepo from '../data/repo/accounts.js';
 import * as kategoriRepo from '../data/repo/categories.js';
+import * as kamusRepo from '../data/repo/merchant-dictionary.js';
 import * as emailTrxRepo from '../data/repo/email-transactions.js';
 import {
   buatTransaksi, SUMBER, STATUS_PROVISIONAL, STATUS_COCOK_EMAIL, STATUS_RESOLUSI_EMAIL, URUTAN_MANUAL,
@@ -139,6 +140,14 @@ export async function buatProvisionalDariEmail(trxEmail, daftarKategori, kamusMa
     sumber: SUMBER.EMAIL_PROVISIONAL,
     emailTrxId: trxEmail.id,
     statusProvisional: STATUS_PROVISIONAL.AKTIF,
+    // WAJIB dari waktu transaksi asli, BUKAN "sekarang" (bawaan buatTransaksi()
+    // kalau tidak diisi) -- provisionalKedaluwarsa() (watchdog 45 hari) memakai
+    // field ini untuk mengukur usia baris. Untuk transaksi yang baru saja
+    // ditarik, keduanya nyaris sama; tapi untuk backfill transaksi email LAMA
+    // (lihat backfillProvisionalEmailLama()), memakai "sekarang" akan membuat
+    // baris yang sudah berbulan-bulan menunggu terlihat baru dibuat sedetik
+    // lalu -- watchdog tidak akan pernah menandainya.
+    dibuatPada: trxEmail.waktuTransaksi,
     baseHash,
     // WAJIB ordinal dari id unik trxEmail (bukan skema ordinal dedupe.js
     // biasa, yang menghitung KEJADIAN per baseHash) -- provisional tidak
@@ -321,6 +330,110 @@ export async function rekonsiliasiSetelahUpload(transaksiBaruDariUpload) {
   }
 
   return hasil;
+}
+
+/**
+ * Putuskan aksi backfill untuk SATU transaksi email lama terhadap ledger
+ * SEKARANG -- murni, diekspor supaya bisa diuji tanpa IndexedDB.
+ *
+ * Hanya MATCHED yang berarti "sudah ada baris statement ASLI yang benar-benar
+ * mewakilinya" -- itu satu-satunya kasus yang TIDAK BOLEH dibuatkan
+ * provisional (akan dobel dengan baris asli yang sudah ada). MISSING,
+ * MISMATCH, DAN AMBIGUOUS semuanya berarti "belum ada baris statement asli
+ * yang mewakilinya" -- ketiganya tetap perlu baris provisional, persis
+ * seperti kalau transaksi ini baru saja ditarik hari ini dan kandidat
+ * terdekatnya kebetulan tidak cocok (lihat prosesSatuTransaksiBaru() di
+ * email-feed-sync.js: cuma MISSING yang memicu provisional di jalur baru,
+ * tapi itu karena transaksi baru MEMANG tidak mungkin MISMATCH/AMBIGUOUS
+ * terhadap ledgernya sendiri yang belum pernah menyinggungnya -- transaksi
+ * LAMA yang dinilai ulang di sini bisa saja sudah kadung MISMATCH/AMBIGUOUS
+ * dari rekonsiliasi lama, dan itu TETAP butuh baris ledger, bukan cuma
+ * status).
+ * @returns {{aksi: 'tautkan'|'provisional', cocok: object}}
+ */
+export function putuskanAksiBackfill(trxEmail, kandidatStatement) {
+  const cocok = cocokkanTransaksiEmail(trxEmail, kandidatStatement);
+  return { aksi: cocok.status === STATUS_COCOK_EMAIL.MATCHED ? 'tautkan' : 'provisional', cocok };
+}
+
+/**
+ * Backfill SATU KALI (tapi aman dipanggil berulang -- idempoten) untuk
+ * transaksi email LAMA yang statusnya sudah MISSING dari SEBELUM fitur ini
+ * diaktifkan pengguna. `prosesSatuTransaksiBaru()` di email-feed-sync.js
+ * cuma memproses transaksi email yang BARU ditarik (lihat `simpanBanyakBaru`
+ * yang men-skip `gmailMessageId` yang sudah ada) -- tanpa backfill ini,
+ * backlog lama tidak akan PERNAH dapat baris provisional walau flag sudah
+ * dinyalakan, karena tidak ada pemicu lain yang mengevaluasinya ulang.
+ *
+ * PENTING: status MISSING yang tersimpan di baris lama bisa BASI. Transaksi
+ * itu mungkin diparse SEBELUM e-statement pasangannya sempat diupload, dan
+ * sebelum Fase C ada, tidak ada apa pun yang mengevaluasinya ulang begitu
+ * statement itu akhirnya masuk. Karena itu setiap kandidat dinilai ULANG di
+ * sini terhadap ledger SEKARANG (lihat putuskanAksiBackfill()) sebelum
+ * diputuskan.
+ *
+ * Dipanggil dari UI Pengaturan (kartuGabungLedgerEmail) setiap kali tombol
+ * "Simpan" ditekan dengan flag aktif -- filter `!t.provisionalTrxId` membuat
+ * baris yang sudah pernah dibuatkan provisional tidak diproses dua kali,
+ * jadi aman dipanggil ulang berkali-kali (mis. pengguna cuma mengganti
+ * pilihan rekening BCA lalu Simpan lagi).
+ *
+ * @returns {{dibuat: number, diperbarui: number}}
+ */
+export async function backfillProvisionalEmailLama() {
+  if (!(await ledgerMergeAktif())) return { dibuat: 0, diperbarui: 0 };
+
+  const kandidatEmail = (await emailTrxRepo.semua()).filter((t) => t.statusCocok === STATUS_COCOK_EMAIL.MISSING
+    && t.statusResolusi === STATUS_RESOLUSI_EMAIL.TERBUKA
+    && !t.provisionalTrxId);
+  if (!kandidatEmail.length) return { dibuat: 0, diperbarui: 0 };
+
+  const [daftarKategori, kamusEntri] = await Promise.all([kategoriRepo.daftar(), kamusRepo.semua()]);
+  const kamusMap = new Map(kamusEntri.map((e) => [e.merchantKey, e.kategoriId]));
+
+  let dibuat = 0;
+  let diperbarui = 0;
+
+  for (const trxEmail of kandidatEmail) {
+    const rentang = rentangTanggalKandidat(trxEmail.waktuTransaksi);
+    const kandidatMentah = rentang ? await trxRepo.rentangTanggal(rentang.dari, rentang.sampai) : [];
+    const kandidatStatement = kandidatMentah.filter((k) => k.sumber !== SUMBER.EMAIL_PROVISIONAL);
+    const { aksi, cocok } = putuskanAksiBackfill(trxEmail, kandidatStatement);
+
+    if (aksi === 'tautkan') {
+      // Sudah ada baris statement ASLI di ledger sekarang -- JANGAN buat
+      // provisional (dobel), cukup perbarui status tautannya.
+      await emailTrxRepo.simpanSatu({
+        ...trxEmail,
+        statusCocok: cocok.status,
+        transaksiCocokId: cocok.kandidatId || '',
+        skorCocok: cocok.skor,
+        alasanCocok: cocok.alasan,
+      });
+      diperbarui += 1;
+      continue;
+    }
+
+    const disimpan = await buatProvisionalDariEmail(trxEmail, daftarKategori, kamusMap);
+    dibuat += 1;
+
+    if (cocok.status !== STATUS_COCOK_EMAIL.MISSING) {
+      // Near-miss (MISMATCH/AMBIGUOUS) -- tandai sengketa dari awal, persis
+      // tandaiSengketa() yang dipanggil rekonsiliasi biasa, supaya baris ini
+      // langsung kelihatan perlu ditinjau alih-alih seolah baru & belum dicek.
+      await trxRepo.simpanSatu({ ...disimpan, statusProvisional: STATUS_PROVISIONAL.DISENGKETAKAN });
+      await emailTrxRepo.simpanSatu({
+        ...trxEmail,
+        provisionalTrxId: disimpan.id,
+        statusCocok: cocok.status,
+        transaksiCocokId: cocok.kandidatId || '',
+        skorCocok: cocok.skor,
+        alasanCocok: cocok.alasan,
+      });
+    }
+  }
+
+  return { dibuat, diperbarui };
 }
 
 /**

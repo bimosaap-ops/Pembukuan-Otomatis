@@ -22,7 +22,7 @@ import {
 import { tarikTransaksiEmail, statusTarikEmail } from '../../services/email-feed-sync.js';
 import { tarikDanGabungEntitas } from '../../services/entitas-sync.js';
 import { tarikDanGabungTransaksi } from '../../services/transaksi-sync.js';
-import { ledgerMergeAktif, provisionalKedaluwarsa } from '../../services/email-ledger-merge.js';
+import { ledgerMergeAktif, provisionalKedaluwarsa, backfillProvisionalEmailLama } from '../../services/email-ledger-merge.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
 import { toastSukses, toastGagal } from '../components/toast.js';
 import { pergiKe } from '../router.js';
@@ -51,7 +51,7 @@ export async function mount(wadah) {
       kartuFolder(),
       await kartuSheets(render),
       await kartuEmailFeed(),
-      await kartuGabungLedgerEmail(akun),
+      await kartuGabungLedgerEmail(akun, render),
       kartuDatabase({ akun, transaksi, upload, kategori, penyimpanan }, render),
       kartuVersi(versi),
       kartuTentang(),
@@ -571,7 +571,7 @@ async function kartuEmailFeed() {
    Gabung Transaksi Email ke ledger ("Fase C") — lihat services/email-ledger-merge.js
    ========================================================================== */
 
-async function kartuGabungLedgerEmail(akun) {
+async function kartuGabungLedgerEmail(akun, render) {
   const [aktifTersimpan, akunUtamaTersimpan, akunRdnTersimpan, kedaluwarsa] = await Promise.all([
     ledgerMergeAktif(),
     pengaturanRepo.baca(pengaturanRepo.KUNCI.EMAIL_AKUN_UTAMA_BCA, ''),
@@ -640,7 +640,27 @@ async function kartuGabungLedgerEmail(akun) {
               pengaturanRepo.tulis(pengaturanRepo.KUNCI.EMAIL_AKUN_UTAMA_BCA, selectUtama.value),
               pengaturanRepo.tulis(pengaturanRepo.KUNCI.EMAIL_AKUN_RDN_BCA, selectRdn.value),
             ]);
-            toastSukses('Pengaturan gabung ledger tersimpan.');
+
+            let pesan = 'Pengaturan gabung ledger tersimpan.';
+            if (aktifVal) {
+              // Transaksi email lama (dari sebelum flag ini dinyalakan) tidak
+              // pernah otomatis dievaluasi ulang oleh jalur tarik email biasa
+              // -- backfill di sini sekali jalan supaya backlog-nya juga ikut
+              // tercatat sebagai provisional, bukan cuma transaksi baru ke depan.
+              // Sebagian bisa saja ternyata sudah ketemu padanan aslinya (statement
+              // yang diupload belakangan) -- itu diperbarui statusnya saja, TANPA
+              // baris provisional baru, supaya tidak dobel dengan yang sudah ada.
+              const { dibuat, diperbarui } = await backfillProvisionalEmailLama();
+              if (dibuat > 0 || diperbarui > 0) {
+                const bagian = [];
+                if (dibuat > 0) bagian.push(`${dibuat} dicatat sebagai provisional`);
+                if (diperbarui > 0) bagian.push(`${diperbarui} ternyata sudah ada padanannya, status diperbarui`);
+                pesan += ` Transaksi email lama: ${bagian.join(', ')}.`;
+                emit(EVENT.DATA_BERUBAH, { sumber: 'email-ledger-backfill' });
+              }
+            }
+            toastSukses(pesan);
+            await render();
           } catch (err) {
             toastGagal(err.message);
           } finally {
