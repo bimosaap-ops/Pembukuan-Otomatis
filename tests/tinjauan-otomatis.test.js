@@ -32,6 +32,23 @@ test('kandidat menang jelas lewat nominal+arah+merchant -> diusulkan tautkan', (
   assert.equal(catatan[0].aksi, 'tautkan');
 });
 
+test('satu-satunya kandidat kebetulan nominal+arah sama tapi nama merchant tidak berhubungan -> tetap dilewati, bukan ditautkan', () => {
+  // Kasus nyata: "Uda Denai" (warung) kebetulan nominalnya sama persis
+  // dengan satu-satunya TOPUP e-wallet di jendela waktu yang sama -- tanpa
+  // syarat merchantCocok, ini akan menang cuma lewat skor arah+nominal (3)
+  // padahal jelas bukan transaksi yang sama.
+  const data = {
+    transaksiEmail: [trx({ merchantMentah: 'Uda Denai', nominal: 20000 })],
+    kandidatStatement: [
+      { id: 'k1', tanggal: '2026-06-16', deskripsi: 'TOPUP088291177279 0145200311031084', nominal: -20000, accountId: 'a1' },
+      { id: 'k2', tanggal: '2026-06-14', deskripsi: 'TRANSAKSI DEBIT TGL: 14/06 QR 014 00000.00Keisya Mar', nominal: -18000, accountId: 'a1' },
+    ],
+  };
+  const { keputusan, catatan } = analisaTinjauanAmbiguous(data);
+  assert.equal(keputusan.length, 0);
+  assert.equal(catatan[0].aksi, 'lewati');
+});
+
 test('dua kandidat sama-sama cocok kuat (nama mirip identik) -> tetap dilewati, bukan ditebak', () => {
   const data = {
     transaksiEmail: [trx({ merchantMentah: 'TOKO SAMA' })],
