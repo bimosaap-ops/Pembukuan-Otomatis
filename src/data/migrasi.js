@@ -14,6 +14,7 @@
 import * as pengaturanRepo from './repo/settings.js';
 import * as trxRepo from './repo/transactions.js';
 import * as kategoriRepo from './repo/categories.js';
+import * as emailTrxRepo from './repo/email-transactions.js';
 import { hitungBaseHash, hashFinal } from '../domain/dedupe.js';
 import { KATEGORI_BAWAAN, tambahPola } from '../domain/categorize.js';
 import { KUNCI_SHEETS } from '../services/sheets-sync.js';
@@ -37,6 +38,8 @@ export const KUNCI_MIGRASI = 'migrasiHashRekening';
 export const KUNCI_MIGRASI_KATA_KUNCI = 'migrasiKataKunciBawaanV2';
 /** Bendera migrasi kategori Investasi — lihat migrasiKategoriInvestasi. */
 export const KUNCI_MIGRASI_KATEGORI_INVESTASI = 'migrasiKategoriInvestasiV1';
+/** Bendera migrasi kategoriFinal transaksi email — lihat migrasiKategoriFinalEmail. */
+export const KUNCI_MIGRASI_KATEGORI_FINAL_EMAIL = 'migrasiKategoriFinalEmailV1';
 
 /**
  * Hitung hash baru untuk seluruh transaksi.
@@ -230,4 +233,43 @@ export async function migrasiKategoriInvestasi() {
 
   await pengaturanRepo.tulis(KUNCI_MIGRASI_KATEGORI_INVESTASI, '1');
   return { dijalankan: true, jumlahKategori: kategoriBaru.length };
+}
+
+/**
+ * Cari transaksi email yang belum kebagian kategoriFinal otomatis ("Fase B",
+ * lihat services/email-feed-sync.js `bangunPembaruanEmailTrx`) karena sudah
+ * ditarik SEBELUM perubahan itu ada — kode baru cuma jalan untuk baris yang
+ * BARU ditarik, jadi record lama perlu disusulkan sekali lewat migrasi ini.
+ *
+ * Fungsi murni (seperti gabungKataKunciBaru/kategoriBaruYangBelumAda di
+ * atas): menerima daftar transaksi email, mengembalikan HANYA yang perlu
+ * diperbarui — tidak menyentuh database. `overrideUser` dihormati sama
+ * seperti di bangunPembaruanEmailTrx: koreksi manual pengguna tidak boleh
+ * tertimpa balik oleh migrasi ini.
+ *
+ * @param {Array} daftarEmailTrx dari emailTrxRepo.semua()
+ * @returns {Array} transaksi email dengan kategoriFinal terisi, siap disimpan
+ */
+export function emailTrxPerluKategoriFinal(daftarEmailTrx) {
+  return daftarEmailTrx
+    .filter((t) => !t.kategoriFinal && !t.overrideUser && t.kategoriSaran)
+    .map((t) => ({ ...t, kategoriFinal: t.kategoriSaran }));
+}
+
+/**
+ * Terapkan emailTrxPerluKategoriFinal() ke seluruh transaksi email yang
+ * tersimpan. Aman dipanggil tiap aplikasi dibuka (berhenti sendiri lewat
+ * bendera, seperti migrasi lain di berkas ini).
+ */
+export async function migrasiKategoriFinalEmail() {
+  const sudah = await pengaturanRepo.baca(KUNCI_MIGRASI_KATEGORI_FINAL_EMAIL, '');
+  if (sudah) return { dilewati: true };
+
+  const semua = await emailTrxRepo.semua();
+  const perluDiperbarui = emailTrxPerluKategoriFinal(semua);
+
+  for (const t of perluDiperbarui) await emailTrxRepo.simpanSatu(t);
+
+  await pengaturanRepo.tulis(KUNCI_MIGRASI_KATEGORI_FINAL_EMAIL, '1');
+  return { dijalankan: true, jumlah: perluDiperbarui.length };
 }

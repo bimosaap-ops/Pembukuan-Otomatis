@@ -10,7 +10,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { hitungHashBaru, gabungKataKunciBaru, kategoriBaruYangBelumAda } from '../src/data/migrasi.js';
+import {
+  hitungHashBaru, gabungKataKunciBaru, kategoriBaruYangBelumAda, emailTrxPerluKategoriFinal,
+} from '../src/data/migrasi.js';
 import { hitungBaseHash } from '../src/domain/dedupe.js';
 
 const trx = (i, lebih = {}) => ({
@@ -175,4 +177,46 @@ test('kategoriBaruYangBelumAda tidak mengembalikan kategori yang sudah dimiliki 
   const hasil = kategoriBaruYangBelumAda(kategoriSekarang, definisiBaru);
 
   assert.deepEqual(hasil, []);
+});
+
+/* ==========================================================================
+   emailTrxPerluKategoriFinal — susulkan kategoriFinal otomatis ("Fase B")
+   untuk transaksi email yang ditarik SEBELUM bangunPembaruanEmailTrx()
+   mengisinya otomatis (lihat services/email-feed-sync.js).
+   ========================================================================== */
+
+test('emailTrxPerluKategoriFinal mengisi kategoriFinal dari kategoriSaran untuk record lama', () => {
+  const daftar = [
+    { id: 'trxe_1', kategoriFinal: '', kategoriSaran: 'kat_makan', overrideUser: false },
+  ];
+
+  const hasil = emailTrxPerluKategoriFinal(daftar);
+
+  assert.equal(hasil.length, 1);
+  assert.equal(hasil[0].id, 'trxe_1');
+  assert.equal(hasil[0].kategoriFinal, 'kat_makan');
+});
+
+test('emailTrxPerluKategoriFinal tidak menyentuh record yang sudah punya kategoriFinal', () => {
+  const daftar = [
+    { id: 'trxe_2', kategoriFinal: 'kat_hiburan', kategoriSaran: 'kat_makan', overrideUser: false },
+  ];
+
+  assert.deepEqual(emailTrxPerluKategoriFinal(daftar), []);
+});
+
+test('emailTrxPerluKategoriFinal tidak menyentuh record hasil koreksi manual (overrideUser)', () => {
+  const daftar = [
+    { id: 'trxe_3', kategoriFinal: '', kategoriSaran: 'kat_makan', overrideUser: true },
+  ];
+
+  assert.deepEqual(emailTrxPerluKategoriFinal(daftar), []);
+});
+
+test('emailTrxPerluKategoriFinal tidak menyentuh record tanpa kategoriSaran sama sekali', () => {
+  const daftar = [
+    { id: 'trxe_4', kategoriFinal: '', kategoriSaran: '', overrideUser: false },
+  ];
+
+  assert.deepEqual(emailTrxPerluKategoriFinal(daftar), []);
 });

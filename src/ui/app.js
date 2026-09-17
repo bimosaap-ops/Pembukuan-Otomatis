@@ -15,7 +15,9 @@ import { toastGagal, toastSukses } from './components/toast.js';
 import { on, EVENT } from '../core/events.js';
 import { pantauKoneksiSheets } from '../services/sheets-sync.js';
 import { jalankanAutoPull } from '../services/auto-pull.js';
-import { jalankanMigrasi, migrasiKataKunciBawaan, migrasiKategoriInvestasi } from '../data/migrasi.js';
+import {
+  jalankanMigrasi, migrasiKataKunciBawaan, migrasiKategoriInvestasi, migrasiKategoriFinalEmail,
+} from '../data/migrasi.js';
 
 /**
  * Header hanya dipakai di layar HP; di layar lebar tempatnya diambil alih
@@ -119,6 +121,14 @@ async function mulai() {
       toastSukses('Kategori "Investasi" ditambahkan. Buka halaman Kategori dan tekan '
         + '"Kelompokkan ulang semua transaksi" agar transaksi reksa dana lama ikut terkoreksi.');
     }
+
+    // "Fase B": transaksi email lama (ditarik sebelum kategoriFinal otomatis
+    // ada) disusulkan sekali di sini -- kode barunya cuma jalan untuk baris
+    // yang baru ditarik (lihat email-feed-sync.js).
+    await migrasiKategoriFinalEmail().catch((e) => {
+      console.error('Migrasi kategoriFinal email gagal:', e);
+      return null;
+    });
 
     // Antrean retry Sheets (kalau ada, dari sesi sebelumnya yang gagal
     // tersinkron) dicoba lagi begitu database siap, dan tiap kali koneksi pulih.

@@ -184,6 +184,32 @@ export function periodePreset(nama, acuan = hariIni()) {
 }
 
 /**
+ * Rentang tanggal (string 'YYYY-MM-DD') di sekitar sebuah waktu transaksi —
+ * dipakai mencari kandidat rekonsiliasi transaksi email vs e-statement lewat
+ * indeks tanggal (trxRepo.rentangTanggal), lebih lebar dari jendela WAKTU
+ * presisi di domain/rekonsiliasiEmail.js supaya perbedaan zona waktu/
+ * pembulatan tanggal di kedua sisi tidak sampai memangkas kandidat yang
+ * seharusnya dipertimbangkan; penyaringan presisi tetap tanggung jawab
+ * cocokkanTransaksiEmail() sendiri.
+ *
+ * Murni, dipakai services/email-feed-sync.js dan services/email-ledger-merge.js
+ * (keduanya butuh fungsi yang sama tanpa saling impor satu sama lain).
+ * @returns {{dari: string, sampai: string}|null} null kalau waktuIso tidak valid
+ */
+export function rentangTanggalKandidat(waktuIso, jendelaHari = 2) {
+  const t = new Date(waktuIso);
+  if (Number.isNaN(t.getTime())) return null;
+
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  const dari = new Date(t.getTime());
+  dari.setUTCDate(dari.getUTCDate() - jendelaHari);
+  const sampai = new Date(t.getTime());
+  sampai.setUTCDate(sampai.getUTCDate() + jendelaHari);
+
+  return { dari: fmt(dari), sampai: fmt(sampai) };
+}
+
+/**
  * Statement BCA hanya mencantumkan tanggal dan bulan. Saat daftar transaksi
  * melewati pergantian tahun (Desember -> Januari), tahunnya harus ikut naik.
  * Fungsi ini menerima daftar {bulanIdx, hari} berurutan dan tahun awal periode.

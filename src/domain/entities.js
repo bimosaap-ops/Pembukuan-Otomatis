@@ -9,7 +9,17 @@ export const JENIS_AKUN = { BANK: 'bank', KAS: 'kas' };
 
 /** Nomor urut untuk transaksi yang tidak berasal dari baris statement. */
 export const URUTAN_MANUAL = 1000000;
-export const SUMBER = { PDF: 'pdf', MANUAL: 'manual' };
+export const SUMBER = { PDF: 'pdf', MANUAL: 'manual', EMAIL_PROVISIONAL: 'email_provisional' };
+/**
+ * Status baris ledger ber-`sumber: SUMBER.EMAIL_PROVISIONAL` ("Fase C" — lihat
+ * services/email-ledger-merge.js): kosong untuk transaksi biasa (PDF/manual).
+ * "aktif" = belum ada e-statement yang mengonfirmasi/menggantikannya sama
+ * sekali. "disengketakan" = e-statement sudah datang tapi nominal/arahnya
+ * tidak cocok (MISMATCH/AMBIGUOUS) — baris DIBIARKAN apa adanya (saldo tidak
+ * boleh diam-diam berubah), menunggu keputusan manual lewat halaman
+ * "Transaksi Email".
+ */
+export const STATUS_PROVISIONAL = { AKTIF: 'aktif', DISENGKETAKAN: 'disengketakan' };
 export const TIPE_KATEGORI = { PEMASUKAN: 'pemasukan', PENGELUARAN: 'pengeluaran' };
 export const STATUS_UPLOAD = { SUKSES: 'sukses', SEBAGIAN: 'sebagian', GAGAL: 'gagal' };
 
@@ -73,6 +83,14 @@ export function buatTransaksi(data = {}) {
        sesudah baris statement pada tanggal yang sama. */
     urutan: Number.isFinite(Number(data.urutan)) ? Number(data.urutan) : URUTAN_MANUAL,
     catatan: data.catatan || '',
+    /* "Fase C": id record email_transactions yang melahirkan baris provisional
+       ini (sumber === SUMBER.EMAIL_PROVISIONAL) -- kosong untuk transaksi
+       PDF/manual biasa. Dipakai email-ledger-merge.js untuk menemukan baris
+       ledger yang harus digantikan/ditandai sengketa saat e-statement datang. */
+    emailTrxId: data.emailTrxId || '',
+    /* "Fase C": lihat STATUS_PROVISIONAL -- kosong untuk transaksi bukan
+       email_provisional. */
+    statusProvisional: data.statusProvisional || '',
     dibuatPada: data.dibuatPada || new Date().toISOString(),
     diubahPada: data.diubahPada || '',
   };
@@ -168,11 +186,20 @@ export function buatTransaksiEmail(data = {}) {
     nomorReferensi: data.nomorReferensi || '',
     versiParser: data.versiParser || '',
     confidence: data.confidence || '',
-    /* Hasil rekonsiliasiEmail.js (fase berikutnya). */
+    /* Hasil rekonsiliasiEmail.js. transaksiCocokId murni berarti "matched ke
+       baris e-statement ASLI" -- SENGAJA field terpisah dari provisionalTrxId
+       di bawah, supaya UI exception (email-transaksi.js) yang sudah membaca
+       transaksiCocokId sebagai kandidat e-statement tidak perlu diubah makna. */
     statusCocok: data.statusCocok || '',
     transaksiCocokId: data.transaksiCocokId || '',
     skorCocok: data.skorCocok === null || data.skorCocok === undefined ? null : Number(data.skorCocok),
     alasanCocok: data.alasanCocok || '',
+    /* "Fase C": id baris ledger PROVISIONAL (sumber === SUMBER.EMAIL_PROVISIONAL)
+       yang dibuat untuk transaksi email ini saat statusCocok === MISSING --
+       lihat services/email-ledger-merge.js. Kosong berarti belum pernah
+       dibuatkan provisional (mis. status bukan MISSING, atau fitur belum
+       aktif lewat pengaturan "emailLedgerMergeAktif"). */
+    provisionalTrxId: data.provisionalTrxId || '',
     /* Hasil kategoriEmail.js (fase berikutnya). */
     kategoriSaran: data.kategoriSaran || '',
     kategoriFinal: data.kategoriFinal || '',
