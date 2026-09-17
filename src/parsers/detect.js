@@ -17,12 +17,12 @@ export const ADAPTER = {
  * nama badan hukum lebih dipercaya daripada singkatan yang bisa muncul kebetulan.
  */
 const TANDA_BANK = [
-  { adapter: ADAPTER.BCA, bank: 'BCA', pola: /HALO\s*BCA|WWW\.BCA\.CO\.ID/i, skor: 120 },
+  { adapter: ADAPTER.BCA, bank: 'BCA', pola: /HALO\s*BCA|WWW\.BCA\.CO\.ID/i, skor: 120, eksklusif: true },
   { adapter: ADAPTER.BCA, bank: 'BCA', pola: /BANK\s+CENTRAL\s+ASIA/i, skor: 100 },
   { adapter: ADAPTER.BCA, bank: 'BCA', pola: /KLIKBCA|MYBCA|BCA\s+MOBILE/i, skor: 70 },
   { adapter: ADAPTER.BCA, bank: 'BCA', pola: /\bBCA\b/i, skor: 40 },
 
-  { adapter: ADAPTER.PERMATA, bank: 'Permata', pola: /PERMATABANK\.COM|PERMATA\s+TEL|NO\.\s*CIF/i, skor: 120 },
+  { adapter: ADAPTER.PERMATA, bank: 'Permata', pola: /PERMATABANK\.COM|PERMATA\s+TEL|NO\.\s*CIF/i, skor: 120, eksklusif: true },
   { adapter: ADAPTER.PERMATA, bank: 'Permata', pola: /BANK\s+PERMATA/i, skor: 100 },
   { adapter: ADAPTER.PERMATA, bank: 'Permata', pola: /PERMATABANK|PERMATA\s*BANK/i, skor: 90 },
   { adapter: ADAPTER.PERMATA, bank: 'Permata', pola: /PERMATAMOBILE|PERMATANET/i, skor: 70 },
@@ -88,9 +88,42 @@ export function deteksiBank(teks, teksKop = '') {
     || TANDA_LAYOUT.find((l) => l.cocok(isiPenuh));
   if (layout) return { adapter: layout.adapter, bank: layout.bank, keyakinan: 100 };
 
+  /* Tanda eksklusif diperiksa pada SELURUH dokumen, mendahului kop, dan itu
+     memperbaiki kesalahan yang nyata: pada rekening koran Permata, urutan
+     potongan teks hasil ekstraksi PDF tidak selalu menaruh kop di atas. Kalau
+     25 baris pertama halaman satu ternyata berisi baris transaksi, kop hanya
+     memuat "BANK CENTRAL ASIA" sebagai bank lawan transaksi (skor 100) —
+     jawaban itu langsung dipakai dan identitas penerbit yang jauh lebih kuat
+     di kaki halaman ("PermataBank.com", "No.CIF") tidak pernah ikut dinilai.
+     Satu statement Permata pernah terbaca sebagai BCA karena ini, lalu seluruh
+     transaksinya masuk ke rekening yang salah.
+
+     Yang boleh mendahului kop hanya tanda yang mustahil muncul sebagai teks
+     lawan transaksi: alamat situs dan nomor layanan penerbit, bukan nama bank.
+     "BANK CENTRAL ASIA" justru muncul belasan kali pada statement Permata,
+     jadi pola sekadar nama bank tetap tidak eksklusif. */
+  const eksklusif = tandaEksklusif(isiPenuh);
+  if (eksklusif) return eksklusif;
+
   // Kop lebih dipercaya; seluruh dokumen hanya dipakai bila kop tidak menjawab.
   return nilaiTanda(kop) || nilaiTanda(isiPenuh)
     || { adapter: ADAPTER.GENERIK, bank: '', keyakinan: 0 };
+}
+
+/**
+ * Tanda penerbit yang tidak mungkin berasal dari uraian transaksi. Kalau lebih
+ * dari satu bank ikut cocok — misalnya beberapa statement digabung jadi satu
+ * berkas — tidak ada yang bisa dipastikan, jadi keputusannya dikembalikan ke
+ * penilaian kop yang biasa.
+ */
+function tandaEksklusif(isi) {
+  if (!isi) return null;
+  const cocok = TANDA_BANK.filter((t) => t.eksklusif && t.pola.test(isi));
+  if (!cocok.length) return null;
+  const bank = new Set(cocok.map((t) => t.bank));
+  if (bank.size > 1) return null;
+  const terbaik = cocok.reduce((a, b) => (b.skor > a.skor ? b : a));
+  return { adapter: terbaik.adapter, bank: terbaik.bank, keyakinan: terbaik.skor };
 }
 
 function nilaiTanda(isi) {

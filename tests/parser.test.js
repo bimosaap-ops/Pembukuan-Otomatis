@@ -7,9 +7,11 @@ import { deteksiBank, bacaKepala, ADAPTER } from '../src/parsers/detect.js';
 import { parseAngka } from '../src/core/format.js';
 import { parseTanggal } from '../src/core/dates.js';
 import { validasiBaris, cocokkanRingkasan } from '../src/domain/validate.js';
+import { rapikanDeskripsi, barisChrome, potongChrome } from '../src/parsers/util.js';
 import {
   statementBCA, statementBCAAgustus, statementBCAAkhirTahun, statementBCADuaHalaman,
   statementPermataRekeningKoran, statementGenerikTanpaHeader, baris,
+  statementPermataKakiDiPitaUraian, statementBCADisclaimerRenggang,
 } from './fixtures/statements.js';
 
 /* ==========================================================================
@@ -95,6 +97,43 @@ test('deteksiBank mengenali BCA dari judul kolom walau kata "BCA" tidak bersih d
   const hasil = deteksiBank(isiPenuh, kop);
   assert.equal(hasil.adapter, ADAPTER.BCA);
   assert.equal(hasil.bank, 'BCA');
+});
+
+test('tanda penerbit di kaki halaman mengalahkan nama bank lawan transaksi di kop', () => {
+  /* Kejadian sungguhan: satu rekening koran Permata terbaca sebagai BCA, lalu
+     59 transaksinya masuk ke rekening BCA — saldo dua rekening ikut salah.
+     Penyebabnya urutan potongan teks hasil ekstraksi PDF: 25 baris pertama
+     halaman satu berisi baris transaksi, bukan kop, sehingga yang terbaca di
+     "kop" hanya nama bank TUJUAN transfer. */
+  const kop = [
+    '01/08 TRF BIFAST KE LIM KHENG HONG 230300 275.000,00 36.172.275,00',
+    '2901 BANK CENTRAL ASIA Permata ME 09:45:27 - 000027308218',
+    '04/08 TRF BIFAST KE HANDI AGUNG 758014963 1.344.000,00 34.828.275,00',
+    '9 BANK CENTRAL ASIA Permata ME 14:52:01 - 000027687442',
+  ].join('\n');
+  const isiPenuh = `${kop}\nPermataBank.com | Permata Tel 1500-111 atau (021) 2985-0611\nNo.CIF B0024WQ`;
+
+  const hasil = deteksiBank(isiPenuh, kop);
+  assert.equal(hasil.bank, 'Permata', 'alamat situs penerbit tidak mungkin jadi uraian transaksi');
+  assert.equal(hasil.adapter, ADAPTER.PERMATA);
+});
+
+test('nama bank di kop tetap menang bila tidak ada tanda penerbit yang eksklusif', () => {
+  // Tanpa tanda eksklusif, aturan lama berlaku: kop lebih dipercaya daripada
+  // seluruh dokumen, justru supaya nama bank lawan transaksi tidak menang.
+  const kop = 'PT BANK PERMATA Tbk\nNO. REKENING : 1238847210';
+  const isiPenuh = `${kop}\nTRF BIFAST KE BUDI BANK CENTRAL ASIA\nTRF BIFAST KE ANI BANK CENTRAL ASIA`;
+
+  assert.equal(deteksiBank(isiPenuh, kop).bank, 'Permata');
+});
+
+test('dua tanda penerbit berbeda mengembalikan keputusan ke kop', () => {
+  // Beberapa statement yang digabung jadi satu berkas: tidak ada penerbit
+  // tunggal yang bisa dipastikan, jadi menebak lebih buruk daripada memakai kop.
+  const kop = 'PT. BANK CENTRAL ASIA Tbk\nNO. REKENING : 6090378994';
+  const isiPenuh = `${kop}\nwww.bca.co.id\nPermataBank.com`;
+
+  assert.equal(deteksiBank(isiPenuh, kop).bank, 'BCA');
 });
 
 test('bacaKepala mengambil nomor rekening, nama, dan periode', () => {
@@ -306,4 +345,61 @@ test('statement bulan berikutnya terbaca dengan periode yang benar', () => {
   assert.equal(agustus.transaksi.length, 2);
   assert.equal(agustus.transaksi[0].nominal, 2000000);
   assert.equal(agustus.transaksi[1].nominal, -450000);
+});
+
+/* ==========================================================================
+   Cetakan statement yang menyusup ke uraian transaksi
+   ========================================================================== */
+
+test('rapikanDeskripsi memotong kaki halaman dan disclaimer berhuruf renggang', () => {
+  assert.equal(
+    rapikanDeskripsi('TRANSAKSI DEBIT TGL: 08/07 QR 013 00000.00Pecel lele m e l a k u k a n s a n g g a h a n a t a s'),
+    'TRANSAKSI DEBIT TGL: 08/07 QR 013 00000.00Pecel lele',
+  );
+  assert.equal(
+    rapikanDeskripsi('PENDAPATAN BUNGA PermataBank.com Permata Tel 1500-111 atau (021) 2985-0611'),
+    'PENDAPATAN BUNGA',
+  );
+  assert.equal(
+    rapikanDeskripsi('PAJAK ATAS BUNGA Account Statement Periode Laporan BIMO CONTOH 01 AGUSTUS 2025'),
+    'PAJAK ATAS BUNGA',
+  );
+});
+
+test('nama bank lawan transaksi tidak ikut terpotong', () => {
+  // Batas yang paling mudah keliru: "BANK CENTRAL ASIA" adalah uraian yang sah
+  // pada statement Permata, bukan tanda penerbit.
+  const uraian = 'TRF BIFAST KE ASROF 7151357010 BANK CENTRAL ASIA Permata ME 09:23:38 - 000027756132';
+  assert.equal(rapikanDeskripsi(uraian), uraian);
+  assert.equal(potongChrome(uraian), uraian);
+  assert.equal(barisChrome(uraian), false);
+});
+
+test('barisChrome hanya benar untuk baris yang seluruhnya cetakan statement', () => {
+  assert.equal(barisChrome('PermataBank.com | Permata Tel 1500-111 atau (021) 2985-0611'), true);
+  assert.equal(barisChrome('m e l a k u k a n s a n g g a h a n a t a s L a p o r a n'), true);
+  assert.equal(barisChrome('ta ME 00:36:08 750888291177279'), false, 'sambungan uraian harus lolos');
+  assert.equal(barisChrome(''), false);
+});
+
+test('adapter Permata tidak menyambung kaki halaman ke uraian transaksi', () => {
+  const hasil = parseStatement(statementPermataKakiDiPitaUraian());
+
+  assert.equal(hasil.transaksi.length, 1);
+  const [t] = hasil.transaksi;
+  // Tanda hubung di ujung dibuang rapikanDeskripsi sejak semula, bukan efek
+  // pemotongan cetakan statement.
+  assert.equal(t.deskripsi, 'PB KE GIANI CONTOH 1238840550 Perm ata ME 09:33:46');
+  assert.ok(!/PermataBank\.com/i.test(t.deskripsi));
+  assert.ok(!/Periode Laporan/i.test(t.deskripsi));
+});
+
+test('adapter BCA tidak menyambung disclaimer berhuruf renggang ke uraian transaksi', () => {
+  const hasil = parseStatement([statementBCADisclaimerRenggang()]);
+
+  assert.equal(hasil.transaksi.length, 2);
+  const [t1, t2] = hasil.transaksi;
+  assert.equal(t1.deskripsi, 'TRANSAKSI DEBIT TGL: 08/07 QR 013 00000.00Pecel lele');
+  assert.equal(t1.nominal, -25000);
+  assert.equal(t2.deskripsi, 'QRIS DEBIT ALFAMART', 'transaksi sesudah disclaimer tetap terbaca');
 });
