@@ -31,12 +31,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Versi dipatok, bukan "latest": tes di sini memakai node:test dan
       # node:assert bawaan, dan perilaku test runner-nya masih berubah
       # antar versi mayor. Yang dipakai pengembangan sekarang Node 22.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
 
