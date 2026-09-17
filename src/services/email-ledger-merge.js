@@ -125,6 +125,29 @@ export async function buatProvisionalDariEmail(trxEmail, daftarKategori, kamusMa
     accountId: akun.id, tanggal, deskripsi, nominal: nominalBertanda,
   });
 
+  // Pengaman duplikat: kalau baris ledger untuk trxEmail.id ini SUDAH ada
+  // (hash penuh = baseHash + ordinal `e<trxEmail.id>`, lihat `hash` di bawah),
+  // JANGAN buat baris baru -- tautkan ulang saja. Ditemukan langsung di
+  // produksi: dua proses (mis. "Tarik email" dan backfill) yang kebetulan
+  // berjalan nyaris bersamaan bisa memicu buatProvisionalDariEmail() dua kali
+  // untuk transaksi email YANG SAMA sebelum keduanya sempat saling melihat
+  // hasil satu sama lain -- dobel.
+  //
+  // SENGAJA dibandingkan lewat hash PENUH (bukan baseHash saja): baseHash
+  // cuma akun+tanggal+deskripsi+nominal, dan itu SAH bertabrakan untuk dua
+  // transaksi BERBEDA yang kebetulan mirip (mis. dua kali beli kopi di toko
+  // sama, nominal sama, tanggal sama, tapi trxEmail.id beda -- data produksi
+  // sendiri punya kasus ini, "PT Tokopedia" muncul 3x di 07 Sep dengan
+  // emailTrxId berbeda-beda, ketiganya transaksi asli). Ordinal `e<trxEmail.id>`
+  // pada hash penuh memisahkan kasus itu dari kasus SATU trxEmail.id yang
+  // diproses dua kali -- cuma yang kedua yang harus dicegah.
+  const hashCalon = hashFinal(baseHash, `e${trxEmail.id}`);
+  const barisSama = await trxRepo.satuLewatHash(hashCalon);
+  if (barisSama) {
+    await emailTrxRepo.simpanSatu({ ...trxEmail, provisionalTrxId: barisSama.id });
+    return barisSama;
+  }
+
   const data = buatTransaksi({
     accountId: akun.id,
     tanggal,
