@@ -64,3 +64,27 @@ test('bangunPembaruanEmailTrx: kandidatId null (missing/ambiguous) disimpan seba
   assert.equal(hasil.transaksiCocokId, '');
   assert.equal(hasil.statusCocok, STATUS_COCOK_EMAIL.MISSING);
 });
+
+/* ==========================================================================
+   bangunPembaruanEmailTrx — kategoriFinal otomatis ("Fase B")
+   ========================================================================== */
+
+test('bangunPembaruanEmailTrx: kategoriFinal otomatis terisi dari saran untuk transaksi baru', () => {
+  const trx = { id: 'trxe_3', overrideUser: false, kategoriFinal: '' };
+  const cocok = { status: STATUS_COCOK_EMAIL.MISSING, kandidatId: null, skor: 0, alasan: 'no_candidate_in_time_window' };
+  const saran = { kategoriId: 'kat_makan', keyakinan: KEYAKINAN_KATEGORI_EMAIL.SEDANG, merchantKey: '' };
+
+  const hasil = bangunPembaruanEmailTrx(trx, '', cocok, saran);
+
+  assert.equal(hasil.kategoriFinal, 'kat_makan');
+});
+
+test('bangunPembaruanEmailTrx: kategoriFinal hasil koreksi manual (overrideUser) TIDAK tertimpa saran', () => {
+  const trx = { id: 'trxe_4', overrideUser: true, kategoriFinal: 'kat_hiburan' };
+  const cocok = { status: STATUS_COCOK_EMAIL.MATCHED, kandidatId: 'trx_x', skor: 90, alasan: 'amount_exact' };
+  const saran = { kategoriId: 'kat_makan', keyakinan: KEYAKINAN_KATEGORI_EMAIL.TINGGI, merchantKey: '' };
+
+  const hasil = bangunPembaruanEmailTrx(trx, '', cocok, saran);
+
+  assert.equal(hasil.kategoriFinal, 'kat_hiburan', 'koreksi manual pengguna harus tetap dihormati');
+});
