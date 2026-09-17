@@ -73,6 +73,14 @@ export function rentangTanggalKandidat(waktuIso, jendelaHari = JENDELA_HARI_KAND
 /**
  * Gabungkan hasil rekonsiliasi + saran kategori ke dalam satu transaksi
  * email siap simpan. Murni — diekspor supaya bisa diuji tanpa IndexedDB.
+ *
+ * "Fase B": kategoriFinal diisi OTOMATIS dari saran, sama seperti transaksi
+ * PDF-upload yang sudah auto-kategori tanpa gate (categorize.js dipanggil
+ * langsung di ingest.js) — tidak menunggu klik manual "Simpan kategori" di
+ * halaman Transaksi Email. `trx.overrideUser` (entities.js) jadi guard:
+ * transaksi genuinely baru selalu false (default buatTransaksiEmail), jadi
+ * auto-isi berlaku; tapi kalau fungsi ini pernah dipanggil ulang atas record
+ * yang sudah dikoreksi manual pengguna, koreksi itu TIDAK tertimpa balik.
  */
 export function bangunPembaruanEmailTrx(trx, merchantKey, cocok, saran) {
   return {
@@ -84,6 +92,7 @@ export function bangunPembaruanEmailTrx(trx, merchantKey, cocok, saran) {
     alasanCocok: cocok.alasan,
     kategoriSaran: saran.kategoriId,
     confidenceKategori: saran.keyakinan,
+    kategoriFinal: trx.overrideUser ? trx.kategoriFinal : saran.kategoriId,
   };
 }
 
