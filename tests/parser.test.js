@@ -12,6 +12,7 @@ import {
   statementBCA, statementBCAAgustus, statementBCAAkhirTahun, statementBCADuaHalaman,
   statementPermataRekeningKoran, statementGenerikTanpaHeader, baris,
   statementPermataKakiDiPitaUraian, statementBCADisclaimerRenggang,
+  statementBCALanjutanTanggal,
 } from './fixtures/statements.js';
 
 /* ==========================================================================
@@ -402,4 +403,18 @@ test('adapter BCA tidak menyambung disclaimer berhuruf renggang ke uraian transa
   assert.equal(t1.deskripsi, 'TRANSAKSI DEBIT TGL: 08/07 QR 013 00000.00Pecel lele');
   assert.equal(t1.nominal, -25000);
   assert.equal(t2.deskripsi, 'QRIS DEBIT ALFAMART', 'transaksi sesudah disclaimer tetap terbaca');
+});
+
+test('uraian lanjutan yang diawali "TANGGAL :" tidak dikira judul kolom', () => {
+  /* Pada e-statement BCA sungguhan (Agustus 2026, rekening 6090378994) ada 23
+     baris seperti ini dalam satu berkas. Isinya nama biller — TOKOPEDIA,
+     GOPAY TOPUP, OVO — yang justru menentukan kategori transaksinya. Guard
+     lama membuang seluruh barisnya karena diawali kata "TANGGAL". */
+  const hasil = parseStatement([statementBCALanjutanTanggal()]);
+
+  assert.equal(hasil.transaksi.length, 2, 'judul kolom yang tercetak ulang tetap dilewati');
+  const [t1, t2] = hasil.transaksi;
+  assert.ok(t1.deskripsi.includes('80777/TOKOPEDIA'), t1.deskripsi);
+  assert.ok(t2.deskripsi.includes('70001/GOPAY TOPUP'), t2.deskripsi);
+  assert.ok(!/KETERANGAN/i.test(t1.deskripsi), 'judul kolom tidak boleh ikut masuk uraian');
 });

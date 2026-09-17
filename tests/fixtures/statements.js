@@ -261,6 +261,32 @@ export function statementPermataKakiDiPitaUraian() {
 }
 
 /**
+ * Statement BCA dengan uraian lanjutan yang diawali "TANGGAL :", persis
+ * seperti pada e-statement sungguhan. Bentuk ini menyerupai judul kolom yang
+ * tercetak ulang, padahal isinya justru nama biller yang menentukan kategori.
+ * Judul kolom yang asli ikut disertakan supaya keduanya teruji sekaligus.
+ */
+export function statementBCALanjutanTanggal() {
+  const K = BCA_KOLOM;
+  return halaman([
+    [[200, 'PT. BANK CENTRAL ASIA Tbk']],
+    [[40, 'NO. REKENING'], [150, ': 6090378994']],
+    [[40, 'PERIODE'], [150, ': AGUSTUS 2026']],
+    null,
+    [[K.tanggal, 'TANGGAL'], [K.keterangan, 'KETERANGAN'], [K.cabang, 'CBG'], [K.mutasi, 'MUTASI'], [K.saldo, 'SALDO']],
+    [[K.tanggal, '01/08'], [K.keterangan, 'SALDO AWAL'], [K.saldo, '10.000.000,00']],
+    [[K.tanggal, '03/08'], [K.keterangan, 'TRSF E-BANKING DB'], [K.cabang, '0208'],
+      [K.mutasi, '113.000,00'], [K.mutasi + 60, 'DB'], [K.saldo, '9.887.000,00']],
+    [[K.keterangan, 'TANGGAL :02/08 80777/TOKOPEDIA']],
+    // Judul kolom yang tercetak ulang di tengah halaman — ini yang harus dilewati.
+    [[K.tanggal, 'TANGGAL'], [K.keterangan, 'KETERANGAN'], [K.cabang, 'CBG'], [K.mutasi, 'MUTASI'], [K.saldo, 'SALDO']],
+    [[K.tanggal, '06/08'], [K.keterangan, 'TRSF E-BANKING DB'], [K.cabang, '0508'],
+      [K.mutasi, '151.000,00'], [K.mutasi + 60, 'DB'], [K.saldo, '9.736.000,00']],
+    [[K.keterangan, 'TANGGAL :05/08 70001/GOPAY TOPUP']],
+  ]);
+}
+
+/**
  * Statement BCA dengan paragraf disclaimer berhuruf renggang di dalam pita
  * KETERANGAN. Bentuk ini yang lolos dari daftar pola "baris diabaikan": tidak
  * ada satu pun kata utuh yang bisa dicocokkan.
