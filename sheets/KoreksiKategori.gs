@@ -919,6 +919,12 @@ function koreksiTabTransaksi_(ss) {
     data[r][kol['ID Kategori']] = idKat;
     data[r][kol['Kategori']] = namaKategori[idKat] || data[r][kol['Kategori']];
     if (kol['Diubah Pada'] !== undefined) data[r][kol['Diubah Pada']] = stempel;
+    // "Dikirim Pada" ikut distempel, bukan sekadar kerapian: tarikTransaksi()
+    // menyaring baris baru berdasarkan kolom ini (Code.gs, `dikirim > sejak`),
+    // bukan "Diubah Pada". Tanpa ini PWA tidak akan pernah menarik koreksinya
+    // dan tetap menampilkan kategori lama sampai kirim ulang manual. Sama
+    // dengan yang dilakukan onEdit() untuk edit manual di tab Transaksi.
+    if (kol['Dikirim Pada'] !== undefined) data[r][kol['Dikirim Pada']] = stempel;
     terpakai[id] = 1;
     ubah++;
   }
