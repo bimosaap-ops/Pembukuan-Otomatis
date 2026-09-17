@@ -1,29 +1,36 @@
 /* ==========================================================================
    Token desain — satu-satunya tempat warna, jarak, dan radius didefinisikan.
 
-   Gaya visualnya "liquid glass": latar gradien hangat-sejuk, panel putih
-   separuh tembus dengan blur, dan tombol berbentuk pil. Nilai-nilai di
-   bawah — warna, radius, blur, bayangan — diambil dari berkas rancangan
-   dan tidak boleh ditulis ulang di tempat lain.
+   Gaya visualnya "Apple Liquid Glass": latar gradien biru-ungu-hijau sejuk,
+   panel putih separuh tembus dengan blur, tombol berbentuk pil, dan tipografi
+   sistem Apple. Nilai-nilai di bawah — warna, radius, blur, bayangan — diambil
+   dari berkas rancangan (handoff "Apple Liquid Glass Redesign") dan tidak
+   boleh ditulis ulang di tempat lain.
+
+   Aksen (--brand) dan warna "keluar" sengaja DIPISAH di sini — kebalikan dari
+   arah desain sebelumnya. Aksi utama memakai biru Apple (#0071e3), pengeluaran
+   memakai merah sistem (#ff3b30); pasangan biru/merah ini juga jauh lebih mudah
+   dibedakan oleh pengguna buta warna merah-hijau dibandingkan pasangan apa pun
+   yang melibatkan hijau.
 
    Mode terang adalah nilai dasar; mode gelap menimpanya lewat prefers-color-scheme
    (otomatis) dan lewat [data-theme] di <html> (pilihan manual di Pengaturan).
    Rancangannya hanya menggambar mode terang, jadi mode gelap di sini adalah
-   terjemahan gagasan yang sama: gradien malam yang hangat di satu sudut dan
-   sejuk di sudut lain, dengan panel kaca gelap sebagai ganti panel putih.
+   terjemahan gagasan yang sama dengan varian warna sistem Apple untuk gelap
+   (mis. biru #0a84ff, merah #ff453a) di atas gradien malam biru-tua.
    ========================================================================== */
 
 :root {
   /* --- Latar ------------------------------------------------------------
-     Empat lapis: tiga sorotan radial (jingga, biru, merah muda) di atas
-     gradien dasar. Dipasang di body dengan `background-attachment: fixed`
-     supaya sorotannya tidak ikut menggulung bersama isi halaman. */
-  --latar: radial-gradient(1100px 700px at 8% -8%, #ffd9c9 0%, transparent 60%),
-           radial-gradient(900px 700px at 95% 10%, #cfe3ff 0%, transparent 55%),
-           radial-gradient(1000px 800px at 30% 110%, #ffe1e8 0%, transparent 55%),
-           linear-gradient(160deg, #eef2fb, #fdeee7);
-  --bg: #f3f0f6;              /* warna rata di balik gradien (theme-color, overscroll) */
-  --bg-2: #ece8f1;
+     Empat lapis: tiga sorotan radial (biru, ungu muda, hijau mint) di atas
+     gradien dasar abu netral. Dipasang di body dengan `background-attachment:
+     fixed` supaya sorotannya tidak ikut menggulung bersama isi halaman. */
+  --latar: radial-gradient(1100px 700px at 8% -8%, #dce8ff 0%, transparent 60%),
+           radial-gradient(900px 700px at 95% 5%, #f3ddf5 0%, transparent 55%),
+           radial-gradient(1000px 800px at 30% 110%, #d9f5ea 0%, transparent 55%),
+           linear-gradient(160deg, #f5f5f7, #eef1f6);
+  --bg: #eef1f6;              /* warna rata di balik gradien (theme-color, overscroll) */
+  --bg-2: #e8ecf5;
 
   /* --- Permukaan kaca ---------------------------------------------------
      --surface dipakai komponen yang memang harus padat (modal, sheet, dropdown
@@ -36,45 +43,47 @@
   --kaca-blur: blur(18px) saturate(160%);
   --kaca-bayang: 0 8px 32px rgba(31, 38, 68, .12), inset 0 1px 0 rgba(255, 255, 255, .6);
 
-  --surface: #fdf9f7;
+  --surface: #f7f7fa;
   --surface-2: rgba(255, 255, 255, .55);
-  --surface-3: rgba(58, 48, 42, .07);
+  --surface-3: rgba(29, 29, 31, .06);
   --line: rgba(255, 255, 255, .55);
-  --line-kuat: rgba(58, 48, 42, .22);
+  --line-kuat: rgba(29, 29, 31, .22);
 
-  /* --- Teks -------------------------------------------------------------- */
-  --text: #3a302a;
-  --text-tegas: #3a1710;      /* judul dan angka utama */
-  --text-2: rgba(58, 48, 42, .72);
-  --text-3: rgba(58, 48, 42, .55);
+  /* --- Teks --------------------------------------------------------------
+     Tiga tingkat, langsung dari palet "Ink" rancangan: hitam netral untuk teks
+     utama dan angka, abu gelap solid untuk label nav dan teks sekunder yang
+     tetap harus terbaca tegas, dan abu tembus untuk keterangan/label kecil. */
+  --text: #1d1d1f;
+  --text-tegas: #1d1d1f;      /* judul dan angka utama */
+  --text-2: #3a3a3c;
+  --text-3: rgba(60, 60, 67, .6);
 
   /* --- Aksen ------------------------------------------------------------
-     Aksen dan warna "keluar" sengaja satu warna. Di aplikasi pembukuan, aksi
-     utama dan pengeluaran memang selalu berdampingan; memberi keduanya warna
-     berbeda membuat layar penuh warna tanpa menambah arti. */
-  --brand: #c0392b;
-  --brand-2: #a02c1f;
-  --brand-lembut: rgba(192, 57, 43, .12);
+     Biru Apple untuk aksi utama, tautan, dan nav aktif. Terpisah dari warna
+     "keluar" — lihat catatan di atas berkas ini. */
+  --brand: #0071e3;
+  --brand-2: #0058b0;
+  --brand-lembut: rgba(0, 113, 227, .12);
   --brand-kontras: #ffffff;
 
-  --masuk: #2f7d5c;
-  --masuk-lembut: rgba(47, 125, 92, .13);
-  /* Batang bulan surplus pada grafik arus kas. Sengaja bukan --masuk maupun
-     --c1: warnanya harus jelas berbeda dari --keluar di kedua mode, sedangkan
-     hijau dan merah berdampingan justru sulit dibedakan sebagian pengguna. */
-  --surplus: #3a1710;
-  --keluar: #c0392b;
-  --keluar-lembut: rgba(192, 57, 43, .12);
-  --warning: #a5622a;
-  --warning-lembut: rgba(165, 98, 42, .14);
-  --info: #3a1710;
-  --info-lembut: rgba(58, 23, 16, .09);
+  --masuk: #248a3d;
+  --masuk-lembut: rgba(36, 138, 61, .13);
+  /* Batang bulan surplus pada grafik arus kas. Sama dengan --brand: rancangan
+     memakai biru aksen untuk surplus dan merah bahaya untuk defisit, pasangan
+     yang justru lebih gampang dibedakan daripada hijau/merah berdampingan. */
+  --surplus: #0071e3;
+  --keluar: #ff3b30;
+  --keluar-lembut: rgba(255, 59, 48, .12);
+  --warning: #b8770a;
+  --warning-lembut: rgba(255, 159, 10, .18);
+  --info: #0071e3;
+  --info-lembut: rgba(0, 113, 227, .1);
 
-  /* Palet grafik — urutan dipakai untuk kategori. Disetel ulang ke rentang
-     terakota–biru gelap agar sepanggung dengan latar hangat. */
-  --c1: #3a1710; --c2: #c0392b; --c3: #2f7d5c; --c4: #b4713a;
-  --c5: #5b6ea8; --c6: #8e2418; --c7: #7b8b5f; --c8: #a0567c;
-  --c9: #d08c3c; --c10: #4a6b7c; --c11: #9c5a3c; --c12: #6b7a4a;
+  /* Palet grafik — urutan dipakai untuk kategori. Disetel ke warna sistem
+     Apple supaya sepanggung dengan aksen biru dan latar sejuknya. */
+  --c1: #0071e3; --c2: #ff3b30; --c3: #34c759; --c4: #ff9500;
+  --c5: #af52de; --c6: #5ac8fa; --c7: #ffcc00; --c8: #ff2d55;
+  --c9: #5856d6; --c10: #a2845e; --c11: #8e8e93; --c12: #00c7be;
 
   /* --- Bentuk ------------------------------------------------------------ */
   --r-sm: 12px;
@@ -91,8 +100,8 @@
   --shadow-1: 0 4px 18px rgba(31, 38, 68, .08), inset 0 1px 0 rgba(255, 255, 255, .5);
   --shadow-2: 0 8px 32px rgba(31, 38, 68, .12), inset 0 1px 0 rgba(255, 255, 255, .6);
   --shadow-3: 0 20px 50px rgba(31, 38, 68, .22);
-  --tombol-bayang: 0 4px 14px rgba(192, 57, 43, .25), inset 0 1px 0 rgba(255, 255, 255, .7);
-  --tombol-isi: linear-gradient(180deg, rgba(255, 255, 255, .55), rgba(255, 166, 148, .35));
+  --tombol-bayang: 0 4px 14px rgba(0, 113, 227, .22), inset 0 1px 0 rgba(255, 255, 255, .7);
+  --tombol-isi: linear-gradient(180deg, rgba(255, 255, 255, .6), rgba(122, 168, 255, .4));
 
   /* --- Ukuran layout ----------------------------------------------------- */
   --sidebar-w: 224px;
@@ -105,7 +114,7 @@
      20px baru mulai tablet (lihat layout.css). */
   --pias: 14px;
 
-  --font: Archivo, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, Helvetica Neue, Arial, sans-serif;
   --font-angka: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
   --transisi: 200ms cubic-bezier(.4, 0, .2, 1);
@@ -130,12 +139,12 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --latar: radial-gradient(1100px 700px at 8% -8%, #46231c 0%, transparent 60%),
-             radial-gradient(900px 700px at 95% 10%, #1c2b4a 0%, transparent 55%),
-             radial-gradient(1000px 800px at 30% 110%, #3a1f30 0%, transparent 55%),
-             linear-gradient(160deg, #10131f, #1b1512);
-    --bg: #14151f;
-    --bg-2: #1a1b26;
+    --latar: radial-gradient(1100px 700px at 8% -8%, #12294a 0%, transparent 60%),
+             radial-gradient(900px 700px at 95% 10%, #2a1c3a 0%, transparent 55%),
+             radial-gradient(1000px 800px at 30% 110%, #0f2e28 0%, transparent 55%),
+             linear-gradient(160deg, #0b0c12, #16171f);
+    --bg: #131417;
+    --bg-2: #1c1d24;
 
     --kaca: rgba(255, 255, 255, .07);
     --kaca-2: rgba(255, 255, 255, .12);
@@ -144,52 +153,52 @@
     --kaca-garis-halus: rgba(255, 255, 255, .1);
     --kaca-bayang: 0 8px 32px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .12);
 
-    --surface: #1e1f2b;
+    --surface: #1c1c1e;
     --surface-2: rgba(255, 255, 255, .09);
     --surface-3: rgba(255, 255, 255, .1);
     --line: rgba(255, 255, 255, .14);
     --line-kuat: rgba(255, 255, 255, .28);
 
-    --text: #f0e7e2;
-    --text-tegas: #fff6f1;
-    --text-2: rgba(240, 231, 226, .74);
-    --text-3: rgba(240, 231, 226, .55);
+    --text: #f5f5f7;
+    --text-tegas: #ffffff;
+    --text-2: rgba(235, 235, 245, .72);
+    --text-3: rgba(235, 235, 245, .55);
 
-    --brand: #ff8a75;
-    --brand-2: #ffa694;
-    --brand-lembut: rgba(255, 138, 117, .16);
-    --brand-kontras: #2a0f0a;
+    --brand: #0a84ff;
+    --brand-2: #409cff;
+    --brand-lembut: rgba(10, 132, 255, .18);
+    --brand-kontras: #ffffff;
 
-    --masuk: #5fd3a2;
-    --masuk-lembut: rgba(95, 211, 162, .16);
-    --surplus: #e9ded6;
-    --keluar: #ff8a75;
-    --keluar-lembut: rgba(255, 138, 117, .16);
-    --warning: #e8b062;
-    --warning-lembut: rgba(232, 176, 98, .16);
-    --info: #ffd9c9;
-    --info-lembut: rgba(255, 217, 201, .12);
+    --masuk: #30d158;
+    --masuk-lembut: rgba(48, 209, 88, .16);
+    --surplus: #0a84ff;
+    --keluar: #ff453a;
+    --keluar-lembut: rgba(255, 69, 58, .16);
+    --warning: #ffb340;
+    --warning-lembut: rgba(255, 159, 10, .22);
+    --info: #0a84ff;
+    --info-lembut: rgba(10, 132, 255, .14);
 
-    --c1: #ffb3a3; --c2: #ff8a75; --c3: #5fd3a2; --c4: #e8b062;
-    --c5: #94a8e0; --c6: #ff6f57; --c7: #b8c98f; --c8: #d494b4;
-    --c9: #f0c078; --c10: #86aec4; --c11: #d0937a; --c12: #a8b878;
+    --c1: #0a84ff; --c2: #ff453a; --c3: #30d158; --c4: #ff9f0a;
+    --c5: #bf5af2; --c6: #64d2ff; --c7: #ffd60a; --c8: #ff375f;
+    --c9: #5e5ce6; --c10: #ac8e68; --c11: #98989d; --c12: #63e6e2;
 
     --shadow-1: 0 4px 18px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .08);
     --shadow-2: 0 8px 32px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .1);
     --shadow-3: 0 20px 50px rgba(0, 0, 0, .6);
-    --tombol-bayang: 0 4px 14px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .2);
-    --tombol-isi: linear-gradient(180deg, rgba(255, 255, 255, .16), rgba(255, 138, 117, .22));
+    --tombol-bayang: 0 4px 14px rgba(10, 132, 255, .4), inset 0 1px 0 rgba(255, 255, 255, .2);
+    --tombol-isi: linear-gradient(180deg, rgba(255, 255, 255, .16), rgba(10, 132, 255, .4));
   }
 }
 
 /* Pilihan manual dari Pengaturan selalu menang atas preferensi sistem. */
 :root[data-theme="dark"] {
-  --latar: radial-gradient(1100px 700px at 8% -8%, #46231c 0%, transparent 60%),
-           radial-gradient(900px 700px at 95% 10%, #1c2b4a 0%, transparent 55%),
-           radial-gradient(1000px 800px at 30% 110%, #3a1f30 0%, transparent 55%),
-           linear-gradient(160deg, #10131f, #1b1512);
-  --bg: #14151f;
-  --bg-2: #1a1b26;
+  --latar: radial-gradient(1100px 700px at 8% -8%, #12294a 0%, transparent 60%),
+           radial-gradient(900px 700px at 95% 10%, #2a1c3a 0%, transparent 55%),
+           radial-gradient(1000px 800px at 30% 110%, #0f2e28 0%, transparent 55%),
+           linear-gradient(160deg, #0b0c12, #16171f);
+  --bg: #131417;
+  --bg-2: #1c1d24;
 
   --kaca: rgba(255, 255, 255, .07);
   --kaca-2: rgba(255, 255, 255, .12);
@@ -198,41 +207,41 @@
   --kaca-garis-halus: rgba(255, 255, 255, .1);
   --kaca-bayang: 0 8px 32px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .12);
 
-  --surface: #1e1f2b;
+  --surface: #1c1c1e;
   --surface-2: rgba(255, 255, 255, .09);
   --surface-3: rgba(255, 255, 255, .1);
   --line: rgba(255, 255, 255, .14);
   --line-kuat: rgba(255, 255, 255, .28);
 
-  --text: #f0e7e2;
-  --text-tegas: #fff6f1;
-  --text-2: rgba(240, 231, 226, .74);
-  --text-3: rgba(240, 231, 226, .55);
+  --text: #f5f5f7;
+  --text-tegas: #ffffff;
+  --text-2: rgba(235, 235, 245, .72);
+  --text-3: rgba(235, 235, 245, .55);
 
-  --brand: #ff8a75;
-  --brand-2: #ffa694;
-  --brand-lembut: rgba(255, 138, 117, .16);
-  --brand-kontras: #2a0f0a;
+  --brand: #0a84ff;
+  --brand-2: #409cff;
+  --brand-lembut: rgba(10, 132, 255, .18);
+  --brand-kontras: #ffffff;
 
-  --masuk: #5fd3a2;
-  --masuk-lembut: rgba(95, 211, 162, .16);
-  --surplus: #e9ded6;
-  --keluar: #ff8a75;
-  --keluar-lembut: rgba(255, 138, 117, .16);
-  --warning: #e8b062;
-  --warning-lembut: rgba(232, 176, 98, .16);
-  --info: #ffd9c9;
-  --info-lembut: rgba(255, 217, 201, .12);
+  --masuk: #30d158;
+  --masuk-lembut: rgba(48, 209, 88, .16);
+  --surplus: #0a84ff;
+  --keluar: #ff453a;
+  --keluar-lembut: rgba(255, 69, 58, .16);
+  --warning: #ffb340;
+  --warning-lembut: rgba(255, 159, 10, .22);
+  --info: #0a84ff;
+  --info-lembut: rgba(10, 132, 255, .14);
 
-  --c1: #ffb3a3; --c2: #ff8a75; --c3: #5fd3a2; --c4: #e8b062;
-  --c5: #94a8e0; --c6: #ff6f57; --c7: #b8c98f; --c8: #d494b4;
-  --c9: #f0c078; --c10: #86aec4; --c11: #d0937a; --c12: #a8b878;
+  --c1: #0a84ff; --c2: #ff453a; --c3: #30d158; --c4: #ff9f0a;
+  --c5: #bf5af2; --c6: #64d2ff; --c7: #ffd60a; --c8: #ff375f;
+  --c9: #5e5ce6; --c10: #ac8e68; --c11: #98989d; --c12: #63e6e2;
 
   --shadow-1: 0 4px 18px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .08);
   --shadow-2: 0 8px 32px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .1);
   --shadow-3: 0 20px 50px rgba(0, 0, 0, .6);
-  --tombol-bayang: 0 4px 14px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .2);
-  --tombol-isi: linear-gradient(180deg, rgba(255, 255, 255, .16), rgba(255, 138, 117, .22));
+  --tombol-bayang: 0 4px 14px rgba(10, 132, 255, .4), inset 0 1px 0 rgba(255, 255, 255, .2);
+  --tombol-isi: linear-gradient(180deg, rgba(255, 255, 255, .16), rgba(10, 132, 255, .4));
   color-scheme: dark;
 }
 

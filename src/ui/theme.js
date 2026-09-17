@@ -36,7 +36,7 @@ export function terapkanTema(tema) {
   /* Warna bilah status disamakan dengan sudut kiri atas gradien, bukan dengan
      warna aksen: yang menempel di bawah bilah itu memang latar halaman. */
   document.querySelector('meta[name="theme-color"]')
-    ?.setAttribute('content', modeGelapAktif() ? '#191320' : '#f8e6dd');
+    ?.setAttribute('content', modeGelapAktif() ? '#0d1a2e' : '#eef4ff');
 
   try { localStorage.setItem(KUNCI_LOKAL, tema); } catch { /* mode privat */ }
   emit(EVENT.TEMA_BERUBAH, tema);

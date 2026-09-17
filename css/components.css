@@ -583,7 +583,10 @@ tr.baris--duplikat td, .dv__kartu.baris--duplikat { opacity: .62; }
   background: var(--surface-3);
   overflow: hidden;
 }
-.kat-baris__isi { height: 100%; border-radius: inherit; background: var(--brand); }
+/* Bar ini khusus "Pengeluaran per Kategori": selalu merah (uang keluar),
+   bukan warna aksen — rancangan mewarnai keempat baris contohnya sama merah
+   terlepas dari kategorinya, karena yang ditandai adalah arah, bukan jenis. */
+.kat-baris__isi { height: 100%; border-radius: inherit; background: var(--keluar); }
 .kat-baris__ket { font-size: .72rem; color: var(--text-3); margin-top: 4px; }
 
 /* Tautan "lihat selengkapnya" di pojok kartu. Secara teknis tombol (navigasinya
