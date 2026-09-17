@@ -96,6 +96,21 @@ export function buatTransaksi(data = {}) {
   };
 }
 
+/**
+ * Angka yang BOLEH tidak ada, dan bedanya penting.
+ *
+ * Nol adalah saldo yang sah; "tidak tercetak di statement" bukan nol. Seluruh
+ * kontrol saldo (lihat sheets/Code.gs tab "Kontrol Saldo") berdiri di atas
+ * perbedaan itu — memaksakan nol berarti setiap statement yang ringkasannya
+ * tidak terbaca akan dilaporkan "selisih sebesar seluruh saldo", dan laporan
+ * yang penuh peringatan palsu sama saja dengan tidak ada laporan.
+ */
+function angkaAtauNull(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 export function buatFileUpload(data = {}) {
   return {
     id: data.id || idBaru('upl'),
@@ -113,6 +128,16 @@ export function buatFileUpload(data = {}) {
     catatan: data.catatan || '',
     fileHash: data.fileHash || '',
     ukuran: Number(data.ukuran) || 0,
+    /* Ringkasan yang TERCETAK DI STATEMENT (bukan hasil hitungan kita):
+       SALDO AWAL, SALDO AKHIR, MUTASI DB, MUTASI CR, dan berapa baris
+       transaksi yang terbaca dari berkas itu. Disimpan supaya angka bank
+       bisa dihadapkan dengan angka pembukuan per rekening per bulan —
+       tanpa disimpan, pembanding satu-satunya cuma ada di layar Review
+       sesaat setelah upload lalu hilang selamanya. */
+    saldoAwalStatement: angkaAtauNull(data.saldoAwalStatement),
+    saldoAkhirStatement: angkaAtauNull(data.saldoAkhirStatement),
+    mutasiDebetStatement: angkaAtauNull(data.mutasiDebetStatement),
+    mutasiKreditStatement: angkaAtauNull(data.mutasiKreditStatement),
   };
 }
 

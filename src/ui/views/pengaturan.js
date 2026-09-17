@@ -17,7 +17,7 @@ import { versiBerjalan, periksaPembaruan } from '../versi.js';
 import { unduhBackup, pulihkanBackup, dukunganPilihFolder } from '../../services/export.js';
 import {
   bacaKonfigSheets, simpanKonfigSheets, testWebhook, syncKeSheets, jumlahAntrean, praTinjauSelaras,
-  statusSheets, syncEntitasKeSheets,
+  statusSheets, syncEntitasKeSheets, syncStatementKeSheets,
 } from '../../services/sheets-sync.js';
 import { tarikTransaksiEmail, statusTarikEmail } from '../../services/email-feed-sync.js';
 import { tarikDanGabungEntitas } from '../../services/entitas-sync.js';
@@ -452,12 +452,18 @@ async function kartuSheets(render) {
             // dilaporkan terpisah — transaksi yang sudah terkirim di atas
             // tidak boleh ikut dianggap gagal gara-gara ini.
             try {
+              // Riwayat upload ikut dikirim: tab "Kontrol Saldo" di Sheet
+              // butuh angka SALDO AWAL/AKHIR cetakan bank tiap statement,
+              // dan tanpa dikirim ulang di sini, statement yang di-upload
+              // sebelum fitur kontrol ada tidak akan pernah muncul di sana.
+              const uploads = await uploadRepo.daftar();
               await Promise.all([
                 syncEntitasKeSheets('akun', [...akun.values()]),
                 syncEntitasKeSheets('kategori', [...kategori.values()]),
+                uploads.length ? syncStatementKeSheets(uploads) : Promise.resolve(),
               ]);
             } catch (errEntitas) {
-              toastGagal(`Rekening/kategori gagal terkirim: ${errEntitas.message}`);
+              toastGagal(`Rekening/kategori/statement gagal terkirim: ${errEntitas.message}`);
             }
           } catch (err) {
             await laporkanBackfillGagal(err);
@@ -517,6 +523,8 @@ async function kartuSheets(render) {
           h('div', { text: '4. Rekening dan Kategori dicadangkan otomatis ke tab "Akun" dan "Kategori" setiap kali disimpan/dihapus, dan ikut terkirim ulang oleh "Kirim semua sekarang".' }),
           h('div', { text: '5. "Tarik Rekening & Kategori dari Sheets" dan "Tarik Transaksi dari Sheets" menarik balik ke perangkat ini — dipakai untuk memindahkan data ke device baru, atau menyamakan setelah mengedit di perangkat lain. Yang lebih baru menang kalau ada bentrok.' }),
           h('div', { text: '6. Sheet lama (dibuat sebelum fitur tarik ini ada) perlu satu kali "Kirim semua sekarang" dulu supaya baris lama dapat ID — tanpa itu, transaksi lama belum bisa ikut ditarik balik.' }),
+          h('div', { text: '7. Tab "Kontrol Saldo" menghadapkan SALDO AWAL/AKHIR cetakan bank dengan saldo hasil hitungan Sheet, per rekening per bulan — termasuk daftar bulan yang punya transaksi tapi belum ada e-statement pembandingnya.' }),
+          h('div', { text: '8. Angka bank itu dibaca dari tab "Statement". Statement yang di-upload sebelum fitur ini ada tidak menyimpan ringkasannya, jadi dua kolom Saldo Awal/Akhir di tab itu boleh diketik tangan dari PDF aslinya — baris yang diketik tangan tidak akan tertimpa. Kalau statement yang sama nanti di-upload lewat aplikasi, hapus baris manualnya supaya satu bulan tidak terhitung dua kali.' }),
         ]),
       ]),
     ]),

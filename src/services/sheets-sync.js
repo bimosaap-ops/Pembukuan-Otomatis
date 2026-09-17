@@ -571,6 +571,7 @@ export function pantauKoneksiSheets() {
     // seperti syncAtauAntri([], ...) di atas.
     hapusEntitasDariSheets('akun', []).catch(() => {});
     hapusEntitasDariSheets('kategori', []).catch(() => {});
+    hapusStatementDariSheets([]).catch(() => {});
   };
   cobaFlush();
   window.addEventListener('online', cobaFlush);
@@ -715,6 +716,8 @@ const KUNCI_ANTREAN_HAPUS_ENTITAS = {
   kategori: 'sheetsAntreanHapusKategori',
 };
 
+const KUNCI_ANTREAN_HAPUS_STATEMENT = 'sheetsAntreanHapusStatement';
+
 async function bacaAntreanHapusEntitas(entity) {
   const ids = await pengaturanRepo.baca(KUNCI_ANTREAN_HAPUS_ENTITAS[entity], []);
   return Array.isArray(ids) ? ids : [];
@@ -745,6 +748,101 @@ export async function hapusEntitasDariSheets(entity, ids) {
     return jawab;
   } catch (e) {
     await tulisAntreanHapusEntitas(entity, gabungan);
+    return { queued: true, jumlah: gabungan.length, error: e.message };
+  }
+}
+
+/* ==========================================================================
+   STATEMENT — angka cetakan e-statement, bahan tab "Kontrol Saldo".
+
+   Satu baris per e-statement yang pernah di-upload: saldo awal & saldo akhir
+   MENURUT BANK, plus mutasi debet/kredit dan jumlah baris yang terbaca.
+   Gunanya cuma satu, dan itu yang paling sering ditanyakan pembukuan mana
+   pun: apakah angka bank dan angka pembukuan bertemu? Tanpa tabel ini,
+   Sheet hanya bisa menjumlahkan barisnya sendiri — konsisten dengan dirinya
+   sendiri, tapi tidak pernah teruji terhadap sumber aslinya.
+
+   Sama seperti AKUN/KATEGORI: tabelnya kecil dan jarang berubah, jadi kirim
+   tanpa antrean retry (cukup "Kirim semua sekarang" bila sempat gagal).
+   Hapus punya antrean, alasannya sama seperti di sana — upload yang
+   dibatalkan tapi barisnya tertinggal di Sheet berarti kontrolnya
+   membandingkan bulan itu dengan statement yang sudah tidak ada.
+   ========================================================================== */
+
+/**
+ * Diekspor supaya bisa diuji langsung tanpa IndexedDB, sama seperti
+ * barisUntukSheet/barisAkunUntukSheet.
+ *
+ * Angka yang tidak terbaca dari statement dikirim sebagai string kosong,
+ * BUKAN nol — nol adalah saldo yang sah, sedangkan kosong berarti "bank
+ * tidak menyebutkan". Rumus di tab Kontrol Saldo membedakan keduanya:
+ * yang kosong dilewati tanpa dihitung selisih, yang nol diperiksa seperti
+ * angka lainnya. Memaksakan nol di sini berarti setiap statement yang
+ * ringkasannya tidak terbaca dilaporkan "selisih sebesar seluruh saldo".
+ */
+export function barisStatementUntukSheet(u) {
+  const angka = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? '' : Number(v));
+  // Bulan diambil dari periode AKHIR: satu e-statement bulanan hampir selalu
+  // berakhir di bulan yang dimaksudnya, sedangkan tanggal transaksi pertama
+  // bisa jatuh di bulan sebelumnya (mis. mutasi tanggal 31 yang tercetak di
+  // statement bulan berikutnya).
+  const periodeAkhir = u.periodeAkhir || u.periodeAwal || '';
+  return {
+    id: u.id || '',
+    bank: u.bank || '',
+    nomorRekening: u.nomorRekening || '',
+    bulan: String(periodeAkhir).slice(0, 7),
+    periodeAwal: u.periodeAwal || '',
+    periodeAkhir: u.periodeAkhir || '',
+    saldoAwalStatement: angka(u.saldoAwalStatement),
+    saldoAkhirStatement: angka(u.saldoAkhirStatement),
+    mutasiDebetStatement: angka(u.mutasiDebetStatement),
+    mutasiKreditStatement: angka(u.mutasiKreditStatement),
+    // Yang BENAR-BENAR tersimpan, bukan jumlah baris yang terbaca di PDF:
+    // baris duplikat yang ditolak saat simpan tidak ada di pembukuan, jadi
+    // membandingkannya dengan jumlah baris di Sheet akan selalu selisih.
+    jumlahTransaksi: Number(u.berhasil) || 0,
+    namaFile: u.namaFile || '',
+    tanggalUpload: u.tanggalUpload || '',
+  };
+}
+
+/**
+ * Kirim satu atau beberapa baris STATEMENT ke tab "Statement" di Sheet.
+ * Fire-and-forget dari alur simpan upload — pemanggil tidak menunggu.
+ */
+export async function syncStatementKeSheets(uploads) {
+  const { url, aktif } = await bacaKonfigSheets();
+  if (!aktif || !url || !uploads?.length) return { skipped: true };
+  return postUlang(url, {
+    entity: 'statement',
+    rows: uploads.map(barisStatementUntukSheet),
+    dikirimPada: new Date().toISOString(),
+  }, BATAS_BONGKAH_MS);
+}
+
+/**
+ * Beri tahu Sheet bahwa e-statement ini sudah dibatalkan di aplikasi, supaya
+ * barisnya tidak terus dibandingkan dengan pembukuan yang sudah tidak memuat
+ * transaksinya. Antrean retry-nya persisten, sama seperti hapus AKUN/KATEGORI.
+ */
+export async function hapusStatementDariSheets(ids) {
+  const baru = [...new Set((ids || []).filter(Boolean))];
+  const { url, aktif } = await bacaKonfigSheets();
+  if (!aktif || !url) return { skipped: true };
+
+  const tertunda = await pengaturanRepo.baca(KUNCI_ANTREAN_HAPUS_STATEMENT, []);
+  const gabungan = [...new Set([...(Array.isArray(tertunda) ? tertunda : []), ...baru])];
+  if (!gabungan.length) return { skipped: true };
+
+  try {
+    const jawab = await postUlang(url, {
+      entity: 'statement', hapus: gabungan, dikirimPada: new Date().toISOString(),
+    }, BATAS_BONGKAH_MS);
+    await pengaturanRepo.tulis(KUNCI_ANTREAN_HAPUS_STATEMENT, []);
+    return jawab;
+  } catch (e) {
+    await pengaturanRepo.tulis(KUNCI_ANTREAN_HAPUS_STATEMENT, gabungan);
     return { queued: true, jumlah: gabungan.length, error: e.message };
   }
 }

@@ -24,7 +24,7 @@ import * as trxRepo from '../data/repo/transactions.js';
 import * as uploadRepo from '../data/repo/uploads.js';
 import * as kategoriRepo from '../data/repo/categories.js';
 import { emit, EVENT } from '../core/events.js';
-import { syncAtauAntri } from './sheets-sync.js';
+import { syncAtauAntri, syncStatementKeSheets } from './sheets-sync.js';
 import { ledgerMergeAktif, rekonsiliasiSetelahUpload } from './email-ledger-merge.js';
 
 export const LANGKAH = [
@@ -256,6 +256,13 @@ export async function simpanDraft(draft, pilihan = {}) {
     siapSimpan.push(digeser);
   });
 
+  // Ringkasan cetakan statement ikut disimpan apa adanya — termasuk yang
+  // tidak terbaca (null). Inilah satu-satunya kesempatan merekamnya: sesudah
+  // layar Review ditutup, teks PDF-nya tidak disimpan dan angka bank itu
+  // tidak bisa didapat lagi tanpa upload ulang. Yang memakainya: tab
+  // "Kontrol Saldo" di Google Sheet, yang menghadapkan angka ini dengan
+  // saldo hasil hitungan pembukuan per rekening per bulan.
+  const ringkasanStatement = draft.hasil?.ringkasan || {};
   const rekaman = await uploadRepo.simpanUpload({
     namaFile: draft.file.nama,
     ukuran: draft.file.ukuran,
@@ -270,6 +277,13 @@ export async function simpanDraft(draft, pilihan = {}) {
     fileHash: draft.fileHash,
     status: tentukanStatus(draft, siapSimpan.length),
     catatan: (draft.catatan || []).join(' '),
+    // `draft.hasil.saldoAwal` dipakai sebagai cadangan: beberapa adapter
+    // (BCA, generic) menemukan SALDO AWAL dari badan tabel walau blok
+    // ringkasan di kaki statement tidak terbaca sama sekali.
+    saldoAwalStatement: ringkasanStatement.saldoAwal ?? draft.hasil?.saldoAwal ?? null,
+    saldoAkhirStatement: ringkasanStatement.saldoAkhir ?? null,
+    mutasiDebetStatement: ringkasanStatement.mutasiDebet ?? null,
+    mutasiKreditStatement: ringkasanStatement.mutasiKredit ?? null,
   });
 
   const transaksi = siapSimpan.map((b, i) => buatTransaksi({
@@ -326,6 +340,12 @@ export async function simpanDraft(draft, pilihan = {}) {
   // terlihat lagi karena pengguna sudah pindah layar. `akunRepo.peta()` dipakai
   // (bukan hanya rekening yang baru disimpan) karena antrean bisa berisi
   // transaksi dari rekening lain yang gagal tersinkron sebelumnya.
+  // Baris "Statement" dikirim TERPISAH dari transaksinya, dan tidak
+  // ditunggu: angka kontrol yang gagal terkirim tidak boleh membuat upload
+  // yang datanya sudah aman terlihat gagal. Kalaupun luput, "Kirim semua
+  // sekarang" di Pengaturan mengirim ulang seluruh riwayat upload.
+  syncStatementKeSheets([rekaman]).catch((e) => console.warn('Sheets statement gagal:', e));
+
   Promise.all([akunRepo.peta(), kategoriRepo.peta()])
     .then(([akunMap, kategoriMap]) => syncAtauAntri(transaksi, akunMap, kategoriMap))
     .then((r) => {

@@ -13,7 +13,7 @@ import { rupiah } from '../../core/format.js';
 import { on, emit, EVENT } from '../../core/events.js';
 import * as uploadRepo from '../../data/repo/uploads.js';
 import * as trxRepo from '../../data/repo/transactions.js';
-import { hapusDariSheets } from '../../services/sheets-sync.js';
+import { hapusDariSheets, hapusStatementDariSheets } from '../../services/sheets-sync.js';
 import { uploadTumpangTindih, transaksiKembarAntarUpload } from '../../domain/validate.js';
 import { STATUS_UPLOAD } from '../../domain/entities.js';
 import { dataView } from '../components/data-view.js';
@@ -184,6 +184,10 @@ async function batalkan(upload, selesai) {
   // Membatalkan upload adalah penyebab paling sering Sheet jadi melenceng:
   // e-statement yang dibaca ulang meninggalkan baris lamanya di sana.
   hapusDariSheets(hasil.hash).catch((e) => console.warn('Hapus di Sheets gagal:', e));
+  // Baris kontrolnya ikut dibuang. Kalau tidak, tab "Kontrol Saldo" terus
+  // menghadapkan bulan itu dengan saldo statement yang transaksinya sudah
+  // tidak ada lagi di pembukuan — selisih yang tampak nyata tapi palsu.
+  hapusStatementDariSheets([upload.id]).catch((e) => console.warn('Hapus statement di Sheets gagal:', e));
   toastSukses(`${hasil.transaksiTerhapus} transaksi dihapus.`);
   emit(EVENT.DATA_BERUBAH, { sumber: 'riwayat' });
   selesai?.();
