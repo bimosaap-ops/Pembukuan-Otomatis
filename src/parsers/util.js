@@ -121,11 +121,74 @@ export function gabungDeskripsi(utama, lanjutan) {
   return `${String(utama || '').trim()} ${tambahan}`.trim();
 }
 
-/** Membersihkan deskripsi dari sisa penanda kolom dan spasi berlebih. */
+/**
+ * Teks cetakan statement yang bukan bagian dari uraian transaksi: kop, kaki
+ * halaman, dan paragraf disclaimer. Semuanya bisa jatuh di dalam pita kolom
+ * Keterangan, dan karena tidak bertanggal, adapter menyambungkannya ke
+ * transaksi terakhir sebagai "baris lanjutan". Akibatnya satu transaksi bisa
+ * membawa seluruh kaki halaman — pernah sampai 2.000 karakter — dan nama
+ * merchant di depannya jadi tenggelam.
+ *
+ * Yang dipakai di sini hanya penanda yang mustahil ditulis bank sebagai uraian
+ * transaksi: alamat situs, nomor layanan, dan judul blok kop. Nama bank tidak
+ * masuk daftar, karena "BANK CENTRAL ASIA" justru uraian yang sah.
+ */
+const POLA_CHROME = [
+  /PermataBank\.com/i,
+  /Permata\s+Tel\s*1500/i,
+  /\bRekening\s+Koran\b/i,
+  /\bAccount\s+Statement\b/i,
+  /\bTanggal\s+Laporan\b/i,
+  /\bPeriode\s+Laporan\b/i,
+  /\bStatement\s+(?:Date|Period)\b/i,
+  /\bNo\.?\s*CIF\b/i,
+  /\bNama\s+Produk\b/i,
+  /\bwww\.bca\.co\.id\b/i,
+  /\bHalo\s*BCA\b/i,
+  /\bBersambung\s+ke\s+halaman\b/i,
+  /\bHalaman\s*:?\s*\d+\s*(?:dari|of)\b/i,
+  /* Paragraf disclaimer BCA dicetak dengan jarak antar huruf, sehingga setiap
+     hurufnya jadi potongan teks sendiri: "m e l a k u k a n s a n g g a h a n".
+     Tidak ada pola kata yang bisa menangkapnya — bentuk renggangnya sendiri
+     yang jadi penanda. Delapan huruf berturut-turut sudah cukup khas; nama
+     merchant terpanjang pun tidak pernah ditulis begitu. */
+  /(?:\b\p{L}\s+){8,}/u,
+];
+
+/**
+ * Memotong deskripsi tepat sebelum cetakan statement yang pertama muncul.
+ * Memotong, bukan membuang barisnya: sebagian kaki halaman menempel pada baris
+ * yang SAMA dengan transaksi yang sah, jadi membuang seluruh baris berarti
+ * kehilangan transaksinya.
+ */
+export function potongChrome(teks) {
+  const isi = String(teks || '');
+  let batas = isi.length;
+  POLA_CHROME.forEach((pola) => {
+    const m = isi.match(pola);
+    if (m && m.index >= 0 && m.index < batas) batas = m.index;
+  });
+  return batas === isi.length ? isi : isi.slice(0, batas);
+}
+
+/**
+ * Benar bila baris ini seluruhnya cetakan statement, sehingga tidak ada uraian
+ * yang hilang bila barisnya dilewati. Dipakai adapter pada jalur "baris
+ * lanjutan": memotong di akhir saja tidak cukup, karena kaki halaman yang
+ * terlanjur tersambung akan ikut memotong uraian sah yang menyusul di
+ * bawahnya.
+ */
+export function barisChrome(teks) {
+  const isi = String(teks || '').trim();
+  if (!isi) return false;
+  return potongChrome(isi).trim() === '';
+}
+
+/** Membersihkan deskripsi dari cetakan statement, penanda kolom, dan spasi berlebih. */
 export function rapikanDeskripsi(teks) {
-  return String(teks || '')
-    .replace(/\s{2,}/g, ' ')
+  return potongChrome(String(teks || '').replace(/\s{2,}/g, ' '))
     .replace(/\s*\|\s*/g, ' ')
+    .replace(/\s{2,}/g, ' ')
     .replace(/^[-–—\s]+|[-–—\s]+$/g, '')
     .trim();
 }

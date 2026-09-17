@@ -236,6 +236,53 @@ export function statementPermataRekeningKoran() {
 }
 
 /* ==========================================================================
+   Kop dan kaki halaman yang jatuh DI DALAM pita kolom uraian
+   ========================================================================== */
+
+/**
+ * Statement Permata dengan kaki halaman yang tercetak di tengah halaman,
+ * bukan di pinggir kiri. Pada berkas sungguhan posisinya memang bervariasi,
+ * dan begitu jatuh di dalam pita kolom "Uraian Trx." kaki halaman itu tidak
+ * bisa dibedakan dari sambungan uraian: sama-sama tanpa tanggal.
+ */
+export function statementPermataKakiDiPitaUraian() {
+  const K = { tanggal: 91, valuta: 296, uraian: 431, debet: 1111, kredit: 1454, saldo: 1810 };
+  return [halaman([
+    ...kopPermata(),
+    ...judulPermata(),
+    [[K.uraian, 'SALDO AWAL'], [K.saldo, '836.362,00']],
+    [[K.tanggal, '02/07'], [K.valuta, '02/07'], [K.uraian, 'PB KE GIANI CONTOH 1238840550 Perm ata'],
+      [K.debet, '107.100,00'], [K.saldo, '729.262,00']],
+    [[K.uraian, 'ME 09:33:46 -']],
+    // Kaki halaman, kali ini di dalam pita uraian.
+    [[K.uraian, 'PermataBank.com | Permata Tel 1500-111 atau (021) 2985-0611']],
+    [[K.uraian, 'Rekening Koran Account Statement Periode Laporan 01 JULI 2025 - 31 JULI 2025']],
+  ])];
+}
+
+/**
+ * Statement BCA dengan paragraf disclaimer berhuruf renggang di dalam pita
+ * KETERANGAN. Bentuk ini yang lolos dari daftar pola "baris diabaikan": tidak
+ * ada satu pun kata utuh yang bisa dicocokkan.
+ */
+export function statementBCADisclaimerRenggang() {
+  const K = BCA_KOLOM;
+  return halaman([
+    [[200, 'PT. BANK CENTRAL ASIA Tbk']],
+    [[40, 'NO. REKENING'], [150, ': 1234567890']],
+    [[40, 'PERIODE'], [150, ': JULI 2025']],
+    null,
+    [[K.tanggal, 'TANGGAL'], [K.keterangan, 'KETERANGAN'], [K.cabang, 'CBG'], [K.mutasi, 'MUTASI'], [K.saldo, 'SALDO']],
+    [[K.tanggal, '01/07'], [K.keterangan, 'SALDO AWAL'], [K.saldo, '10.000.000,00']],
+    [[K.tanggal, '08/07'], [K.keterangan, 'TRANSAKSI DEBIT TGL: 08/07 QR 013 00000.00Pecel lele'],
+      [K.mutasi, '25.000,00'], [K.mutasi + 60, 'DB'], [K.saldo, '9.975.000,00']],
+    [[K.keterangan, 'm e l a k u k a n s a n g g a h a n a t a s L a p o r a n R e k e n i n g i n i']],
+    [[K.tanggal, '09/07'], [K.keterangan, 'QRIS DEBIT ALFAMART'],
+      [K.mutasi, '20.000,00'], [K.mutasi + 60, 'DB'], [K.saldo, '9.955.000,00']],
+  ]);
+}
+
+/* ==========================================================================
    Bank lain — tanpa judul kolom sama sekali, hanya susunan angka
    ========================================================================== */
 

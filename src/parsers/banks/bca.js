@@ -20,7 +20,7 @@
 
 import { posisiHeader, bandDariHeader, potongKolom, perkiraanLebar } from '../layout.js';
 import {
-  nominalDiBaris, barisDiabaikan, barisRingkasan, bacaRingkasan,
+  nominalDiBaris, barisDiabaikan, barisChrome, barisRingkasan, bacaRingkasan,
   gabungDeskripsi, rapikanDeskripsi, arahDariSaldo,
 } from '../util.js';
 import { iso, hariDalamBulan } from '../../core/dates.js';
@@ -128,6 +128,10 @@ export function parse({ baris, barisPerHalaman, teks, kepala }) {
         // Baris lanjutan: tambahkan ke deskripsi transaksi sebelumnya.
         if (sekarang) {
           const lanjut = potongKolom(b, band.get('keterangan').min, band.get('keterangan').maks).teks;
+          // Paragraf disclaimer berhuruf renggang tidak tertangkap barisDiabaikan
+          // di atas — polanya bentuk, bukan kata — dan tanpa tanggal ia tampak
+          // seperti sambungan uraian.
+          if (barisChrome(lanjut)) continue;
           sekarang.deskripsi = gabungDeskripsi(sekarang.deskripsi, lanjut);
           sekarang.barisAsli.push(teksBaris);
         }

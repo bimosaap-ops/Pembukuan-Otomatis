@@ -26,7 +26,7 @@
  */
 
 import { posisiHeader, bandDariHeader, potongKolom, perkiraanLebar } from '../layout.js';
-import { nominalDiBaris, rapikanDeskripsi, gabungDeskripsi } from '../util.js';
+import { nominalDiBaris, rapikanDeskripsi, gabungDeskripsi, barisChrome } from '../util.js';
 import { iso, hariDalamBulan } from '../../core/dates.js';
 
 const KOLOM = [
@@ -139,6 +139,10 @@ export function parse({ baris, barisPerHalaman, kepala }) {
 
         // Baris di luar pita tabel — kop dan kaki halaman — tidak menyumbang apa pun.
         if (!kolKeterangan.trim()) continue;
+
+        // Kop dan kaki halaman bisa jatuh di dalam pita Keterangan. Tanpa
+        // tanggal, keduanya tampak persis seperti sambungan uraian.
+        if (barisChrome(kolKeterangan)) continue;
 
         // Sisanya sambungan uraian transaksi di atasnya.
         if (sekarang) {
