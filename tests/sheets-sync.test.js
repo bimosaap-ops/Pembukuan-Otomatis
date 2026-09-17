@@ -16,9 +16,9 @@ import assert from 'node:assert/strict';
 import {
   barisUntukSheet, validasiUrlWebhook, post, kirimBaris, kirimHapus, UKURAN_BONGKAH,
   barisAkunUntukSheet, barisKategoriUntukSheet, akunDariBarisSheet, kategoriDariBarisSheet,
-  transaksiDariBarisSheet,
+  transaksiDariBarisSheet, barisStatementUntukSheet,
 } from '../src/services/sheets-sync.js';
-import { buatTransaksi, buatAkun, buatKategori } from '../src/domain/entities.js';
+import { buatTransaksi, buatAkun, buatKategori, buatFileUpload } from '../src/domain/entities.js';
 
 /* ==========================================================================
    barisUntukSheet
@@ -566,4 +566,47 @@ test('kirimHapus mengulang bongkah yang kehabisan waktu', async () => {
 
   assert.equal(dikirim.length, 3, '2 bongkah + 1 pengulangan');
   assert.deepEqual(r.sisa, [], 'tidak ada yang tertinggal');
+});
+
+/* ==========================================================================
+   barisStatementUntukSheet — bahan tab "Kontrol Saldo"
+   ========================================================================== */
+
+test('barisStatementUntukSheet mengambil bulan dari periode AKHIR statement', () => {
+  // Mutasi tanggal 31 Juni yang tercetak di statement Juli adalah kasus
+  // nyatanya: kalau bulan diambil dari transaksi pertama, statement Juli
+  // masuk sebagai statement Juni dan dibandingkan dengan bulan yang salah.
+  const row = barisStatementUntukSheet(buatFileUpload({
+    id: 'upl1', bank: 'BCA', nomorRekening: '123',
+    periodeAwal: '2025-06-30', periodeAkhir: '2025-07-29',
+  }));
+  assert.equal(row.bulan, '2025-07');
+});
+
+test('barisStatementUntukSheet membedakan nol dari "tidak tercetak di statement"', () => {
+  const adaAngka = barisStatementUntukSheet(buatFileUpload({
+    id: 'upl1', saldoAwalStatement: 0, saldoAkhirStatement: 1500000,
+    mutasiDebetStatement: 0, mutasiKreditStatement: 1500000,
+  }));
+  assert.equal(adaAngka.saldoAwalStatement, 0, 'nol adalah saldo yang sah, harus terkirim sebagai nol');
+  assert.equal(adaAngka.mutasiDebetStatement, 0);
+
+  // Statement yang blok ringkasannya tidak terbaca sama sekali. Dikirim
+  // kosong, BUKAN nol: nol akan dilaporkan tab Kontrol Saldo sebagai selisih
+  // sebesar seluruh saldo rekening.
+  const tanpaAngka = barisStatementUntukSheet(buatFileUpload({ id: 'upl2' }));
+  assert.equal(tanpaAngka.saldoAwalStatement, '');
+  assert.equal(tanpaAngka.saldoAkhirStatement, '');
+  assert.equal(tanpaAngka.mutasiDebetStatement, '');
+  assert.equal(tanpaAngka.mutasiKreditStatement, '');
+});
+
+test('barisStatementUntukSheet memakai jumlah yang BENAR-BENAR tersimpan, bukan yang terbaca di PDF', () => {
+  // 12 baris terbaca, 2 di antaranya duplikat yang ditolak saat simpan. Yang
+  // ada di pembukuan cuma 10 — membandingkan 12 dengan hitungan Sheet akan
+  // selalu melaporkan selisih yang tidak pernah bisa ditutup.
+  const row = barisStatementUntukSheet(buatFileUpload({
+    id: 'upl1', jumlahTransaksi: 12, berhasil: 10, duplikat: 2,
+  }));
+  assert.equal(row.jumlahTransaksi, 10);
 });

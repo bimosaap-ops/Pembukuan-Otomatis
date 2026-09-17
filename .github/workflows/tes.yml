@@ -1,0 +1,44 @@
+# Menjalankan seluruh tes logika di tiap push & pull request.
+#
+# Tidak ada langkah pemasangan dependensi, dan itu memang keadaan repo ini:
+# aplikasinya tanpa dependensi npm (lihat vendor/README.md — pdf.js dan
+# xlsx ikut disimpan di repo), jadi tidak ada package-lock.json yang bisa
+# dipakai `npm ci`. Menambahkannya hanya akan gagal setiap kali jalan.
+#
+# Yang dijalankan sengaja `tests/*.test.js`, BUKAN `tests/`:
+#
+#   - tests/ui-check.mjs butuh Playwright + server statis, dan bukan bagian
+#     dari pemeriksaan cepat ini;
+#   - tests/buat-fixture-pdf.py berkas Python;
+#   - `node --test tests/` memungut keduanya lalu gagal dengan pesan yang
+#     tidak menunjuk ke kesalahan apa pun di kode.
+name: Tes
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Push berurutan ke branch yang sama: yang lama dibatalkan, bukan dibiarkan
+# menghabiskan runner untuk hasil yang sudah tidak dipakai siapa pun.
+concurrency:
+  group: tes-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tes:
+    name: node --test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # Versi dipatok, bukan "latest": tes di sini memakai node:test dan
+      # node:assert bawaan, dan perilaku test runner-nya masih berubah
+      # antar versi mayor. Yang dipakai pengembangan sekarang Node 22.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Jalankan tes
+        run: node --test tests/*.test.js

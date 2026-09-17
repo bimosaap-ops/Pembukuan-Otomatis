@@ -18,6 +18,14 @@ import fs from 'node:fs';
 
 const src = fs.readFileSync(new URL('../sheets/Code.gs', import.meta.url), 'utf8');
 const nomorKolom = (huruf) => [...huruf].reduce((a, c) => a * 26 + (c.charCodeAt(0) - 64), 0);
+/** Kebalikannya — dipakai mencatat rumus yang ditulis lewat getRange(baris, kolom, ...). */
+const hurufKolomUji = (n) => {
+  let hasil = '';
+  let sisa = n;
+  while (sisa > 0) { hasil = String.fromCharCode(65 + ((sisa - 1) % 26)) + hasil; sisa = Math.floor((sisa - 1) / 26); }
+  return hasil;
+};
+const alamatA1 = (baris, kolom) => `${hurufKolomUji(kolom)}${baris}`;
 
 function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
   const rumus = {}, charts = [], props = {}, pelanggaran = [], condFormatRules = [];
@@ -73,7 +81,7 @@ function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
       let proxy;
       const t = {
         setFormula(f) {
-          rumus[a1] = f;
+          rumus[`${nama}!${a1}`] = f;
           tulisSel(posisi.baris, posisi.kolom, f);
           barisTerisi = Math.max(barisTerisi, posisi.baris);
           return proxy;
@@ -84,7 +92,12 @@ function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
         // argumen lokal Indonesia.
         setFormulas(matriks) {
           matriks.forEach((barisArr, i) => barisArr.forEach((f, j) => {
-            if (f) rumus[`${a1}#${i}_${j}`] = f;
+            if (f) rumus[`${nama}!${a1}#${i}_${j}`] = f;
+            // Dicatat JUGA dengan alamat A1-nya: Kontrol Saldo mencatat
+            // sebagian sel yang ditulis lewat setFormulas sebagai jangkar
+            // (alamat A1), dan tanpa kunci ini pemeriksaan "tiap jangkar
+            // berisi rumus" tidak bisa melihatnya sama sekali.
+            if (f) rumus[`${nama}!${alamatA1(posisi.baris + i, posisi.kolom + j)}`] = f;
             tulisSel(posisi.baris + i, posisi.kolom + j, f);
           }));
           if (matriks.length) barisTerisi = Math.max(barisTerisi, posisi.baris + matriks.length - 1);
@@ -168,6 +181,7 @@ function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
     SpreadsheetApp: {
       getActiveSpreadsheet: () => ss,
       BandingTheme: { LIGHT_GREY: 'LG' },
+      BorderStyle: { SOLID_THICK: 'SOLID_THICK' },
       // Mencatat method builder apa saja yang dipanggil per aturan (mis.
       // 'setGradientMinpoint','setRanges') supaya aturan heatmap gradien bisa
       // diuji keberadaannya — proxy lama menelan semuanya tanpa jejak.
@@ -184,8 +198,8 @@ function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
       getUi: () => new Proxy({}, { get: () => () => ({}) }),
     },
     PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] ?? null, setProperty: (k, v) => { props[k] = v; } }) },
-    Charts: { ChartType: { PIE: 'PIE', COLUMN: 'COLUMN' } },
-    Utilities: { formatDate: (dt) => `${dt.getFullYear()}-01` },
+    Charts: { ChartType: { PIE: 'PIE', COLUMN: 'COLUMN', LINE: 'LINE' } },
+    Utilities: { formatDate: (dt, _tz, pola) => (pola === 'yyyy-MM' || pola === 'yyyy-MM-dd' ? `${dt.getFullYear()}-01` : `01/01/${dt.getFullYear()} 00:00`) },
     Session: { getScriptTimeZone: () => 'Asia/Jakarta' },
     ContentService: { createTextOutput: () => ({ setMimeType: () => ({}) }), MimeType: { JSON: 'json' } },
     console: { warn: () => {}, log: () => {} },
@@ -234,6 +248,8 @@ for (const susunan of SUSUNAN) {
       assert.ok(h.dibuat.includes(DASHBOARD_FULL_NAMA), 'Dashboard Full harus dibuat');
       assert.ok(h.dibuat.includes(ANGGARAN_NAMA), 'Anggaran harus dibuat');
       assert.ok(h.dibuat.includes(CARI_NAMA), 'Cari Transaksi harus dibuat');
+      assert.ok(h.dibuat.includes(STATEMENT_NAMA), 'Statement harus dibuat');
+      assert.ok(h.dibuat.includes(KONTROL_NAMA), 'Kontrol Saldo harus dibuat');
 
       // Invarian terpenting untuk tata letak bertumpuk: blok tidak saling
       // tindih — diperiksa untuk Dashboard DAN Dashboard Full secara
@@ -241,6 +257,7 @@ for (const susunan of SUSUNAN) {
       for (const [kunciRentang, kunciJangkar, namaTab] of [
         ['rentangBlokDashboard', 'selRumusDashboard', 'Dashboard'],
         ['rentangBlokDashboardFull', 'selRumusDashboardFull', 'Dashboard Full'],
+        ['rentangBlokKontrol', 'selRumusKontrol', 'Kontrol Saldo'],
       ]) {
         const rentang = JSON.parse(h.props[kunciRentang] || '[]');
         assert.ok(rentang.length >= 2, `[${namaTab}] rentang blok harus tercatat`);
@@ -251,7 +268,9 @@ for (const susunan of SUSUNAN) {
 
         const jangkar = JSON.parse(h.props[kunciJangkar] || '[]');
         assert.ok(jangkar.length > 0, `[${namaTab}] jangkar rumus harus tercatat`);
-        for (const sel of jangkar) assert.ok(h.rumus[sel], `[${namaTab}] jangkar ${sel} tidak berisi rumus`);
+        for (const sel of jangkar) {
+          assert.ok(h.rumus[`${namaTab}!${sel}`], `[${namaTab}] jangkar ${sel} tidak berisi rumus`);
+        }
       }
 
       // Blok anomali TETAP TOP_ANOMALI+1 baris berapa pun ukuran fixture-nya
@@ -316,8 +335,11 @@ for (const susunan of SUSUNAN) {
           `rumus bulan harus punya cabang ISNUMBER/TEXT untuk tanggal bertipe tanggal: ${f.slice(0, 90)}`);
       }
 
-      // 2 grafik di Dashboard (donat + kolom) + 1 di Dashboard Full (top kategori).
-      assert.equal(h.charts.length, 3, 'harus 3 grafik (2 di Dashboard, 1 di Dashboard Full)');
+      // 3 grafik di Dashboard (donat + kolom + tren) + 1 di Dashboard Full
+      // (top kategori). Kontrol Saldo sengaja tanpa grafik: barisnya
+      // rekening x bulan, dan yang perlu dilihat di sana angka selisihnya
+      // sendiri, bukan bentuk kurvanya.
+      assert.equal(h.charts.length, 4, 'harus 4 grafik (3 di Dashboard, 1 di Dashboard Full)');
       assert.equal(h.props.versiDashboard, h.api.VERSI_DASHBOARD, 'versi harus tercatat');
       assert.ok(h.props.sidikDashboard, 'sidik data harus tercatat');
     });
@@ -331,6 +353,8 @@ for (const susunan of SUSUNAN) {
 const DASHBOARD_FULL_NAMA = 'Dashboard Full';
 const ANGGARAN_NAMA = 'Anggaran';
 const CARI_NAMA = 'Cari Transaksi';
+const STATEMENT_NAMA = 'Statement';
+const KONTROL_NAMA = 'Kontrol Saldo';
 const TOP_ANOMALI_NILAI = 25;
 
 test('konstanta nama tab & TOP_ANOMALI di tes ini masih cocok dengan Code.gs', () => {
@@ -338,6 +362,8 @@ test('konstanta nama tab & TOP_ANOMALI di tes ini masih cocok dengan Code.gs', (
   assert.ok(h.lembar[DASHBOARD_FULL_NAMA], `sheet bernama "${DASHBOARD_FULL_NAMA}" harus ada`);
   assert.ok(h.lembar[ANGGARAN_NAMA], `sheet bernama "${ANGGARAN_NAMA}" harus ada`);
   assert.ok(h.lembar[CARI_NAMA], `sheet bernama "${CARI_NAMA}" harus ada`);
+  assert.ok(h.lembar[STATEMENT_NAMA], `sheet bernama "${STATEMENT_NAMA}" harus ada`);
+  assert.ok(h.lembar[KONTROL_NAMA], `sheet bernama "${KONTROL_NAMA}" harus ada`);
   const rentangFull = JSON.parse(h.props.rentangBlokDashboardFull || '[]').sort((a, b) => a[0] - b[0]);
   const tinggiAnomali = rentangFull[rentangFull.length - 2][1] - rentangFull[rentangFull.length - 2][0];
   assert.equal(tinggiAnomali, TOP_ANOMALI_NILAI + 1, 'TOP_ANOMALI_NILAI di tes ini harus cocok dengan TOP_ANOMALI di Code.gs');
@@ -379,6 +405,92 @@ test('Cari Transaksi hanya dibuat sekali — sinkron berikutnya tidak menyentuhn
 });
 
 /* ==========================================================================
+   Kontrol Saldo
+
+   Yang dijaga di sini: tabel kontrol IKUT MEMANJANG ketika tab Statement
+   berisi baris (pada susunan fixture di atas tab itu masih kosong, jadi
+   seluruh pemeriksaan di atas cuma menguji keadaan nol), rumusnya benar-benar
+   membandingkan tab Statement dengan tab data, dan tab Statement sendiri
+   tidak pernah tertimpa — kolom saldonya boleh diketik tangan.
+   ========================================================================== */
+
+/** Isi tab Statement seperti yang dikirim aplikasi (13 kolom, lihat HEADER_STATEMENT). */
+function isiStatement(sheet, baris) {
+  baris.forEach((b, i) => {
+    sheet.getRange(2 + i, 1, 1, 13).setValues([[
+      b.id, b.bank, b.nomor, b.bulan, `${b.bulan}-01`, `${b.bulan}-28`,
+      b.saldoAwal, b.saldoAkhir, b.debet, b.kredit, b.jml, 'statement.pdf', new Date(),
+    ]]);
+  });
+}
+
+test('Kontrol Saldo memanjang mengikuti isi tab Statement, dan blok tetap tidak bertabrakan', () => {
+  const h = jalankan({ pakaiKoma: false, rekening: ['BCA|111'], bulan: 3, kategori: 2 });
+  const rentangAwal = JSON.parse(h.props.rentangBlokKontrol || '[]');
+  assert.ok(rentangAwal.length >= 3, 'Kontrol Saldo harus punya 3 blok (kontrol, tanpa statement, rekap)');
+
+  isiStatement(h.lembar.Statement, [
+    { id: 'upl1', bank: 'BCA', nomor: '111', bulan: '2025-01', saldoAwal: 1000000, saldoAkhir: 1200000, debet: 50000, kredit: 250000, jml: 4 },
+    { id: 'upl2', bank: 'BCA', nomor: '111', bulan: '2025-02', saldoAwal: 1200000, saldoAkhir: 1150000, debet: 80000, kredit: 30000, jml: 3 },
+    { id: 'upl3', bank: 'BCA', nomor: '111', bulan: '2025-03', saldoAwal: 1150000, saldoAkhir: 1400000, debet: 20000, kredit: 270000, jml: 5 },
+  ]);
+
+  h.ulangi();
+
+  assert.deepEqual(h.pelanggaran, [], `melampaui batas grid:\n  ${h.pelanggaran.join('\n  ')}`);
+
+  const rentang = JSON.parse(h.props.rentangBlokKontrol || '[]').sort((a, b) => a[0] - b[0]);
+  for (let i = 1; i < rentang.length; i += 1) {
+    assert.ok(rentang[i][0] > rentang[i - 1][1], `blok Kontrol Saldo bertabrakan: [${rentang[i - 1]}] dan [${rentang[i]}]`);
+  }
+  // Tiga statement menambah tiga baris kontrol dibanding keadaan nol (yang
+  // menyisakan satu baris minimum) — buktinya tinggi blok pertama bertambah.
+  const tinggiAwal = rentangAwal.sort((a, b) => a[0] - b[0])[0];
+  assert.equal(rentang[0][1] - rentang[0][0], (tinggiAwal[1] - tinggiAwal[0]) + 2,
+    'blok kontrol harus tumbuh sebanyak pasangan rekening+bulan baru di tab Statement');
+
+  const semuaRumus = Object.values(h.rumus).join('\n');
+  assert.ok(semuaRumus.includes("'Statement'!G2:G"), 'kontrol harus membaca Saldo Awal Statement');
+  assert.ok(semuaRumus.includes("'Statement'!H2:H"), 'kontrol harus membaca Saldo Akhir Statement');
+  assert.ok(semuaRumus.includes("'Akun'!G2:G"),
+    'saldo pembukuan harus dihitung maju dari Saldo Awal di tab Akun, bukan dari kolom Saldo cetakan bank');
+  // Inti kontrolnya: saldo pembukuan TIDAK BOLEH diambil dari kolom Saldo
+  // (P) tab data. Kalau itu yang dipakai, yang dibandingkan adalah angka bank
+  // dengan angka bank, dan pemeriksaannya selalu lolos walau ada baris hilang.
+  const kontrolSaja = Object.entries(h.rumus)
+    .filter(([sel]) => sel.startsWith('Kontrol Saldo!'))
+    .map(([, f]) => f);
+  assert.ok(kontrolSaja.length > 0, 'harus ada rumus kontrol yang merujuk tab Statement');
+  for (const f of kontrolSaja) {
+    assert.ok(!f.includes("'Transaksi'!P2:P"),
+      `rumus kontrol tidak boleh memakai kolom Saldo cetakan bank: ${f.slice(0, 120)}`);
+  }
+});
+
+test('tab Statement dibuat sekali dan angka yang diketik tangan tidak pernah tertimpa', () => {
+  const h = jalankan({ pakaiKoma: false, rekening: ['BCA|111'], bulan: 2, kategori: 2 });
+  const statement = h.lembar.Statement;
+
+  // Statement lama yang ringkasannya tidak pernah terekam aplikasi: dua angka
+  // ini diketik tangan dari PDF aslinya, tanpa ID Upload.
+  isiStatement(statement, [
+    { id: '', bank: 'BCA', nomor: '111', bulan: '2024-12', saldoAwal: 900000, saldoAkhir: 950000, debet: '', kredit: '', jml: '' },
+  ]);
+
+  const dibuatSebelum = h.dibuat.filter((n) => n === 'Statement').length;
+  h.ulangi();
+
+  assert.equal(h.dibuat.filter((n) => n === 'Statement').length, dibuatSebelum,
+    'tab Statement tidak boleh dibuat ulang');
+  assert.equal(statement.getRange(2, 7).getValues()[0][0], 900000,
+    'Saldo Awal yang diketik tangan tidak boleh tertimpa');
+  assert.equal(statement.getRange(2, 8).getValues()[0][0], 950000,
+    'Saldo Akhir yang diketik tangan tidak boleh tertimpa');
+  assert.equal(statement.getRange(1, 1).getValues()[0][0], 'ID Upload',
+    'header tab Statement harus tetap utuh');
+});
+
+/* ==========================================================================
    doPost di atas tiruan Apps Script
 
    Yang diuji di sini bukan tata letak, melainkan tiga hal yang kalau salah
@@ -410,6 +522,7 @@ function barisPenuh(i) {
  */
 function jalankanDoPost({
   barisAda = 0, payload, kunciMacet = false, gridTambahan = [], arsipGrid = null,
+  statementGrid = null,
 }) {
   const grid = [HEADER_UJI.slice()];
   for (let i = 0; i < barisAda; i += 1) {
@@ -479,6 +592,7 @@ function jalankanDoPost({
 
   const lembar = { Transaksi: buatSheet('Transaksi', grid) };
   if (arsipGrid) lembar._Arsip = buatSheet('_Arsip', arsipGrid);
+  if (statementGrid) lembar.Statement = buatSheet('Statement', statementGrid);
   const ss = {
     getName: () => 'catatan keuangan',
     getId: () => 'ID_UJI',
@@ -495,6 +609,7 @@ function jalankanDoPost({
     SpreadsheetApp: {
       getActiveSpreadsheet: () => ss,
       BandingTheme: { LIGHT_GREY: 'LG' },
+      BorderStyle: { SOLID_THICK: 'SOLID_THICK' },
       newConditionalFormatRule() {
         const b = new Proxy({ build: () => ({}) }, { get: (t, k) => (k in t ? t[k] : () => b) });
         return b;
@@ -508,8 +623,8 @@ function jalankanDoPost({
         releaseLock: () => {},
       }),
     },
-    Charts: { ChartType: { PIE: 'PIE', COLUMN: 'COLUMN' } },
-    Utilities: { formatDate: (dt) => `${dt.getFullYear()}-01` },
+    Charts: { ChartType: { PIE: 'PIE', COLUMN: 'COLUMN', LINE: 'LINE' } },
+    Utilities: { formatDate: (dt, _tz, pola) => (pola === 'yyyy-MM' || pola === 'yyyy-MM-dd' ? `${dt.getFullYear()}-01` : `01/01/${dt.getFullYear()} 00:00`) },
     Session: { getScriptTimeZone: () => 'Asia/Jakarta' },
     ContentService: {
       createTextOutput: (t) => { balasan = JSON.parse(t); return { setMimeType: () => balasan }; },
@@ -776,4 +891,61 @@ test('tarikTransaksi mengabaikan _Arsip lama yang belum bermigrasi (tanpa kolom 
   });
 
   assert.deepEqual(h.balasan.dihapus, []);
+});
+
+/* Header tab Statement, dicerminkan dari HEADER_STATEMENT di Code.gs. */
+const HEADER_STATEMENT_UJI = ['ID Upload', 'Bank', 'No. Rekening', 'Bulan', 'Periode Awal',
+  'Periode Akhir', 'Saldo Awal Statement', 'Saldo Akhir Statement', 'Mutasi Debet',
+  'Mutasi Kredit', 'Jumlah Transaksi', 'Nama File', 'Tanggal Upload'];
+
+const barisStatement = (id, bulan, saldoAwal, saldoAkhir) => [
+  id, 'BCA', '1234567890', bulan, `${bulan}-01`, `${bulan}-31`,
+  saldoAwal, saldoAkhir, 1000, 2000, 5, 'e-statement.pdf', new Date(),
+];
+
+test('entity statement: upsert per ID Upload, bukan menambah baris kedua', () => {
+  const h = jalankanDoPost({
+    statementGrid: [HEADER_STATEMENT_UJI.slice(), barisStatement('upl1', '2025-07', 100, 200)],
+    payload: {
+      entity: 'statement',
+      rows: [{
+        id: 'upl1', bank: 'BCA', nomorRekening: '1234567890', bulan: '2025-07',
+        periodeAwal: '2025-07-01', periodeAkhir: '2025-07-31',
+        saldoAwalStatement: 5000, saldoAkhirStatement: 7000,
+        mutasiDebetStatement: 1000, mutasiKreditStatement: 3000,
+        jumlahTransaksi: 9, namaFile: 'baru.pdf', tanggalUpload: '2025-08-01T00:00:00.000Z',
+      }],
+    },
+  });
+
+  assert.equal(h.balasan.ok, true);
+  assert.equal(h.balasan.inserted, 0, 'ID yang sudah ada tidak boleh disisipkan sebagai baris baru');
+  assert.equal(h.balasan.updated, 1, 'baris dengan ID sama harus ditimpa di tempatnya');
+  const sh = h.lembar.Statement;
+  assert.equal(sh.getLastRow(), 2, 'tetap satu baris data');
+  assert.equal(sh.getRange(2, 7, 1, 2).getValues()[0][0], 5000, 'Saldo Awal harus terbarui');
+  assert.equal(sh.getRange(2, 7, 1, 2).getValues()[0][1], 7000, 'Saldo Akhir harus terbarui');
+});
+
+test('entity statement: hapus membuang barisnya, bukan menandainya tombstone', () => {
+  // Tab Statement tidak punya kolom "Dihapus Pada" dan tidak pernah ditarik
+  // balik ke perangkat lain, jadi tombstone tidak ada gunanya di sini —
+  // sebaliknya, baris yang tertinggal membuat kontrol saldo membandingkan
+  // bulan itu dengan e-statement yang upload-nya sudah dibatalkan.
+  const h = jalankanDoPost({
+    statementGrid: [
+      HEADER_STATEMENT_UJI.slice(),
+      barisStatement('upl1', '2025-06', 100, 200),
+      barisStatement('upl2', '2025-07', 200, 300),
+      barisStatement('upl3', '2025-08', 300, 400),
+    ],
+    payload: { entity: 'statement', hapus: ['upl1', 'upl3'] },
+  });
+
+  assert.equal(h.balasan.ok, true);
+  assert.equal(h.balasan.dihapus, 2);
+  const sh = h.lembar.Statement;
+  assert.equal(sh.getLastRow(), 2, 'dua baris terbuang, sisa header + satu baris');
+  assert.equal(sh.getRange(2, 1).getValues()[0][0], 'upl2',
+    'baris yang tersisa harus upl2 — penghapusan dari bawah ke atas supaya nomor baris tidak bergeser');
 });
