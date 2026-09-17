@@ -29,6 +29,7 @@ import * as kamusRepo from '../../data/repo/merchant-dictionary.js';
 import { STATUS_COCOK_EMAIL, STATUS_RESOLUSI_EMAIL } from '../../domain/entities.js';
 import { tarikTransaksiEmail, rentangTanggalKandidat } from '../../services/email-feed-sync.js';
 import { eksporUntukTinjauan, terapkanHasilTinjauan } from '../../services/email-review.js';
+import { hapusProvisionalManual } from '../../services/email-ledger-merge.js';
 import { unduhBlob } from '../../services/export.js';
 import { dataView } from '../components/data-view.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
@@ -246,6 +247,14 @@ export async function mount(wadah) {
             h('button.btn-kecil', { type: 'button', onclick: () => bukaTautkanManual(t) }, 'Tautkan manual'),
             kandidat ? h('button.btn-kecil', { type: 'button', onclick: () => terimaTautan(t) }, 'Terima tautan ini') : null,
             h('button.btn-kecil.btn-halus', { type: 'button', onclick: () => abaikan(t) }, 'Abaikan'),
+            // "Fase C": baris ini sudah dicatat sebagai transaksi provisional
+            // di ledger (lihat services/email-ledger-merge.js) — beri jalan
+            // keluar manual kalau ternyata memang keliru/dobel (mis. sudah
+            // ada di e-statement dengan detail berbeda tapi jelas transaksi
+            // yang sama).
+            t.provisionalTrxId
+              ? h('button.btn-kecil.btn-bahaya', { type: 'button', onclick: () => hapusProvisional(t) }, 'Hapus baris provisional')
+              : null,
           ];
         },
       }),
@@ -260,6 +269,15 @@ export async function mount(wadah) {
         render: (t) => h('div', null, [
           h('div.putus', { text: t.merchantMentah || '(tanpa nama merchant)' }),
           h('div.redup-2', { style: { fontSize: '.76rem' }, text: `${t.bank || '—'}${t.alasanCocok ? ` · ${t.alasanCocok}` : ''}` }),
+          // "Fase C": penanda baris ini sudah tercatat di ledger sebagai
+          // transaksi provisional (tampil di Dashboard) — lihat konfirmasi
+          // Fase A.5/urutan implementasi Fase C soal kenapa MISMATCH/AMBIGUOUS
+          // tidak menghapusnya otomatis (saldo tidak boleh diam-diam berubah).
+          t.provisionalTrxId ? h('span.lencana.lencana--warning.mt-2', {
+            text: (t.statusCocok === STATUS_COCOK_EMAIL.MISMATCH || t.statusCocok === STATUS_COCOK_EMAIL.AMBIGUOUS)
+              ? 'Provisional di ledger · disengketakan'
+              : 'Provisional di ledger',
+          }) : null,
         ]),
       },
       {
@@ -326,6 +344,27 @@ export async function mount(wadah) {
     await emailTrxRepo.simpanSatu({ ...trx, statusResolusi: STATUS_RESOLUSI_EMAIL.DIABAIKAN });
     toastSukses('Diabaikan.');
     emit(EVENT.DATA_BERUBAH, { sumber: 'email-abaikan' });
+  }
+
+  /**
+   * Resolusi manual "Fase C": baris provisional di ledger ternyata keliru
+   * (mis. dobel dengan baris e-statement yang tidak terdeteksi otomatis
+   * karena detailnya cukup berbeda). Berbeda dari "Abaikan" — itu cuma
+   * menyembunyikan kartu ini dari tinjauan tanpa menyentuh ledger sama
+   * sekali; ini benar-benar menghapus baris transaksi dari pembukuan.
+   */
+  async function hapusProvisional(trx) {
+    const ya = await konfirmasi({
+      judul: 'Hapus baris provisional dari pembukuan?',
+      pesan: 'Transaksi ini akan dihapus dari daftar Transaksi (dan Google Sheets). '
+        + 'Lakukan ini kalau transaksinya memang sudah tercatat lewat e-statement dengan detail berbeda, atau ternyata keliru.',
+      tombolYa: 'Ya, hapus',
+      bahaya: true,
+    });
+    if (!ya) return;
+    await hapusProvisionalManual(trx);
+    toastSukses('Baris provisional dihapus.');
+    emit(EVENT.DATA_BERUBAH, { sumber: 'email-hapus-provisional' });
   }
 
   function bukaTautkanManual(trx) {

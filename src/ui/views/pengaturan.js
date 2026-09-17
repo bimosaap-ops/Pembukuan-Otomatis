@@ -22,6 +22,7 @@ import {
 import { tarikTransaksiEmail, statusTarikEmail } from '../../services/email-feed-sync.js';
 import { tarikDanGabungEntitas } from '../../services/entitas-sync.js';
 import { tarikDanGabungTransaksi } from '../../services/transaksi-sync.js';
+import { ledgerMergeAktif, provisionalKedaluwarsa } from '../../services/email-ledger-merge.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
 import { toastSukses, toastGagal } from '../components/toast.js';
 import { pergiKe } from '../router.js';
@@ -50,6 +51,7 @@ export async function mount(wadah) {
       kartuFolder(),
       await kartuSheets(render),
       await kartuEmailFeed(),
+      await kartuGabungLedgerEmail(akun),
       kartuDatabase({ akun, transaksi, upload, kategori, penyimpanan }, render),
       kartuVersi(versi),
       kartuTentang(),
@@ -561,6 +563,91 @@ async function kartuEmailFeed() {
       }, [ikon('surat', 17), h('span', { text: 'Tarik email transaksi sekarang' })]),
       h('button', { type: 'button', onclick: () => pergiKe('email-transaksi') }, 'Buka Transaksi Email'),
       statusEl,
+    ]),
+  ]);
+}
+
+/* ==========================================================================
+   Gabung Transaksi Email ke ledger ("Fase C") — lihat services/email-ledger-merge.js
+   ========================================================================== */
+
+async function kartuGabungLedgerEmail(akun) {
+  const [aktifTersimpan, akunUtamaTersimpan, akunRdnTersimpan, kedaluwarsa] = await Promise.all([
+    ledgerMergeAktif(),
+    pengaturanRepo.baca(pengaturanRepo.KUNCI.EMAIL_AKUN_UTAMA_BCA, ''),
+    pengaturanRepo.baca(pengaturanRepo.KUNCI.EMAIL_AKUN_RDN_BCA, ''),
+    provisionalKedaluwarsa(),
+  ]);
+
+  const akunBca = akun.filter((a) => a.bank === 'BCA');
+  let aktifVal = aktifTersimpan;
+
+  const opsiAkun = (terpilih) => [
+    h('option', { value: '', selected: !terpilih, text: 'Otomatis (rekening BCA pertama)' }),
+    ...akunBca.map((a) => h('option', {
+      value: a.id, selected: a.id === terpilih, text: `${a.bank} ${a.nomorRekening || ''}`.trim(),
+    })),
+  ];
+
+  const selectUtama = h('select', null, opsiAkun(akunUtamaTersimpan));
+  const selectRdn = h('select', null, opsiAkun(akunRdnTersimpan));
+  const checkAktif = h('input', {
+    type: 'checkbox',
+    checked: aktifVal,
+    disabled: akunBca.length < 2,
+    onchange: (e) => { aktifVal = e.target.checked; },
+  });
+
+  return h('.kartu', null, [
+    h('.kartu__kepala', null, h('div', null, [
+      h('.kartu__judul', { text: 'Gabung Transaksi Email ke Pembukuan' }),
+      h('.kartu__ket', {
+        text: 'Transaksi email yang belum ada padanan e-statement langsung dicatat sebagai transaksi "provisional" '
+          + 'di pembukuan (tampil di Dashboard), lalu digantikan otomatis begitu e-statement bulan itu di-upload dan cocok. '
+          + 'Kategori terisi otomatis, sama seperti transaksi hasil upload PDF.',
+      }),
+    ])),
+
+    akunBca.length < 2 ? h('.info-kotak', null, [
+      ikon('cek', 18),
+      h('div', { text: 'Cuma ada 0-1 rekening BCA — tidak ada yang perlu dipilih di sini. Fitur ini tetap bisa diaktifkan; transaksi email BCA akan otomatis masuk ke satu-satunya rekening BCA yang ada (atau dibuatkan otomatis kalau belum ada sama sekali).' }),
+    ]) : h('.form-grid', null, [
+      h('div', null, [h('label', { text: 'Rekening BCA utama' }), selectUtama]),
+      h('div', null, [h('label', { text: 'Rekening BCA RDN/Stockbit' }), selectRdn]),
+    ]),
+
+    h('label.baris.mt-3', { style: { fontWeight: '600' } }, [
+      checkAktif,
+      h('span', { text: 'Aktifkan penggabungan otomatis' }),
+    ]),
+
+    kedaluwarsa.length ? h('.info-kotak.info-kotak--warning.mt-2', null, [
+      ikon('cek', 18),
+      h('div', {
+        text: `${kedaluwarsa.length} transaksi provisional berumur lebih dari 45 hari belum terkonfirmasi e-statement. `
+          + 'Upload e-statement bulan terkait, atau tinjau manual di halaman Transaksi Email.',
+      }),
+    ]) : null,
+
+    h('.baris.mt-3', null, [
+      h('button.btn-primary', {
+        type: 'button',
+        onclick: async (e) => {
+          const b = e.currentTarget; b.disabled = true;
+          try {
+            await Promise.all([
+              pengaturanRepo.tulis(pengaturanRepo.KUNCI.EMAIL_LEDGER_MERGE_AKTIF, aktifVal),
+              pengaturanRepo.tulis(pengaturanRepo.KUNCI.EMAIL_AKUN_UTAMA_BCA, selectUtama.value),
+              pengaturanRepo.tulis(pengaturanRepo.KUNCI.EMAIL_AKUN_RDN_BCA, selectRdn.value),
+            ]);
+            toastSukses('Pengaturan gabung ledger tersimpan.');
+          } catch (err) {
+            toastGagal(err.message);
+          } finally {
+            b.disabled = false;
+          }
+        },
+      }, 'Simpan'),
     ]),
   ]);
 }

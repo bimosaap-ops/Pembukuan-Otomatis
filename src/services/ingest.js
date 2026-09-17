@@ -25,6 +25,7 @@ import * as uploadRepo from '../data/repo/uploads.js';
 import * as kategoriRepo from '../data/repo/categories.js';
 import { emit, EVENT } from '../core/events.js';
 import { syncAtauAntri } from './sheets-sync.js';
+import { ledgerMergeAktif, rekonsiliasiSetelahUpload } from './email-ledger-merge.js';
 
 export const LANGKAH = [
   { id: 'upload', label: 'Upload PDF' },
@@ -293,8 +294,27 @@ export async function simpanDraft(draft, pilihan = {}) {
     ? `${transaksi.length} transaksi tersimpan · ${tertahan} ternyata sudah ada`
     : `${transaksi.length} transaksi tersimpan`);
 
+  // "Fase C": e-statement yang baru tersimpan mungkin mengonfirmasi transaksi
+  // email yang sebelumnya dicatat provisional (belum ada padanan statement).
+  // WAJIB dijalankan SEBELUM hitungUlangSaldo final di bawah -- kalau
+  // dibalik, saldo sempat dihitung dari state yang belum tuntas (provisional
+  // masih ada + statement baru sudah ada = double count sesaat).
+  let akunTersentuhRekonsiliasi = new Set();
+  if (await ledgerMergeAktif()) {
+    const hasilRekonsiliasi = await rekonsiliasiSetelahUpload(transaksi);
+    akunTersentuhRekonsiliasi = hasilRekonsiliasi.akunTersentuh;
+  }
+
   onLangkah('selesai', 'jalan');
-  const akunTerbaru = await akunRepo.hitungUlangSaldo(akun.id);
+  // Hitung ulang SEKALI untuk setiap akun yang tersentuh -- akun upload ini
+  // sendiri, plus akun lain yang provisional-nya barusan digantikan (bisa
+  // beda dari akun upload kalau resolusiAkunEmail() sempat salah tebak).
+  const seluruhAkunTersentuh = new Set([akun.id, ...akunTersentuhRekonsiliasi]);
+  let akunTerbaru = akun;
+  for (const accountId of seluruhAkunTersentuh) {
+    const hasilHitung = await akunRepo.hitungUlangSaldo(accountId);
+    if (accountId === akun.id) akunTerbaru = hasilHitung;
+  }
   emit(EVENT.DATA_BERUBAH, { sumber: 'upload', uploadedFileId: rekaman.id });
   onLangkah('selesai', 'selesai', 'Saldo dan dashboard diperbarui');
 
