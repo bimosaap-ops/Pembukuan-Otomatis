@@ -30,6 +30,13 @@ const alamatA1 = (baris, kolom) => `${hurufKolomUji(kolom)}${baris}`;
 function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
   const rumus = {}, charts = [], props = {}, pelanggaran = [], condFormatRules = [];
   const dibuat = [];
+  // {sheet, baris, kolom, tinggi, lebar} tiap sel gabungan, dan berapa
+  // baris/kolom yang dibekukan per sheet. Keduanya dicatat karena Sheets
+  // MENOLAK pembekuan yang memotong sel gabungan, dan penolakan itu berupa
+  // exception yang menjatuhkan seluruh pembangunan — bukan cuma merusak
+  // tampilan satu tab.
+  const gabungan = [];
+  const beku = {};
 
   // Baris data tiruan: kolom sesuai HEADER (16 kolom).
   const barisData = [];
@@ -75,6 +82,14 @@ function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
     const posisiA1 = (a1) => {
       const m = String(a1).match(/^\$?([A-Z]+)\$?(\d+)/);
       return m ? { baris: Number(m[2]), kolom: nomorKolom(m[1]) } : { baris: 1, kolom: 1 };
+    };
+    /** Ukuran rentang bernotasi A1 ("C2:Q2" -> 1 baris x 15 kolom). */
+    const ukuranA1 = (a1) => {
+      const sisi = String(a1).split(':');
+      const awal = posisiA1(sisi[0]);
+      if (sisi.length < 2) return { tb: 1, tk: 1 };
+      const akhir = posisiA1(sisi[1]);
+      return { tb: akhir.baris - awal.baris + 1, tk: akhir.kolom - awal.kolom + 1 };
     };
 
     function buatRange(a1, posisi, ukuran = { tb: 1, tk: 1 }) {
@@ -125,6 +140,12 @@ function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
         clearContent: () => proxy,
         applyRowBanding: () => ({ setHeaderRowColor: () => {} }),
         getDisplayValue: () => '',
+        merge() {
+          gabungan.push({
+            sheet: nama, baris: posisi.baris, kolom: posisi.kolom, tinggi: ukuran.tb, lebar: ukuran.tk,
+          });
+          return proxy;
+        },
       };
       proxy = new Proxy(t, { get: (o, k) => (k in o ? o[k] : () => proxy) });
       return proxy;
@@ -143,12 +164,26 @@ function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
         barisTerisi += 1;
         baris.forEach((v, i) => tulisSel(barisTerisi, i + 1, v));
       },
+      // Meniru penolakan Sheets: "Anda tidak dapat membekukan kolom yang
+      // berisi hanya sebagian dari sel gabungan". Dilempar, bukan dicatat
+      // sebagai pelanggaran, karena di Apps Script sungguhan inilah yang
+      // menghentikan pembangunan di tengah jalan.
+      setFrozenRows(n) {
+        beku[nama] = Object.assign({ baris: 0, kolom: 0 }, beku[nama], { baris: n });
+        const potong = gabungan.find((g) => g.sheet === nama && g.baris <= n && g.baris + g.tinggi - 1 > n);
+        if (potong) throw new Error(`Anda tidak dapat membekukan baris yang berisi hanya sebagian dari sel gabungan (${nama}: setFrozenRows(${n}) memotong gabungan di R${potong.baris}C${potong.kolom})`);
+      },
+      setFrozenColumns(n) {
+        beku[nama] = Object.assign({ baris: 0, kolom: 0 }, beku[nama], { kolom: n });
+        const potong = gabungan.find((g) => g.sheet === nama && g.kolom <= n && g.kolom + g.lebar - 1 > n);
+        if (potong) throw new Error(`Anda tidak dapat membekukan kolom yang berisi hanya sebagian dari sel gabungan (${nama}: setFrozenColumns(${n}) memotong gabungan di R${potong.baris}C${potong.kolom})`);
+      },
       setColumnWidth: (k) => { if (k > maxKolom) pelanggaran.push(`${nama}: setColumnWidth(${k}) > ${maxKolom}`); },
       setColumnWidths: (m, j) => { if (m + j - 1 > maxKolom) pelanggaran.push(`${nama}: setColumnWidths(${m},${j}) -> ${m + j - 1} > ${maxKolom}`); },
       setRowHeight: (b) => { if (b > maxBaris) pelanggaran.push(`${nama}: setRowHeight(${b}) > ${maxBaris}`); },
       setRowHeights: (m, j) => { if (m + j - 1 > maxBaris) pelanggaran.push(`${nama}: setRowHeights(${m},${j}) > ${maxBaris}`); },
       getRange: (...a) => {
-        if (typeof a[0] === 'string') { cekA1(a[0]); return buatRange(a[0], posisiA1(a[0])); }
+        if (typeof a[0] === 'string') { cekA1(a[0]); return buatRange(a[0], posisiA1(a[0]), ukuranA1(a[0])); }
         const [b, k, tb = 1, tk = 1] = a;
         if (k + tk - 1 > maxKolom) pelanggaran.push(`${nama}: getRange(${a}) kolom ${k + tk - 1} > ${maxKolom}`);
         if (b + tb - 1 > maxBaris) pelanggaran.push(`${nama}: getRange(${a}) baris ${b + tb - 1} > ${maxBaris}`);
@@ -209,7 +244,7 @@ function jalankan({ pakaiKoma, rekening, bulan, kategori }) {
     `${src}\n; return { pastikanSemuaTab, statistikData, hurufKolom, VERSI_DASHBOARD };`)(...Object.values(sandbox));
   api.pastikanSemuaTab(ss, 'Transaksi');
   return {
-    rumus, charts, props, pelanggaran, dibuat, api, lembar, condFormatRules,
+    rumus, charts, props, pelanggaran, dibuat, api, lembar, condFormatRules, gabungan, beku,
     // Dipakai tes idempoten: rerun pastikanSemuaTab di atas STATE yang sama
     // (props/lembar sama), supaya bisa diperiksa apa yang berubah dan apa
     // yang sengaja tidak disentuh.
@@ -465,6 +500,39 @@ test('Kontrol Saldo memanjang mengikuti isi tab Statement, dan blok tetap tidak 
     assert.ok(!f.includes("'Transaksi'!P2:P"),
       `rumus kontrol tidak boleh memakai kolom Saldo cetakan bank: ${f.slice(0, 120)}`);
   }
+});
+
+test('tidak ada sel gabungan yang terpotong batas baris/kolom beku, dan Kontrol Saldo benar-benar jadi', () => {
+  // Bug yang sudah lolos ke pengguna sekali: judul Kontrol Saldo digabung
+  // A1:Q1 sementara tabnya membekukan dua kolom pertama. Sheets menolaknya
+  // ("tidak dapat membekukan kolom yang berisi hanya sebagian dari sel
+  // gabungan"), penolakannya berupa exception, dan exception itu menjatuhkan
+  // seluruh pembangunan — tab Kontrol tinggal separuh, sementara Dashboard
+  // dan Dashboard Full yang sudah dihapus untuk dibangun ulang tidak pernah
+  // kembali. Diperiksa untuk SEMUA sheet, bukan cuma Kontrol Saldo.
+  const h = jalankan({ pakaiKoma: false, rekening: ['BCA|111', 'Permata|222'], bulan: 5, kategori: 4 });
+
+  for (const [sheet, batas] of Object.entries(h.beku)) {
+    for (const g of h.gabungan.filter((x) => x.sheet === sheet)) {
+      const akhirBaris = g.baris + g.tinggi - 1;
+      const akhirKolom = g.kolom + g.lebar - 1;
+      assert.ok(!(g.baris <= batas.baris && akhirBaris > batas.baris),
+        `[${sheet}] gabungan R${g.baris}:R${akhirBaris} terpotong setFrozenRows(${batas.baris})`);
+      assert.ok(!(g.kolom <= batas.kolom && akhirKolom > batas.kolom),
+        `[${sheet}] gabungan C${g.kolom}:C${akhirKolom} terpotong setFrozenColumns(${batas.kolom})`);
+    }
+  }
+
+  // Dan pembangunannya memang sampai ujung. Sejak kegagalan bangunKontrol
+  // ditangkap (supaya tidak menjatuhkan Dashboard), tab yang gagal dibuang
+  // diam-diam — jadi keberadaannya harus diperiksa eksplisit, kalau tidak
+  // kegagalan apa pun di sana lolos tanpa satu pun tes merah.
+  assert.ok(h.lembar[KONTROL_NAMA], 'tab Kontrol Saldo harus ada, bukan dibuang karena pembangunannya gagal');
+  assert.ok(h.beku[KONTROL_NAMA], 'Kontrol Saldo harus sampai tahap membekukan baris/kolom');
+  assert.equal(h.beku[KONTROL_NAMA].kolom, 2, 'dua kolom pertama Kontrol Saldo harus beku');
+  assert.ok(h.beku[KONTROL_NAMA].baris > 0, 'baris header Kontrol Saldo harus beku');
+  assert.equal(h.props.versiDashboard, h.api.VERSI_DASHBOARD,
+    'versi hanya tercatat kalau seluruh tab termasuk Kontrol Saldo berhasil dibangun');
 });
 
 test('tab Statement dibuat sekali dan angka yang diketik tangan tidak pernah tertimpa', () => {

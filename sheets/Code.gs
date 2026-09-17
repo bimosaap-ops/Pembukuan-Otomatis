@@ -802,7 +802,24 @@ function pastikanSemuaTab(ss, namaSheetData) {
 
   // Kontrol Saldo dibangun PALING DULU: kartu "STATUS KONTROL" di Dashboard
   // merujuk sel ringkasan tab ini, jadi alamatnya harus sudah pasti.
-  const hasilKontrol = bangunKontrol(ss, namaSheetData, stat, statStatement, S, AS, kol, maya);
+  //
+  // Dan dibungkus try/catch, karena urutan itu punya harga yang sudah pernah
+  // dibayar sungguhan: ketiga tab SUDAH DIHAPUS di atas untuk dibangun ulang,
+  // jadi satu exception di sini dulu berarti Dashboard dan Dashboard Full
+  // ikut hilang — pengguna kehilangan dua laporan yang tidak ada
+  // hubungannya dengan kesalahannya. Tab separuh jadi juga lebih buruk
+  // daripada tidak ada tabnya: angkanya terbaca seperti laporan sungguhan
+  // padahal rumus per barisnya belum sempat terpasang. Jadi yang setengah
+  // jadi dibuang, kegagalannya dicatat, dan sisa laporan tetap dibangun.
+  let hasilKontrol = null;
+  try {
+    hasilKontrol = bangunKontrol(ss, namaSheetData, stat, statStatement, S, AS, kol, maya);
+  } catch (err) {
+    console.warn(`bangunKontrol gagal: ${err && err.message}`);
+    const separuh = ss.getSheetByName(KONTROL_SHEET_NAME);
+    if (separuh) ss.deleteSheet(separuh);
+  }
+
   const hasilDash = bangunDashboard(ss, namaSheetData, stat, S, AS, kol, maya);
   const hasilFull = bangunDashboardFull(ss, namaSheetData, stat, S, AS, kol, maya);
 
@@ -813,10 +830,14 @@ function pastikanSemuaTab(ss, namaSheetData) {
   prop.setProperty('rentangBlokDashboard', JSON.stringify(hasilDash.rentang));
   prop.setProperty('selRumusDashboardFull', JSON.stringify(hasilFull.jangkar));
   prop.setProperty('rentangBlokDashboardFull', JSON.stringify(hasilFull.rentang));
-  prop.setProperty('selRumusKontrol', JSON.stringify(hasilKontrol.jangkar));
-  prop.setProperty('rentangBlokKontrol', JSON.stringify(hasilKontrol.rentang));
+  prop.setProperty('selRumusKontrol', JSON.stringify(hasilKontrol ? hasilKontrol.jangkar : []));
+  prop.setProperty('rentangBlokKontrol', JSON.stringify(hasilKontrol ? hasilKontrol.rentang : []));
   prop.setProperty('sidikDashboard', sidik);
-  prop.setProperty('versiDashboard', VERSI_DASHBOARD);
+  // Versi hanya dicatat kalau SEMUANYA jadi. Kontrol Saldo yang gagal
+  // membuat versinya sengaja dibiarkan basi, supaya POST berikutnya mencoba
+  // lagi dari nol — bukan menganggap tab yang tidak ada sebagai "sudah
+  // dibangun" dan berhenti mencoba selamanya.
+  if (hasilKontrol) prop.setProperty('versiDashboard', VERSI_DASHBOARD);
 }
 
 /**
@@ -950,9 +971,17 @@ function bangunDashboard(ss, namaSheetData, stat, S, AS, kol, maya) {
 
   // Dua kartu kontrol bisa dipasang segera: tab Kontrol Saldo dibangun lebih
   // dulu (lihat pastikanSemuaTab) dan alamat kartu ringkasannya tetap.
-  pasangRumus('G8', `=IFERROR(IF('${KONTROL_SHEET_NAME}'!E5=0${S}"✅ Semua cocok"${S}`
+  //
+  // TIDAK lewat pasangRumus, jadi keduanya bukan jangkar kesehatan Dashboard.
+  // Alasannya: kalau tab Kontrol Saldo tidak ada (pembangunannya gagal, atau
+  // pengguna menghapusnya), rujukan ini sah-sah saja menjadi #REF! — dan
+  // jangkar ber-#REF! membuat dashboardRusak menyatakan Dashboard rusak
+  // setiap kali diperiksa, lalu membangunnya ulang tiap sepuluh menit
+  // selamanya tanpa pernah menyembuhkan apa pun. IFERROR di dalam rumusnya
+  // sendiri sudah cukup untuk tampilan.
+  d.getRange('G8').setFormula(`=IFERROR(IF('${KONTROL_SHEET_NAME}'!E5=0${S}"✅ Semua cocok"${S}`
     + `"⚠️ "&TEXT('${KONTROL_SHEET_NAME}'!E5${S}"0")&" bulan perlu diperiksa")${S}"—")`);
-  pasangRumus('I8', `=IFERROR('${KONTROL_SHEET_NAME}'!I5${S}0)`);
+  d.getRange('I8').setFormula(`=IFERROR('${KONTROL_SHEET_NAME}'!I5${S}0)`);
 
   let r = 11;            // kursor baris berjalan; tidak ada jangkar hardcoded
   const rentang = [];    // rentang baris tiap blok, dipakai menguji tabrakan
@@ -1742,13 +1771,32 @@ function bangunKontrol(ss, namaSheetData, stat, statStatement, S, AS, kol, maya)
   const kolomSelisih = [];
 
   /* ---------- Judul ---------- */
+  //
+  // Judul dan keterangan TIDAK digabung melintasi kolom B, dan itu bukan
+  // pilihan tata letak: tab ini membekukan dua kolom pertama (lihat
+  // setFrozenColumns di bawah), dan Sheets MENOLAK pembekuan yang memotong
+  // sel gabungan —
+  //
+  //   "Anda tidak dapat membekukan kolom yang berisi hanya sebagian dari sel
+  //    gabungan"
+  //
+  // Penolakan itu melempar exception yang menjatuhkan SELURUH pembangunan di
+  // tengah jalan: tab Kontrol tinggal separuh, dan Dashboard serta Dashboard
+  // Full (yang sudah dihapus untuk dibangun ulang) tidak pernah kembali
+  // sampai POST berikutnya. Karena itu tiap gabungan di sini berhenti di
+  // kolom B atau mulai dari kolom C — tidak ada yang melintasi batasnya.
   const lebarHuruf = hurufKolom(LEBAR);
-  d.getRange(`A1:${lebarHuruf}1`).merge()
-    .setValue('KONTROL SALDO — ANGKA BANK vs ANGKA PEMBUKUAN')
+  const gabung = (a1) => d.getRange(a1).merge();
+  gabung('A1:B1')
+    .setValue('KONTROL SALDO')
+    .setFontSize(14).setFontWeight('bold').setFontColor(BIRU_TUA)
+    .setVerticalAlignment('middle');
+  gabung(`C1:${lebarHuruf}1`)
+    .setValue('ANGKA BANK vs ANGKA PEMBUKUAN')
     .setFontSize(14).setFontWeight('bold').setFontColor(BIRU_TUA)
     .setVerticalAlignment('middle');
   d.setRowHeight(1, 34);
-  d.getRange(`A2:${lebarHuruf}2`).merge()
+  gabung(`C2:${lebarHuruf}2`)
     .setValue('Angka bank dibaca dari tab "Statement" (boleh diketik tangan untuk statement lama). '
       + 'Angka pembukuan dihitung dari Saldo Awal rekening di tab "Akun" ditambah seluruh mutasi di tab data — '
       + `bukan dari kolom Saldo cetakan bank. Selisih sampai Rp ${TOLERANSI_KONTROL} dianggap cocok. `
@@ -1821,6 +1869,10 @@ function bangunKontrol(ss, namaSheetData, stat, statStatement, S, AS, kol, maya)
   ].forEach((teks, i) => d.getRange(kepala1, i + 3).setValue(teks));
   kepalaTabel(d, `A${kepala1}:${lebarHuruf}${kepala1}`);
   d.setFrozenRows(kepala1);
+  // Dua kolom, dan angka ini terikat pada tata letak judul di atas: seluruh
+  // sel gabungan di tab ini berhenti di kolom B atau mulai dari kolom C.
+  // Menaikkannya tanpa memindahkan batas gabungan itu akan melempar
+  // exception dan menjatuhkan pembangunan (lihat catatan di blok Judul).
   d.setFrozenColumns(2);
 
   const rumus1 = [];
