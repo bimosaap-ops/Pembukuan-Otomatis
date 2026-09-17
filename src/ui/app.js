@@ -17,6 +17,7 @@ import { pantauKoneksiSheets } from '../services/sheets-sync.js';
 import { jalankanAutoPull } from '../services/auto-pull.js';
 import {
   jalankanMigrasi, migrasiKataKunciBawaan, migrasiKategoriInvestasi, migrasiKategoriFinalEmail,
+  hapusProvisionalYatimDuplikat,
 } from '../data/migrasi.js';
 
 /**
@@ -129,6 +130,18 @@ async function mulai() {
       console.error('Migrasi kategoriFinal email gagal:', e);
       return null;
     });
+
+    // Pembersihan insiden 2026-09-17: 13 baris ledger provisional yatim
+    // (lihat migrasi.js ID_PROVISIONAL_YATIM) dihapus lokal + Sheets sekali
+    // di sini -- read-only-nya Transaksi ("Fase A") berarti tidak ada tombol
+    // UI yang bisa menjangkaunya sendiri.
+    const migrasiHapusYatim = await hapusProvisionalYatimDuplikat().catch((e) => {
+      console.error('Migrasi hapus provisional yatim gagal:', e);
+      return null;
+    });
+    if (migrasiHapusYatim?.dijalankan && migrasiHapusYatim.jumlah) {
+      toastSukses(`${migrasiHapusYatim.jumlah} baris provisional dobel (insiden lama) dibersihkan.`);
+    }
 
     // Antrean retry Sheets (kalau ada, dari sesi sebelumnya yang gagal
     // tersinkron) dicoba lagi begitu database siap, dan tiap kali koneksi pulih.

@@ -15,9 +15,10 @@ import * as pengaturanRepo from './repo/settings.js';
 import * as trxRepo from './repo/transactions.js';
 import * as kategoriRepo from './repo/categories.js';
 import * as emailTrxRepo from './repo/email-transactions.js';
+import * as akunRepo from './repo/accounts.js';
 import { hitungBaseHash, hashFinal } from '../domain/dedupe.js';
 import { KATEGORI_BAWAAN, tambahPola } from '../domain/categorize.js';
-import { KUNCI_SHEETS } from '../services/sheets-sync.js';
+import { KUNCI_SHEETS, hapusDariSheets } from '../services/sheets-sync.js';
 
 /** Bendera di store settings; nilainya versi migrasi yang sudah dijalankan. */
 export const KUNCI_MIGRASI = 'migrasiHashRekening';
@@ -40,6 +41,38 @@ export const KUNCI_MIGRASI_KATA_KUNCI = 'migrasiKataKunciBawaanV2';
 export const KUNCI_MIGRASI_KATEGORI_INVESTASI = 'migrasiKategoriInvestasiV1';
 /** Bendera migrasi kategoriFinal transaksi email — lihat migrasiKategoriFinalEmail. */
 export const KUNCI_MIGRASI_KATEGORI_FINAL_EMAIL = 'migrasiKategoriFinalEmailV1';
+/** Bendera migrasi pembersihan baris provisional yatim — lihat hapusProvisionalYatimDuplikat. */
+export const KUNCI_MIGRASI_HAPUS_PROVISIONAL_YATIM = 'hapusProvisionalYatimDuplikatV1';
+
+/**
+ * 13 baris ledger provisional dobel yang ditemukan lewat backup database
+ * produksi 2026-09-17: seluruhnya dibuat dalam jendela 24 milidetik yang sama
+ * (indikasi race dua proses pembuat provisional pada transaksi email yang
+ * sama), sudah dicegah terulang oleh guard hash-penuh di
+ * email-ledger-merge.js `buatProvisionalDariEmail()` (PR #35) -- migrasi ini
+ * membersihkan 13 baris yang SUDAH terlanjur ada sebelum guard itu berlaku.
+ *
+ * Ciri-cirinya konsisten dan sudah diverifikasi satu per satu terhadap tab
+ * "Transaksi Email" di Sheet: setiap baris ini punya "kembaran" -- baris LAIN
+ * dengan tanggal/deskripsi/nominal identik yang baseHash & emailTrxId-nya
+ * terisi benar (baris itulah yang mewakili transaksi asli di ledger). Baris
+ * di daftar ini sendiri punya `baseHash`/`emailTrxId`/`statusProvisional`
+ * kosong dan `hash` yang justru meminjam baseHash milik baris lain -- yatim,
+ * bukan transaksi kedua yang sah. Menghapusnya TIDAK menghilangkan transaksi
+ * asli mana pun dari pembukuan.
+ *
+ * ID di-hardcode (bukan dihitung ulang dari ciri-ciri di atas) karena ini
+ * pembersihan SATU INSIDEN yang sudah diselidiki tuntas, bukan mekanisme umum
+ * -- menjalankannya lewat pencarian ciri-ciri berisiko ikut menghapus baris
+ * lain yang kebetulan mirip di masa depan.
+ */
+const ID_PROVISIONAL_YATIM = [
+  'trx_43171e8252b35d35', 'trx_53a76cd7c9015dc1', 'trx_59e653f650500a44',
+  'trx_697190b2fb936ae9', 'trx_739caebf1a4c7967', 'trx_7b4588e87f32f64c',
+  'trx_90fce77cc5a109df', 'trx_91adb53d5126903d', 'trx_b134e0b97fdba249',
+  'trx_de9ca44f4d075287', 'trx_ededd4be51bbe2a6', 'trx_f5a86e77bb6072ba',
+  'trx_ff5481937c262fdc',
+];
 
 /**
  * Hitung hash baru untuk seluruh transaksi.
@@ -272,4 +305,44 @@ export async function migrasiKategoriFinalEmail() {
 
   await pengaturanRepo.tulis(KUNCI_MIGRASI_KATEGORI_FINAL_EMAIL, '1');
   return { dijalankan: true, jumlah: perluDiperbarui.length };
+}
+
+/**
+ * Hapus 13 baris provisional yatim (lihat ID_PROVISIONAL_YATIM) dari database
+ * lokal DAN Sheets. Aman dipanggil tiap aplikasi dibuka (berhenti sendiri
+ * lewat bendera, seperti migrasi lain di berkas ini) dan aman dipanggil di
+ * perangkat yang sudah tidak punya sebagian/seluruh baris itu (id yang tidak
+ * ditemukan dilewati, bukan error).
+ *
+ * hapusDariSheets() dipanggil eksplisit di sini (bukan diserahkan ke
+ * pemanggil seperti pola services/*.js lain) karena Transaksi sudah read-only
+ * di UI ("Fase A") -- tidak ada jalur tombol yang bisa menjangkau baris yatim
+ * ini (emailTrxId-nya kosong, jadi tombol "Hapus baris provisional" di
+ * halaman Transaksi Email pun tidak menemukannya).
+ */
+export async function hapusProvisionalYatimDuplikat() {
+  const sudah = await pengaturanRepo.baca(KUNCI_MIGRASI_HAPUS_PROVISIONAL_YATIM, '');
+  if (sudah) return { dilewati: true };
+
+  const akunTersentuh = new Set();
+  const hashDihapus = [];
+
+  for (const id of ID_PROVISIONAL_YATIM) {
+    const t = await trxRepo.satu(id);
+    if (!t) continue;
+    await trxRepo.hapusTransaksi(id);
+    akunTersentuh.add(t.accountId);
+    if (t.hash) hashDihapus.push(t.hash);
+  }
+
+  for (const accountId of akunTersentuh) {
+    if (accountId) await akunRepo.hitungUlangSaldo(accountId);
+  }
+
+  if (hashDihapus.length) {
+    hapusDariSheets(hashDihapus).catch((e) => console.warn('Hapus provisional yatim di Sheets gagal:', e));
+  }
+
+  await pengaturanRepo.tulis(KUNCI_MIGRASI_HAPUS_PROVISIONAL_YATIM, '1');
+  return { dijalankan: true, jumlah: hashDihapus.length };
 }

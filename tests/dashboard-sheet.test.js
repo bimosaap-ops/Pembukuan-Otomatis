@@ -634,18 +634,25 @@ test('penyelarasan membaca sampai kolom No. Rekening, tidak lebih', () => {
   assert.equal(lebarMaks, 9, 'butuh Hash..No. Rekening (A..I), tidak sampai P');
 });
 
-test('pembaruan borong hanya menyentuh jendela baris yang berubah, bukan seluruh tab', () => {
-  // Inti pemecahan bongkah: satu bongkah 250 baris di pembukuan 2.000 baris
-  // harus menyentuh 250 baris. Kalau tiap bongkah menulis ulang seluruh tab,
-  // memecah kiriman justru membuat backfill LEBIH berat, bukan lebih ringan.
+test('pembaruan menulis satu baris satu permintaan, tidak pernah jendela borong', () => {
+  // tulisPembaruan() SENGAJA tidak lagi punya jalur baca-ubah-tulis jendela
+  // lebar (lihat catatan di fungsinya, sheets/Code.gs) -- ditemukan di
+  // produksi menyebabkan puluhan baris tak terkait tertukar isinya. 250 baris
+  // yang diperbarui HARUS mendarat sebagai 250 penulisan satu-baris, bukan
+  // satu penulisan borong yang membentang lebih dari satu baris.
   const rows = Array.from({ length: 250 }, (_, i) => barisPenuh(i));
   const h = jalankanDoPost({ barisAda: 2000, payload: { rows, jumlah: rows.length } });
 
   assert.equal(h.balasan.updated, 250, 'semuanya sudah ada, jadi diperbarui');
   // 18, bukan 16: HEADER.length sejak kolom "ID Transaksi"/"Diubah Pada" ditambah.
-  const tulisLebar = h.tulisan.filter((t) => t.sheet === 'Transaksi' && t.lebar === 18 && t.tinggi > 1);
-  assert.equal(tulisLebar.length, 1, 'satu penulisan borong');
-  assert.equal(tulisLebar[0].tinggi, 250, `menulis ${tulisLebar[0].tinggi} baris untuk 250 perubahan`);
+  // baris >= 2: baris 1 adalah header, yang di sini justru DISENGAJA ditulis
+  // ulang oleh doPost (HEADER_UJI cuma 16 kolom, mensimulasikan Sheet lama
+  // yang headernya belum punya "ID Transaksi"/"Diubah Pada") -- bukan bagian
+  // dari pembaruan 250 baris yang sedang diuji di sini.
+  const tulisPembaruan = h.tulisan.filter((t) => t.sheet === 'Transaksi' && t.lebar === 18 && t.baris >= 2);
+  assert.ok(tulisPembaruan.every((t) => t.tinggi === 1),
+    'setiap penulisan pembaruan harus tepat satu baris -- tidak ada jendela borong');
+  assert.equal(tulisPembaruan.length, 250, 'satu penulisan per baris yang diperbarui');
 });
 
 test('arsip membaca satu jendela, bukan satu panggilan per baris yang dihapus', () => {
