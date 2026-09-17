@@ -2881,14 +2881,23 @@ function rapikanDashboard(ss, sh) {
   }
 }
 
+/** Di atas jumlah ini, menghapus baris satu per satu lebih mahal daripada
+ *  menulis ulang seluruh blok yang tersisa sekali jalan. Cuma dipakai
+ *  hapusBaris() -- tulisPembaruan() sengaja TIDAK lagi memakai ambang serupa,
+ *  lihat catatan di situ. */
+const AMBANG_TULIS_BORONG = 20;
+
 /**
  * Buang baris-baris yang nomornya ada di `dibuang`.
  *
- * Sama seperti `tulisPembaruan`: untuk jumlah kecil, operasi per baris paling
- * murah — tapi penyelarasan bisa membuang ratusan baris sekaligus, dan
- * `deleteRow` satu per satu jauh lebih mahal daripada penulisan biasa. Di atas
- * ambang, seluruh blok yang tersisa ditulis ulang sekali lalu ekornya dipangkas
- * dalam satu operasi.
+ * Untuk jumlah kecil, operasi per baris paling murah — tapi penyelarasan bisa
+ * membuang ratusan baris sekaligus, dan `deleteRow` satu per satu jauh lebih
+ * mahal daripada penulisan biasa. Di atas ambang, seluruh blok yang tersisa
+ * ditulis ulang sekali lalu ekornya dipangkas dalam satu operasi -- BEDA dari
+ * pola yang dihapus di tulisPembaruan(): di sini cuma SATU array (`sisa`)
+ * yang dibaca, difilter, lalu ditulis balik pada indeks yang sama persis --
+ * tidak ada offset dari daftar terpisah yang perlu dicocokkan ke posisi
+ * baris lain, jadi tidak rentan pada kelas bug yang sama.
  */
 function hapusBaris(sh, dibuang) {
   const last = sh.getLastRow();
@@ -2912,46 +2921,45 @@ function hapusBaris(sh, dibuang) {
   if (ekor > 0) sh.deleteRows(2 + sisa.length, ekor);
 }
 
-/** Di atas jumlah ini, menulis baris satu per satu lebih mahal daripada
- *  membaca-mengubah-menulis seluruh blok data sekaligus. */
-const AMBANG_TULIS_BORONG = 20;
-
 /**
- * Tuliskan baris hasil upsert. Baris yang diperbarui tersebar posisinya, jadi
- * tidak bisa ditulis sebagai satu blok begitu saja.
+ * Tuliskan baris hasil upsert, SATU BARIS SATU PERMINTAAN -- sengaja tidak
+ * dioptimalkan jadi baca-ubah-tulis satu jendela besar (versi sebelumnya
+ * melakukan ini di atas 20 baris).
  *
- * Untuk pembaruan yang sedikit, menulis per baris paling murah. Tapi "Kirim
- * semua sekarang" memperbarui SELURUH transaksi sekaligus — pada pembukuan
- * dengan ribuan baris itu berarti ribuan penulisan terpisah, yang melewati
- * batas waktu permintaan jauh sebelum selesai. Di atas ambang, bloknya dibaca
- * sekali, diubah di memori, lalu ditulis balik sekali.
+ * Perubahan ini dipicu oleh temuan produksi: puluhan baris (81, seluruhnya
+ * transaksi PDF lama) ditemukan isinya (Tanggal/Deskripsi/Nominal/Kategori/
+ * Sumber) tertukar dengan baris lain, sementara Hash, ID Transaksi,
+ * uploadedFileId, dan deskripsiRaw-nya tetap benar. Versi jendela-besar
+ * sebelumnya (baca-ubah-tulis satu `getRange` lebar, offset `p.baris - awal`
+ * per baris) sempat DICURIGAI sebagai penyebabnya -- tapi itu SUDAH
+ * DIPERIKSA DAN DISINGKIRKAN: fungsi itu menulis `p.nilai` (array LENGKAP
+ * senilai HEADER.length, termasuk kolom Hash & ID Transaksi) ke setiap baris
+ * yang disentuhnya. Kalau versi itu penyebabnya, Hash & ID baris korban juga
+ * akan ikut tertimpa jadi milik baris lain -- padahal keduanya terbukti
+ * TIDAK berubah. Jalur pull (tarikTransaksi() di sini, terapkanBarisTransaksi()
+ * di transaksi-sync.js) dan jalur push (barisUntukSheet() di sheets-sync.js,
+ * blok pembentukan `perbarui` di doPost di atas) juga sudah ditelusuri satu
+ * per satu dan konsisten secara internal (setiap baris/objek dibentuk dari
+ * satu sumber tunggal, tidak ada percampuran field antar baris). Akar
+ * penyebab yang sebenarnya BELUM ditemukan pada saat komentar ini ditulis.
  *
- * Yang dibaca-tulis hanya JENDELA dari baris terkecil sampai terbesar yang
- * benar-benar berubah, bukan seluruh tab. Sejak pengiriman dipecah per bongkah,
- * bedanya besar: satu bongkah 250 baris di pembukuan 2.000 baris menyentuh 250
- * baris, bukan 2.000 — dan tanpa pembatasan ini backfill justru jadi lebih berat
- * setelah dipecah, karena tiap bongkah menulis ulang seluruh tab.
+ * Fungsi ini TETAP diubah begini karena baca-ubah-tulis satu jendela lebar
+ * adalah SATU-SATUNYA kode di alur ini yang secara struktural mampu menyentuh
+ * banyak baris tak terkait dalam satu operasi (jendela [baris terkecil, baris
+ * terbesar] dari satu bongkah 250 baris bisa membentang ke seluruh tab, sebab
+ * urutan transaksi di IndexedDB klien tidak berkorelasi dengan urutan baris
+ * fisik di Sheet) -- jadi menghapusnya tetap pengerasan yang masuk akal untuk
+ * kelas risiko itu SECARA UMUM, walau BUKAN pengganti investigasi akar
+ * penyebab kerusakan yang sudah terjadi. JANGAN menganggap perubahan ini
+ * "memperbaiki" insiden 81 baris di atas sampai penyebabnya benar-benar
+ * dikonfirmasi.
  *
- * Konsekuensinya: sel yang berisi rumus di dalam jendela itu akan berubah jadi
- * nilai statis. Tab data ini memang murni tulisan skrip, jadi tidak ada rumus
- * yang hilang; kolom di luar A..P tidak tersentuh.
+ * Konsekuensi: lebih lambat untuk pembaruan besar (mis. "Kirim semua
+ * sekarang" pada ribuan baris) -- tapi ini operasi latar belakang dengan
+ * pelaporan progres, bukan sesuatu yang perlu instan.
  */
 function tulisPembaruan(sh, perbarui) {
-  if (perbarui.length <= AMBANG_TULIS_BORONG) {
-    perbarui.forEach((p) => sh.getRange(p.baris, 1, 1, HEADER.length).setValues([p.nilai]));
-    return;
-  }
-  let awal = perbarui[0].baris;
-  let akhir = perbarui[0].baris;
-  perbarui.forEach((p) => {
-    if (p.baris < awal) awal = p.baris;
-    if (p.baris > akhir) akhir = p.baris;
-  });
-
-  const rng = sh.getRange(awal, 1, akhir - awal + 1, HEADER.length);
-  const nilai = rng.getValues();
-  perbarui.forEach((p) => { nilai[p.baris - awal] = p.nilai; });
-  rng.setValues(nilai);
+  perbarui.forEach((p) => sh.getRange(p.baris, 1, 1, HEADER.length).setValues([p.nilai]));
 }
 
 /**
