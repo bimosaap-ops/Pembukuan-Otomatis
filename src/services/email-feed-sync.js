@@ -16,6 +16,7 @@
  */
 
 import { bacaKonfigSheets, post } from './sheets-sync.js';
+import { ledgerMergeAktif, buatProvisionalDariEmail } from './email-ledger-merge.js';
 import * as pengaturanRepo from '../data/repo/settings.js';
 import * as emailTrxRepo from '../data/repo/email-transactions.js';
 import * as trxRepo from '../data/repo/transactions.js';
@@ -24,6 +25,13 @@ import * as kamusRepo from '../data/repo/merchant-dictionary.js';
 import { cocokkanTransaksiEmail } from '../domain/rekonsiliasiEmail.js';
 import { sarankanKategoriEmail } from '../domain/kategoriEmail.js';
 import { normalisasiMerchant } from '../domain/merchantNormalisasi.js';
+import { SUMBER, STATUS_COCOK_EMAIL } from '../domain/entities.js';
+import { rentangTanggalKandidat } from '../core/dates.js';
+
+/** Re-export: dipakai email-transaksi.js, email-review.js, dan tes yang sudah
+ *  ada — implementasinya pindah ke core/dates.js supaya bisa dipakai ulang
+ *  services/email-ledger-merge.js tanpa saling impor dengan berkas ini. */
+export { rentangTanggalKandidat };
 
 export const KUNCI_TARIK_EMAIL = {
   TERAKHIR_DITARIK: 'emailFeedTerakhirDitarik',
@@ -33,15 +41,6 @@ export const KUNCI_TARIK_EMAIL = {
  *  seluruh tab "Transaksi Email" tiap dipanggil, bukan sekadar ping. */
 const BATAS_MS = 20000;
 
-/** Jendela tanggal di sekitar waktu transaksi email untuk mengambil kandidat
- *  rekonsiliasi lewat trxRepo.rentangTanggal() (indeks tanggal, bukan pindai
- *  penuh) — lebih lebar dari jendela WAKTU di rekonsiliasiEmail.js (24 jam)
- *  supaya perbedaan zona waktu/pembulatan tanggal di kedua sisi tidak sampai
- *  memangkas kandidat yang seharusnya dipertimbangkan; penyaringan presisi
- *  tetap tanggung jawab cocokkanTransaksiEmail() sendiri.
- */
-const JENDELA_HARI_KANDIDAT = 2;
-
 export async function bacaCheckpoint() {
   return pengaturanRepo.baca(KUNCI_TARIK_EMAIL.TERAKHIR_DITARIK, '');
 }
@@ -49,25 +48,6 @@ export async function bacaCheckpoint() {
 async function tulisCheckpoint(iso) {
   if (!iso) return;
   await pengaturanRepo.tulis(KUNCI_TARIK_EMAIL.TERAKHIR_DITARIK, iso);
-}
-
-/**
- * Rentang tanggal (string 'YYYY-MM-DD', cocok untuk trxRepo.rentangTanggal)
- * di sekitar sebuah waktu transaksi email. Murni, tidak menyentuh database
- * — diekspor supaya bisa diuji langsung.
- * @returns {{dari: string, sampai: string}|null} null kalau waktuIso tidak valid
- */
-export function rentangTanggalKandidat(waktuIso, jendelaHari = JENDELA_HARI_KANDIDAT) {
-  const t = new Date(waktuIso);
-  if (Number.isNaN(t.getTime())) return null;
-
-  const fmt = (d) => d.toISOString().slice(0, 10);
-  const dari = new Date(t.getTime());
-  dari.setUTCDate(dari.getUTCDate() - jendelaHari);
-  const sampai = new Date(t.getTime());
-  sampai.setUTCDate(sampai.getUTCDate() + jendelaHari);
-
-  return { dari: fmt(dari), sampai: fmt(sampai) };
 }
 
 /**
@@ -101,16 +81,34 @@ export function bangunPembaruanEmailTrx(trx, merchantKey, cocok, saran) {
  * di sekitar tanggalnya, jalankan rekonsiliasi + saran kategori, lalu simpan
  * hasilnya. Terpisah dari `tarikTransaksiEmail` supaya orkestrasi utama tetap
  * pendek dan mudah dibaca.
+ *
+ * "Fase C": kalau tidak ada padanan e-statement sama sekali (MISSING) DAN
+ * fitur gabung-ledger aktif (lihat pengaturanRepo.KUNCI.EMAIL_LEDGER_MERGE_AKTIF,
+ * default MATI), transaksi ini langsung dicatat sebagai baris ledger
+ * PROVISIONAL (email-ledger-merge.js) supaya tampil di Dashboard sebelum
+ * e-statement bulan itu datang, bukan cuma "menunggu" di halaman Transaksi
+ * Email.
  */
 async function prosesSatuTransaksiBaru(trx, daftarKategori, kamusMap) {
   const merchantKey = normalisasiMerchant(trx.merchantMentah);
   const rentang = rentangTanggalKandidat(trx.waktuTransaksi);
-  const kandidat = rentang ? await trxRepo.rentangTanggal(rentang.dari, rentang.sampai) : [];
+  const kandidatMentah = rentang ? await trxRepo.rentangTanggal(rentang.dari, rentang.sampai) : [];
+  // WAJIB, bukan sekadar optimasi: baris ledger provisional (belum pernah
+  // dikonfirmasi bank) tidak boleh ikut jadi kandidat kecocokan bagi
+  // transaksi email BARU -- dua transaksi yang sama-sama belum terkonfirmasi
+  // (mis. dua top-up GoPay nominal sama berdekatan waktu) bisa "cocok" satu
+  // sama lain secara keliru, membuat MATCHED palsu yang menyembunyikan
+  // transaksi asli dari radar rekonsiliasi.
+  const kandidat = kandidatMentah.filter((k) => k.sumber !== SUMBER.EMAIL_PROVISIONAL);
 
   const cocok = cocokkanTransaksiEmail(trx, kandidat);
   const saran = sarankanKategoriEmail(trx, kamusMap, daftarKategori);
 
-  await emailTrxRepo.simpanSatu(bangunPembaruanEmailTrx(trx, merchantKey, cocok, saran));
+  const disimpan = await emailTrxRepo.simpanSatu(bangunPembaruanEmailTrx(trx, merchantKey, cocok, saran));
+
+  if (cocok.status === STATUS_COCOK_EMAIL.MISSING && await ledgerMergeAktif()) {
+    await buatProvisionalDariEmail(disimpan, daftarKategori, kamusMap);
+  }
 }
 
 /**

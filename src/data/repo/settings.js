@@ -9,6 +9,16 @@ export const KUNCI = {
   FOLDER_UPLOAD: 'folderUpload',
   KATEGORI_TERSEMAI: 'kategoriTersemai',
   SEMBUNYIKAN_SALDO: 'sembunyikanSaldo',
+  /* "Fase C" (lihat services/email-ledger-merge.js): rekening BCA tujuan
+     provisional saat notifikasi email cuma menyebut nama bank "BCA" tanpa
+     nomor rekening (ada 2 rekening BCA) -- ID akun, bukan nomor rekening
+     mentah, supaya tetap valid kalau nomor rekeningnya berubah format. */
+  EMAIL_AKUN_UTAMA_BCA: 'emailAkunUtamaBCA',
+  EMAIL_AKUN_RDN_BCA: 'emailAkunRdnBCA',
+  /* Flag dry-run: saat false (default), rekonsiliasi & saran kategori email
+     tetap jalan penuh seperti biasa, tapi TIDAK ADA baris ledger provisional
+     yang dibuat -- lihat "Urutan implementasi" di rencana Fase C. */
+  EMAIL_LEDGER_MERGE_AKTIF: 'emailLedgerMergeAktif',
 };
 
 export async function baca(key, bawaan = null) {

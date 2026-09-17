@@ -8,7 +8,7 @@
  */
 
 export const NAMA_DB = 'pembukuan_v1';
-export const VERSI_DB = 2;
+export const VERSI_DB = 3;
 
 export const STORE = {
   ACCOUNTS: 'accounts',
@@ -80,6 +80,24 @@ function bukaDb() {
         // implementasi soal kenapa ini genuinely baru, bukan perluasan
         // polaKataKunci kategori.
         db.createObjectStore(STORE.MERCHANT_DICTIONARY, { keyPath: 'merchantKey' });
+      }
+
+      if (versiLama < 3) {
+        // "Fase C" (gabung ledger email+e-statement, lihat email-ledger-merge.js):
+        // `emailTrxId` mencari baris ledger provisional milik satu transaksi
+        // email tertentu (upsert/hapus saat e-statement datang); `sumber`
+        // dipakai memfilter baris email_provisional keluar dari kandidat
+        // rekonsiliasi transaksi email BARU (lihat requirement wajib di
+        // email-feed-sync.js) supaya dua transaksi provisional yang belum
+        // sama-sama dikonfirmasi bank tidak saling "cocok" satu sama lain.
+        //
+        // Store TRANSACTIONS sudah ada (dibuat versi 1) — indeks baru pada
+        // store lama HARUS lewat transaksi upgrade (req.transaction), beda
+        // dari db.createObjectStore(...).createIndex(...) di atas yang
+        // berlaku untuk store yang BARU dibuat di blok yang sama.
+        const trx = req.transaction.objectStore(STORE.TRANSACTIONS);
+        trx.createIndex('emailTrxId', 'emailTrxId');
+        trx.createIndex('sumber', 'sumber');
       }
     };
 
