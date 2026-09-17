@@ -20,6 +20,7 @@ import * as pengaturanRepo from '../data/repo/settings.js';
 import * as trxRepo from '../data/repo/transactions.js';
 import * as akunRepo from '../data/repo/accounts.js';
 import * as kategoriRepo from '../data/repo/categories.js';
+import { TIPE_KATEGORI } from '../domain/entities.js';
 
 export const KUNCI_SHEETS = {
   URL: 'sheetsWebhookUrl',
@@ -672,7 +673,13 @@ export function kategoriDariBarisSheet(row) {
   return {
     id: row.id || '',
     nama: row.nama || '',
-    tipe: row.tipe || '',
+    // Case-insensitive & toleran spasi: pengguna menambah kategori langsung
+    // di Sheets bisa saja mengetik "Pengeluaran"/"PEMASUKAN" -- dicocokkan
+    // tanpa peduli huruf besar/kecil, jatuh ke pengeluaran (default yang
+    // sama dipakai buatKategori()) kalau tidak cocok sama sekali.
+    tipe: String(row.tipe || '').trim().toLowerCase() === TIPE_KATEGORI.PEMASUKAN
+      ? TIPE_KATEGORI.PEMASUKAN
+      : TIPE_KATEGORI.PENGELUARAN,
     warna: row.warna || '',
     ikon: row.ikon || '',
     // Kebalikan dari join(', ') saat dikirim — string kosong berarti tidak
