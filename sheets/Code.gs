@@ -175,6 +175,14 @@ const LEBAR_KOLOM = [110, 95, 300, 120, 120, 120, 130, 90, 130, 150, 80, 110, 14
 const KOLOM_RP = [4, 5, 6, 16];  // Nominal, Debit, Kredit, Saldo
 const KOLOM_WAKTU = 13;          // Dikirim Pada
 const KOLOM_SEMBUNYI = [1, 7, 12, 17]; // Hash, ID Kategori, ID Upload, ID Transaksi — dipakai mesin, bukan mata
+/**
+ * "ID Kategori" (disembunyikan, dipakai tarikTransaksi()/PWA) vs "Kategori"
+ * (nama, terlihat manusia, cuma label kosmetik dari kategoriNama saat push —
+ * lihat kirimBaris/doPost). Dipisah di sini supaya onEdit() bisa menyelaraskan
+ * keduanya saat kolom nama diedit manual (lihat selaraskanIdKategoriDariNama).
+ */
+const KOLOM_KATEGORI_ID = HEADER.indexOf('ID Kategori') + 1;
+const KOLOM_KATEGORI_NAMA = HEADER.indexOf('Kategori') + 1;
 /** Kolom terakhir yang perlu dibaca saat menyelaraskan: I, "No. Rekening". */
 const KOLOM_REKENING_AKHIR = 9;
 
@@ -280,12 +288,85 @@ function onEdit(e) {
     || (cfg.idxDikirim && kolom <= cfg.idxDikirim && cfg.idxDikirim <= kolomAkhir);
   if (kenaKolomWaktu) return;
 
-  const now = new Date();
   const barisAkhir = e.range.getLastRow();
+
+  // Kolom "Kategori" (nama, terlihat manusia) diedit langsung -- selaraskan
+  // "ID Kategori" (kolom mesin tersembunyi yang SESUNGGUHNYA dibaca
+  // tarikTransaksi()/PWA, lihat konstanta di atas) lewat pencarian nama di
+  // tab Kategori. Tanpa ini, mengetik nama kategori baru di kolom yang
+  // terlihat sama sekali tidak berpengaruh ke PWA -- yang dibaca cuma ID-nya,
+  // dan "Diubah Pada"/"Dikirim Pada" tetap ter-stempel seolah perubahan
+  // sudah tersimpan padahal belum.
+  if (nama === DATA_SHEET_NAME
+    && kolom <= KOLOM_KATEGORI_NAMA && KOLOM_KATEGORI_NAMA <= kolomAkhir) {
+    selaraskanIdKategoriDariNama(sh, baris, barisAkhir);
+  }
+
+  const now = new Date();
   for (let r = baris; r <= barisAkhir; r++) {
     sh.getRange(r, cfg.idxDiubah).setValue(now);
     if (cfg.idxDikirim) sh.getRange(r, cfg.idxDikirim).setValue(now);
   }
+}
+
+/**
+ * Cocokkan nilai kolom "Kategori" (nama) baris `baris..barisAkhir` terhadap
+ * daftar kategori (tab Kategori), lalu tulis ID yang cocok ke "ID Kategori"
+ * baris yang sama. Nama yang tidak dikenali (typo, atau kategori yang belum
+ * pernah dibuat) DIBIARKAN apa adanya -- ID Kategori lama tidak ditimpa
+ * dengan tebakan yang salah -- dan dilaporkan lewat toast supaya pengguna
+ * sadar barisnya belum tersambung.
+ */
+function selaraskanIdKategoriDariNama(sh, baris, barisAkhir) {
+  const peta = petaKategoriNamaKeId(sh.getParent());
+  if (!peta.size) return;
+
+  const rentangNama = sh.getRange(baris, KOLOM_KATEGORI_NAMA, barisAkhir - baris + 1, 1);
+  const namaNilai = rentangNama.getValues();
+  const tidakKetemu = [];
+
+  namaNilai.forEach(([namaKategori], i) => {
+    const kunci = String(namaKategori || '').trim().toLowerCase();
+    if (!kunci) return;
+    const id = peta.get(kunci);
+    if (id) {
+      sh.getRange(baris + i, KOLOM_KATEGORI_ID).setValue(id);
+    } else {
+      tidakKetemu.push(String(namaKategori));
+    }
+  });
+
+  if (tidakKetemu.length) {
+    SpreadsheetApp.getActiveSpreadsheet().toast(
+      `Kategori tidak dikenali: ${tidakKetemu.join(', ')}. Baris itu TIDAK berubah kategorinya -- `
+      + 'ejaan harus sama persis dengan kolom Nama di tab Kategori.',
+      'Pembukuan', 8,
+    );
+  }
+}
+
+/**
+ * Peta nama kategori (huruf kecil, tanpa spasi ujung) -> ID, dari tab
+ * Kategori. Kategori yang sudah dihapus ("Dihapus Pada" terisi, tombstone —
+ * lihat AD-008) sengaja dilewati supaya tidak bisa dipilih lagi lewat nama.
+ */
+function petaKategoriNamaKeId(ss) {
+  const sh = ss.getSheetByName(KATEGORI_SHEET_NAME);
+  const peta = new Map();
+  if (!sh) return peta;
+  const last = sh.getLastRow();
+  if (last < 2) return peta;
+
+  const idxNama = HEADER_KATEGORI.indexOf('Nama');
+  const idxId = HEADER_KATEGORI.indexOf('ID');
+  const idxDihapus = HEADER_KATEGORI.indexOf('Dihapus Pada');
+  const nilai = sh.getRange(2, 1, last - 1, HEADER_KATEGORI.length).getValues();
+  nilai.forEach((r) => {
+    if (r[idxDihapus]) return;
+    const namaBersih = String(r[idxNama] || '').trim().toLowerCase();
+    if (namaBersih) peta.set(namaBersih, String(r[idxId] || ''));
+  });
+  return peta;
 }
 
 /**
