@@ -1850,23 +1850,34 @@ function bangunKontrol(ss, namaSheetData, stat, statStatement, S, AS, kol, maya)
   const isi1 = kepala1 + 1;
   const akhir1 = kepala1 + nKontrol;
 
-  // Baris digerakkan pasangan rekening+bulan di tab Statement. QUERY-nya
-  // sengaja HANYA mengambil dua kolom teks itu, tanpa agregat: kolom saldo di
-  // tab Statement boleh kosong seluruhnya (statement yang ringkasannya tidak
-  // terbaca), dan QUERY yang meng-agregat kolom yang ternyata dianggap teks
-  // menghasilkan galat yang menjatuhkan seluruh tabel. Angkanya diambil
-  // per baris di bawah.
-  pasangRumus(`A${kepala1}`,
-    `=IFERROR(QUERY({${S_REK}${AS}${S_BULAN}}${S}`
-    + `"select Col1, Col2 where Col1 <> '' and Col2 <> '' group by Col1, Col2 `
-    + `order by Col1 asc, Col2 asc limit ${nKontrol} `
-    + `label Col1 'Rekening', Col2 'Bulan'"${S}0)${S}"Belum ada baris di tab Statement")`);
+  // Baris digerakkan pasangan rekening+bulan di tab Statement.
+  //
+  // SORT(UNIQUE(FILTER(...))), BUKAN QUERY, dan itu perbaikan atas bug yang
+  // sudah sampai ke pengguna: versi QUERY-nya ("select Col1, Col2 ... group
+  // by Col1, Col2" tanpa satu pun agregat) tidak mengembalikan apa pun di
+  // Sheet sungguhan walau tab Statement berisi 45 baris — seluruh tabel
+  // kontrol tampak kosong dan, karena drivernya dibungkus IFERROR, alasannya
+  // tertutup pesan "belum ada baris" yang menyesatkan. Blok "bulan tanpa
+  // e-statement" di bawah tidak kena karena QUERY-nya memang meng-agregat.
+  //
+  // FILTER/UNIQUE/SORT dipakai justru karena itu primitif yang SUDAH terbukti
+  // jalan di atas data yang sama: SUMPRODUCT dan FILTER per baris di tabel
+  // ini mencocokkan rekening+bulan dengan benar sejak awal. ARRAY_CONSTRAIN
+  // menggantikan `limit` QUERY — memotong hasil PAS sejumlah baris yang
+  // dialokasikan, jadi luapan tidak mungkin menabrak blok di bawahnya.
+  pasangRumus(`A${isi1}`,
+    `=IFERROR(ARRAY_CONSTRAIN(SORT(UNIQUE(FILTER({${S_REK}${AS}${S_BULAN}}${S}`
+    + `(${S_REK}<>"")*(${S_BULAN}<>"")))${S}1${S}TRUE${S}2${S}TRUE)${S}${nKontrol}${S}2)${S}`
+    + `"Belum ada baris di tab Statement")`);
 
+  // Header ditulis sendiri untuk SELURUH kolom: tanpa QUERY tidak ada lagi
+  // klausa `label` yang menghasilkan baris header sendiri.
   [
+    'Rekening', 'Bulan',
     'Saldo Awal', 'Saldo Akhir', 'Debet', 'Kredit', 'Jml Trx',
     'Saldo Awal', 'Saldo Akhir', 'Debet', 'Kredit', 'Jml Trx',
     'Saldo Awal', 'Saldo Akhir', 'Mutasi', 'Jml Trx', 'Status',
-  ].forEach((teks, i) => d.getRange(kepala1, i + 3).setValue(teks));
+  ].forEach((teks, i) => d.getRange(kepala1, i + 1).setValue(teks));
   kepalaTabel(d, `A${kepala1}:${lebarHuruf}${kepala1}`);
   d.setFrozenRows(kepala1);
   // Dua kolom, dan angka ini terikat pada tata letak judul di atas: seluruh
@@ -1991,12 +2002,13 @@ function bangunKontrol(ss, namaSheetData, stat, statStatement, S, AS, kol, maya)
   const kepala3 = r;
   const isi3 = kepala3 + 1;
   const akhir3 = kepala3 + nRekap;
-  pasangRumus(`A${kepala3}`,
-    `=IFERROR(QUERY({${S_REK}}${S}`
-    + `"select Col1 where Col1 <> '' group by Col1 order by Col1 asc limit ${nRekap} `
-    + `label Col1 'Rekening'"${S}0)${S}"Belum ada baris di tab Statement")`);
-  ['Bulan Diperiksa', 'Cocok', 'Perlu Diperiksa', 'Saldo Akhir Bank (terbaru)',
-    'Saldo Akhir Pembukuan', 'Selisih'].forEach((teks, i) => d.getRange(kepala3, i + 2).setValue(teks));
+  // Sama seperti blok 1: tanpa QUERY, karena bentuk "group by tanpa agregat"
+  // itulah yang gagal di Sheet sungguhan.
+  pasangRumus(`A${isi3}`,
+    `=IFERROR(ARRAY_CONSTRAIN(SORT(UNIQUE(FILTER(${S_REK}${S}${S_REK}<>"")))${S}${nRekap}${S}1)${S}`
+    + `"Belum ada baris di tab Statement")`);
+  ['Rekening', 'Bulan Diperiksa', 'Cocok', 'Perlu Diperiksa', 'Saldo Akhir Bank (terbaru)',
+    'Saldo Akhir Pembukuan', 'Selisih'].forEach((teks, i) => d.getRange(kepala3, i + 1).setValue(teks));
   kepalaTabel(d, `A${kepala3}:G${kepala3}`);
 
   const rumus3 = [];
