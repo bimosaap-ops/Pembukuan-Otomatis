@@ -272,9 +272,9 @@ function onEdit(e) {
   if (baris < 2) return; // header, atau bukan baris data
 
   const cfg = {
-    [DATA_SHEET_NAME]: { idxDiubah: HEADER.indexOf('Diubah Pada') + 1, idxDikirim: KOLOM_WAKTU },
-    [AKUN_SHEET_NAME]: { idxDiubah: HEADER_AKUN.indexOf('Diubah Pada') + 1, idxDikirim: null },
-    [KATEGORI_SHEET_NAME]: { idxDiubah: HEADER_KATEGORI.indexOf('Diubah Pada') + 1, idxDikirim: null },
+    [DATA_SHEET_NAME]: { idxDiubah: HEADER.indexOf('Diubah Pada') + 1, idxDikirim: KOLOM_WAKTU, lebar: HEADER.length },
+    [AKUN_SHEET_NAME]: { idxDiubah: HEADER_AKUN.indexOf('Diubah Pada') + 1, idxDikirim: null, lebar: HEADER_AKUN.length },
+    [KATEGORI_SHEET_NAME]: { idxDiubah: HEADER_KATEGORI.indexOf('Diubah Pada') + 1, idxDikirim: null, lebar: HEADER_KATEGORI.length },
   }[nama];
   if (!cfg) return; // tab lain (Dashboard, Anggaran, dst.) diabaikan total
 
@@ -289,6 +289,17 @@ function onEdit(e) {
   if (kenaKolomWaktu) return;
 
   const barisAkhir = e.range.getLastRow();
+
+  // Baris baru di tab Akun/Kategori sengaja tidak bisa diisi "ID" manual
+  // lewat UI (kolom itu diproteksi -- lihat pasangProteksiKolomKunci()), dan
+  // baris tanpa ID dilewati diam-diam saat ditarik ke PWA (entitas-sync.js,
+  // tanpa pesan error apa pun -- baris kelihatan tersimpan tapi menghilang
+  // begitu ditarik). Begitu ada isian LAIN di baris tapi ID masih kosong,
+  // skrip sendiri yang mengisinya -- skrip tidak terikat proteksi, beda dari
+  // edit manusia lewat UI.
+  if (nama === AKUN_SHEET_NAME || nama === KATEGORI_SHEET_NAME) {
+    isiIdBaruJikaKosong(sh, nama, baris, barisAkhir, cfg.lebar);
+  }
 
   // Kolom "Kategori" (nama, terlihat manusia) diedit langsung -- selaraskan
   // "ID Kategori" (kolom mesin tersembunyi yang SESUNGGUHNYA dibaca
@@ -307,6 +318,34 @@ function onEdit(e) {
     sh.getRange(r, cfg.idxDiubah).setValue(now);
     if (cfg.idxDikirim) sh.getRange(r, cfg.idxDikirim).setValue(now);
   }
+}
+
+/**
+ * Isi kolom "ID" (kolom 1, sama di Akun maupun Kategori) untuk baris yang
+ * sudah punya isian lain tapi ID-nya masih kosong -- kasus paling umum:
+ * pengguna menambah baris kategori/akun baru langsung di Sheets, dan tidak
+ * bisa mengisi ID sendiri karena kolom itu diproteksi. Baris yang memang
+ * masih kosong semuanya (tidak disentuh sama sekali) dibiarkan apa adanya.
+ */
+function isiIdBaruJikaKosong(sh, nama, baris, barisAkhir, lebarHeader) {
+  const prefix = nama === AKUN_SHEET_NAME ? 'acc' : 'kat';
+  for (let r = baris; r <= barisAkhir; r++) {
+    const idSel = sh.getRange(r, 1);
+    if (idSel.getValue()) continue; // sudah ada ID, jangan disentuh
+
+    const adaIsiLain = sh.getRange(r, 2, 1, lebarHeader - 1).getValues()[0]
+      .some((v) => v !== '' && v !== null && v !== undefined);
+    if (adaIsiLain) idSel.setValue(buatIdBaru(prefix));
+  }
+}
+
+/**
+ * ID acak ringkas bergaya sama dengan idBaru() sisi PWA (src/core/hash.js:
+ * "prefix_16hexchar") -- tidak perlu identik algoritmanya, cukup unik dan
+ * stabil (tidak berubah lagi begitu ditulis, lihat guard di pemanggil).
+ */
+function buatIdBaru(prefix) {
+  return `${prefix}_${Utilities.getUuid().replace(/-/g, '').slice(0, 16)}`;
 }
 
 /**

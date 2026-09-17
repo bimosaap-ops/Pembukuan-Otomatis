@@ -231,6 +231,17 @@ test('barisKategoriUntukSheet lalu kategoriDariBarisSheet pulang-pergi tanpa keh
   assert.deepEqual(balik.polaKataKunci, ['GRAB', 'GOJEK', 'MRT']);
 });
 
+test('kategoriDariBarisSheet menormalkan Tipe tanpa peduli huruf besar/kecil atau spasi', () => {
+  assert.equal(kategoriDariBarisSheet({ id: 'k1', tipe: 'Pemasukan' }).tipe, 'pemasukan');
+  assert.equal(kategoriDariBarisSheet({ id: 'k2', tipe: '  PEMASUKAN  ' }).tipe, 'pemasukan');
+  assert.equal(kategoriDariBarisSheet({ id: 'k3', tipe: 'pengeluaran' }).tipe, 'pengeluaran');
+});
+
+test('kategoriDariBarisSheet jatuh ke pengeluaran kalau Tipe kosong/tidak dikenali', () => {
+  assert.equal(kategoriDariBarisSheet({ id: 'k4', tipe: '' }).tipe, 'pengeluaran');
+  assert.equal(kategoriDariBarisSheet({ id: 'k5', tipe: 'ngasal' }).tipe, 'pengeluaran');
+});
+
 /* ==========================================================================
    validasiUrlWebhook
    ========================================================================== */
