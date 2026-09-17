@@ -15,11 +15,12 @@
  * sekitar checkpoint bisa lolos tak tertarik atau tertarik dua kali.
  */
 
-import { bacaKonfigSheets, post } from './sheets-sync.js';
+import { bacaKonfigSheets, post, syncAtauAntri } from './sheets-sync.js';
 import { ledgerMergeAktif, buatProvisionalDariEmail } from './email-ledger-merge.js';
 import * as pengaturanRepo from '../data/repo/settings.js';
 import * as emailTrxRepo from '../data/repo/email-transactions.js';
 import * as trxRepo from '../data/repo/transactions.js';
+import * as akunRepo from '../data/repo/accounts.js';
 import * as kategoriRepo from '../data/repo/categories.js';
 import * as kamusRepo from '../data/repo/merchant-dictionary.js';
 import { cocokkanTransaksiEmail } from '../domain/rekonsiliasiEmail.js';
@@ -88,6 +89,17 @@ export function bangunPembaruanEmailTrx(trx, merchantKey, cocok, saran) {
  * PROVISIONAL (email-ledger-merge.js) supaya tampil di Dashboard sebelum
  * e-statement bulan itu datang, bukan cuma "menunggu" di halaman Transaksi
  * Email.
+ *
+ * TIDAK mengirim ke Sheets di sini -- pemanggil (`tarikTransaksiEmail()`)
+ * memproses banyak transaksi berurutan dalam satu loop; kalau tiap baris
+ * menembak sync-nya sendiri-sendiri, satu pull dengan banyak transaksi baru
+ * (mis. baru buka aplikasi setelah beberapa hari) memicu banyak POST request
+ * nyaris bersamaan ke webhook yang sama -- saling menimpa antrean retry lokal
+ * yang tidak dikunci, sebagian besar hilang diam-diam (lihat catatan di
+ * buatProvisionalDariEmail()). Pemanggil mengumpulkan seluruh baris provisional
+ * dari satu batch pull lalu mengirim SEKALI di akhir.
+ * @returns {object|null} baris ledger provisional yang baru dibuat, atau null
+ *   kalau tidak ada (MATCHED/MISMATCH/AMBIGUOUS, atau fitur gabung-ledger mati).
  */
 async function prosesSatuTransaksiBaru(trx, daftarKategori, kamusMap) {
   const merchantKey = normalisasiMerchant(trx.merchantMentah);
@@ -107,8 +119,9 @@ async function prosesSatuTransaksiBaru(trx, daftarKategori, kamusMap) {
   const disimpan = await emailTrxRepo.simpanSatu(bangunPembaruanEmailTrx(trx, merchantKey, cocok, saran));
 
   if (cocok.status === STATUS_COCOK_EMAIL.MISSING && await ledgerMergeAktif()) {
-    await buatProvisionalDariEmail(disimpan, daftarKategori, kamusMap);
+    return buatProvisionalDariEmail(disimpan, daftarKategori, kamusMap);
   }
+  return null;
 }
 
 /**
@@ -144,8 +157,23 @@ export async function tarikTransaksiEmail() {
     // Berurutan, bukan Promise.all: jumlah transaksi email per pull realistis
     // (puluhan, bukan ribuan), dan trxRepo.rentangTanggal() sendiri sudah
     // cukup cepat (lewat indeks tanggal).
+    const provisionalBaru = [];
     for (const trx of disimpan) {
-      await prosesSatuTransaksiBaru(trx, daftarKategori, kamusMap);
+      const hasil = await prosesSatuTransaksiBaru(trx, daftarKategori, kamusMap);
+      if (hasil) provisionalBaru.push(hasil);
+    }
+
+    // Satu kali di akhir batch, bukan per baris -- lihat catatan di
+    // prosesSatuTransaksiBaru() soal kenapa sync per baris berisiko race.
+    if (provisionalBaru.length) {
+      const akunTersentuh = new Set(provisionalBaru.map((t) => t.accountId));
+      for (const accountId of akunTersentuh) {
+        await akunRepo.hitungUlangSaldo(accountId);
+      }
+
+      Promise.all([akunRepo.peta(), kategoriRepo.peta()])
+        .then(([akunMap, kategoriMap]) => syncAtauAntri(provisionalBaru, akunMap, kategoriMap))
+        .catch((e) => console.warn('Sheets sync provisional gagal:', e));
     }
   }
 

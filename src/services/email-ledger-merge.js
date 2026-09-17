@@ -161,16 +161,27 @@ export async function buatProvisionalDariEmail(trxEmail, daftarKategori, kamusMa
   });
 
   const disimpan = await trxRepo.simpanSatu(data);
-  await akunRepo.hitungUlangSaldo(akun.id);
   await emailTrxRepo.simpanSatu({ ...trxEmail, provisionalTrxId: disimpan.id });
 
-  // Sheets: latar belakang, tidak pernah ditunggu -- pola sama persis dengan
-  // ingest.js/transaksi.js (kegagalan jaringan tidak boleh menunda apa pun
-  // yang sudah tersimpan lokal).
-  Promise.all([akunRepo.peta(), kategoriRepo.peta()])
-    .then(([akunMap, kategoriMap]) => syncAtauAntri([disimpan], akunMap, kategoriMap))
-    .catch((e) => console.warn('Sheets sync provisional gagal:', e));
-
+  // hitungUlangSaldo TIDAK dipanggil di sini -- sengaja diserahkan ke
+  // pemanggil (yang memproses banyak baris dalam satu loop, lihat
+  // prosesSatuTransaksiBaru()/tarikTransaksiEmail() dan
+  // backfillProvisionalEmailLama() di bawah): kalau fungsi ini menghitung
+  // ulang saldo per baris, 64 baris untuk rekening yang sama berarti 64 kali
+  // pemindaian penuh transaksi rekening itu, padahal cuma hasil PANGGILAN
+  // TERAKHIR yang berarti -- pemanggil cukup menghitung ulang SEKALI per
+  // rekening yang tersentuh, di akhir loop (pola sama seperti ingest.js).
+  //
+  // Sheets TIDAK disentuh di sini -- sengaja diserahkan ke pemanggil
+  // (lihat email-feed-sync.js prosesSatuTransaksiBaru()/tarikTransaksiEmail(),
+  // dan backfillProvisionalEmailLama() di bawah). Kedua pemanggil itu
+  // memproses BANYAK transaksi dalam satu loop; kalau fungsi ini menembak
+  // syncAtauAntri()-nya sendiri per baris, N baris = N POST request hampir
+  // bersamaan ke webhook YANG SAMA, saling menimpa antrean retry lokal
+  // (bacaAntrean/tulisAntrean tidak dikunci) -- yang tersisa di Sheets cuma
+  // baris yang kebetulan menang race itu, sisanya hilang tanpa error (dilihat
+  // langsung di produksi: dari 64 baris BCA, 0 yang sampai ke Sheets). Satu
+  // panggilan syncAtauAntri() per BATCH (bukan per baris) menghindari ini.
   return disimpan;
 }
 
@@ -181,16 +192,23 @@ export async function buatProvisionalDariEmail(trxEmail, daftarKategori, kamusMa
  * memanggil hitungUlangSaldo di sini: pemanggil (rekonsiliasiSetelahUpload)
  * yang mengumpulkan seluruh akun tersentuh lalu menghitung ulang SEKALI di
  * akhir, supaya tidak ada window saldo dihitung dari state yang belum tuntas.
- * @returns {string|null} accountId baris provisional yang barusan dihapus
+ * TIDAK memanggil hapusDariSheets di sini -- pemanggil (rekonsiliasiSetelahUpload)
+ * bisa memproses BANYAK baris dalam satu batch upload; kalau tiap baris
+ * menghapus dari Sheets sendiri-sendiri, itu race yang sama persis dengan
+ * yang diperbaiki di buatProvisionalDariEmail() (lihat catatan di sana), cuma
+ * lewat antrean hapus (bacaAntreanHapus/tulisAntreanHapus) alih-alih antrean
+ * kirim. Pemanggil mengumpulkan seluruh hash yang perlu dihapus lalu memanggil
+ * hapusDariSheets() SEKALI di akhir.
+ * @returns {{accountId: string, hash: string}|null} data baris provisional yang
+ *   barusan dihapus lokal, atau null kalau tidak ada baris provisional untuk email ini.
  */
 async function gantikanProvisional(trxEmail, trxStatement) {
   const provisional = trxEmail.provisionalTrxId ? await trxRepo.satu(trxEmail.provisionalTrxId) : null;
-  let accountIdTersentuh = null;
+  let dihapus = null;
 
   if (provisional) {
     await trxRepo.hapusTransaksi(provisional.id);
-    hapusDariSheets([provisional.hash]).catch((e) => console.warn('Hapus provisional di Sheets gagal:', e));
-    accountIdTersentuh = provisional.accountId;
+    dihapus = { accountId: provisional.accountId, hash: provisional.hash };
   }
 
   await emailTrxRepo.simpanSatu({
@@ -200,7 +218,7 @@ async function gantikanProvisional(trxEmail, trxStatement) {
     provisionalTrxId: '',
   });
 
-  return accountIdTersentuh;
+  return dihapus;
 }
 
 /**
@@ -317,16 +335,25 @@ export async function rekonsiliasiSetelahUpload(transaksiBaruDariUpload) {
   if (!kandidatEmail.length) return hasil;
 
   const rencana = rencanakanRekonsiliasi(transaksiBaruDariUpload, kandidatEmail);
+  const hashDihapus = [];
 
   for (const { trxEmail, trxStatement, cocok } of rencana) {
     if (cocok.status === STATUS_COCOK_EMAIL.MATCHED) {
-      const accountIdLama = await gantikanProvisional(trxEmail, trxStatement);
-      if (accountIdLama) hasil.akunTersentuh.add(accountIdLama);
+      const dihapus = await gantikanProvisional(trxEmail, trxStatement);
+      if (dihapus) {
+        hasil.akunTersentuh.add(dihapus.accountId);
+        hashDihapus.push(dihapus.hash);
+      }
       hasil.digantikan += 1;
     } else {
       await tandaiSengketa(trxEmail, trxStatement, cocok);
       hasil.disengketakan += 1;
     }
+  }
+
+  // Satu kali di akhir batch, bukan per baris -- lihat catatan di gantikanProvisional().
+  if (hashDihapus.length) {
+    hapusDariSheets(hashDihapus).catch((e) => console.warn('Hapus provisional (batch) di Sheets gagal:', e));
   }
 
   return hasil;
@@ -393,6 +420,10 @@ export async function backfillProvisionalEmailLama() {
 
   let dibuat = 0;
   let diperbarui = 0;
+  // Dikumpulkan dulu, dikirim SEKALI di akhir -- lihat catatan di
+  // buatProvisionalDariEmail() soal kenapa sync per baris di dalam loop
+  // seperti ini berbahaya (race antar banyak POST request nyaris bersamaan).
+  const baruDibuat = [];
 
   for (const trxEmail of kandidatEmail) {
     const rentang = rentangTanggalKandidat(trxEmail.waktuTransaksi);
@@ -414,14 +445,14 @@ export async function backfillProvisionalEmailLama() {
       continue;
     }
 
-    const disimpan = await buatProvisionalDariEmail(trxEmail, daftarKategori, kamusMap);
+    let disimpan = await buatProvisionalDariEmail(trxEmail, daftarKategori, kamusMap);
     dibuat += 1;
 
     if (cocok.status !== STATUS_COCOK_EMAIL.MISSING) {
       // Near-miss (MISMATCH/AMBIGUOUS) -- tandai sengketa dari awal, persis
       // tandaiSengketa() yang dipanggil rekonsiliasi biasa, supaya baris ini
       // langsung kelihatan perlu ditinjau alih-alih seolah baru & belum dicek.
-      await trxRepo.simpanSatu({ ...disimpan, statusProvisional: STATUS_PROVISIONAL.DISENGKETAKAN });
+      disimpan = await trxRepo.simpanSatu({ ...disimpan, statusProvisional: STATUS_PROVISIONAL.DISENGKETAKAN });
       await emailTrxRepo.simpanSatu({
         ...trxEmail,
         provisionalTrxId: disimpan.id,
@@ -431,6 +462,21 @@ export async function backfillProvisionalEmailLama() {
         alasanCocok: cocok.alasan,
       });
     }
+
+    baruDibuat.push(disimpan);
+  }
+
+  if (baruDibuat.length) {
+    // Sekali per rekening yang tersentuh, bukan sekali per baris -- lihat
+    // catatan di buatProvisionalDariEmail().
+    const akunTersentuh = new Set(baruDibuat.map((t) => t.accountId));
+    for (const accountId of akunTersentuh) {
+      await akunRepo.hitungUlangSaldo(accountId);
+    }
+
+    Promise.all([akunRepo.peta(), kategoriRepo.peta()])
+      .then(([akunMap, kategoriMap]) => syncAtauAntri(baruDibuat, akunMap, kategoriMap))
+      .catch((e) => console.warn('Sheets sync backfill provisional gagal:', e));
   }
 
   return { dibuat, diperbarui };
