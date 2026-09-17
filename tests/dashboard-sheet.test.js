@@ -502,6 +502,36 @@ test('Kontrol Saldo memanjang mengikuti isi tab Statement, dan blok tetap tidak 
   }
 });
 
+test('tiap QUERY ber-group-by juga meng-agregat sesuatu', () => {
+  // Bug yang sudah sampai ke pengguna: driver tabel kontrol memakai
+  //
+  //   QUERY({rek \\ bulan}; "select Col1, Col2 ... group by Col1, Col2")
+  //
+  // tanpa satu pun fungsi agregat. Di Sheet sungguhan bentuk itu tidak
+  // mengembalikan apa-apa walau tab Statement berisi 45 baris — dan karena
+  // drivernya dibungkus IFERROR, kegagalannya muncul sebagai pesan "belum
+  // ada baris" yang menyesatkan, bukan sebagai galat.
+  //
+  // Tiruan di berkas ini tidak menjalankan rumus, jadi yang bisa dijaga
+  // adalah bentuknya: group by tanpa agregat tidak dipakai lagi di mana pun.
+  // Pengelompokan murni (daftar pasangan unik) ditulis dengan
+  // SORT(UNIQUE(FILTER(...))) yang perilakunya sama dengan SUMPRODUCT/FILTER
+  // di sekitarnya — primitif yang sudah terbukti jalan di atas data ini.
+  const h = jalankan({ pakaiKoma: false, rekening: ['BCA|111', 'Permata|222'], bulan: 6, kategori: 5 });
+
+  const AGREGAT = /\b(sum|count|avg|min|max)\(/i;
+  let diperiksa = 0;
+  for (const [sel, f] of Object.entries(h.rumus)) {
+    for (const kueri of f.match(/"select [^"]*"/gi) || []) {
+      if (!/group by/i.test(kueri)) continue;
+      diperiksa += 1;
+      assert.ok(AGREGAT.test(kueri),
+        `${sel}: QUERY memakai "group by" tanpa agregat — pakai SORT(UNIQUE(FILTER(...))) untuk daftar unik: ${kueri.slice(0, 120)}`);
+    }
+  }
+  assert.ok(diperiksa > 0, 'harus ada QUERY ber-group-by yang diperiksa (kalau tidak, asersi ini diam-diam tidak menguji apa pun)');
+});
+
 test('tidak ada sel gabungan yang terpotong batas baris/kolom beku, dan Kontrol Saldo benar-benar jadi', () => {
   // Bug yang sudah lolos ke pengguna sekali: judul Kontrol Saldo digabung
   // A1:Q1 sementara tabnya membekukan dua kolom pertama. Sheets menolaknya
