@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { kunciSettingAkunBca, rencanakanRekonsiliasi } from '../src/services/email-ledger-merge.js';
+import { kunciSettingAkunBca, rencanakanRekonsiliasi, putuskanAksiBackfill } from '../src/services/email-ledger-merge.js';
 import { KUNCI } from '../src/data/repo/settings.js';
 import { STATUS_COCOK_EMAIL } from '../src/domain/entities.js';
 
@@ -155,4 +155,39 @@ test('rencanakanRekonsiliasi: tidak ada baris statement sama sekali -> rencana k
 
 test('rencanakanRekonsiliasi: tidak ada kandidat email sama sekali -> rencana kosong, tidak error', () => {
   assert.deepEqual(rencanakanRekonsiliasi([statement()], []), []);
+});
+
+/* ==========================================================================
+   putuskanAksiBackfill -- backfillProvisionalEmailLama()
+   ========================================================================== */
+
+test('putuskanAksiBackfill: MATCHED (sudah ada baris statement asli di ledger sekarang) -> aksi "tautkan", TIDAK buat provisional', () => {
+  const { aksi, cocok } = putuskanAksiBackfill(emailTrx(), [statement()]);
+  assert.equal(aksi, 'tautkan');
+  assert.equal(cocok.status, STATUS_COCOK_EMAIL.MATCHED);
+});
+
+test('putuskanAksiBackfill: MISSING (tidak ada kandidat statement dalam jendela) -> aksi "provisional"', () => {
+  const { aksi, cocok } = putuskanAksiBackfill(emailTrx(), []);
+  assert.equal(aksi, 'provisional');
+  assert.equal(cocok.status, STATUS_COCOK_EMAIL.MISSING);
+});
+
+test('putuskanAksiBackfill: MISMATCH (nominal beda, bukan padanan asli) -> TETAP "provisional", bukan "tautkan"', () => {
+  // Krusial: kandidat statement ADA dan dievaluasi, tapi nominalnya tidak
+  // cocok -- ini BUKAN berarti "sudah tercakup ledger", jadi tetap harus
+  // dibuatkan baris provisional (nanti ditandai sengketa), sama seperti kalau
+  // transaksi ini baru saja ditarik hari ini dan kebetulan tidak ketemu.
+  const beda = emailTrx({ nominal: 999999 });
+  const { aksi, cocok } = putuskanAksiBackfill(beda, [statement()]);
+  assert.equal(aksi, 'provisional');
+  assert.equal(cocok.status, STATUS_COCOK_EMAIL.MISMATCH);
+});
+
+test('putuskanAksiBackfill: AMBIGUOUS (dua kandidat skor nyaris sama) -> TETAP "provisional", bukan "tautkan"', () => {
+  const statementSama1 = statement({ id: 'trx_stmt_1' });
+  const statementSama2 = statement({ id: 'trx_stmt_2' });
+  const { aksi, cocok } = putuskanAksiBackfill(emailTrx(), [statementSama1, statementSama2]);
+  assert.equal(aksi, 'provisional');
+  assert.equal(cocok.status, STATUS_COCOK_EMAIL.AMBIGUOUS);
 });
