@@ -7,13 +7,23 @@
  *
  * Pipeline mengikuti PRD §24 Realtime Email Transaction Feed:
  *   A. Canonicalize: trim, uppercase, tanda baca -> spasi, rapatkan spasi.
- *   B. Buang kata noise umum (QRIS, MOBILE, dst.) dan label ID (MID/TID/
- *      TERMINAL) beserta token yang jelas cuma nomor referensi/kode acak.
- *   C. Buang akhiran "TBK" — "PT"/"CV"/"UD" SENGAJA TIDAK dibuang: PRD
+ *   B. Buang boilerplate "TRANSAKSI DEBIT TGL: DD/MM [kode QR] 00000.00"
+ *      yang muncul di depan deskripsi statement kartu/QR BCA — nama
+ *      merchant aslinya seringkali nempel LANGSUNG di belakang placeholder
+ *      nominal itu tanpa spasi (mis. "...00000.00IDM INDOMA"), hasil
+ *      ekstraksi teks PDF yang menggabungkan kolom nominal & keterangan.
+ *      Tanpa langkah ini, merchant_key kebanjiran noise TGL/kode QR/sisa
+ *      angka nominal sehingga kemiripan merchant nyaris tidak pernah
+ *      terdeteksi untuk mayoritas transaksi kartu/QR (ditemukan lewat data
+ *      nyata: ~50% deskripsi statement BCA berformat ini).
+ *   C. Buang kata noise umum (QRIS, QR, MOBILE, dst.) dan label ID (MID/
+ *      TID/TERMINAL) beserta token yang jelas cuma nomor referensi/kode
+ *      acak.
+ *   D. Buang akhiran "TBK" — "PT"/"CV"/"UD" SENGAJA TIDAK dibuang: PRD
  *      eksplisit itu cuma boleh dihapus "kalau terbukti jadi noise", dan
  *      tanpa bukti dari data nyata itu bisa jadi bagian identitas merchant
  *      yang berarti (mis. dua merchant beda badan hukum, nama sama).
- *   D. Fallback keamanan: kalau hasil jadi kosong/terlalu pendek, pakai
+ *   E. Fallback keamanan: kalau hasil jadi kosong/terlalu pendek, pakai
  *      versi kurang agresif (cuma langkah A) — dua merchant berbeda tidak
  *      boleh jatuh ke merchant_key yang sama gara-gara normalisasi
  *      kebablasan (PRD: "jangan sampai dua merchant berbeda menjadi
@@ -21,7 +31,7 @@
  */
 
 const KATA_NOISE_MERCHANT = [
-  'QRIS', 'MBCA', 'MYBCA', 'MOBILE', 'INTERNET', 'BANKING', 'TRX',
+  'QRIS', 'QR', 'MBCA', 'MYBCA', 'MOBILE', 'INTERNET', 'BANKING', 'TRX',
   'TRANSAKSI', 'PEMBAYARAN', 'PAYMENT',
 ];
 
@@ -58,6 +68,22 @@ function idAcak(token) {
   return false;
 }
 
+/**
+ * Buang boilerplate statement kartu/QR BCA: "TRANSAKSI DEBIT TGL DD MM
+ * [kode QR] 00000 00<merchant>" (sudah di-canonicalize, jadi tanda baca
+ * sudah jadi spasi). Setiap `.replace` tidak berpengaruh kalau polanya
+ * tidak cocok, jadi teks lain (bukan format ini) lewat tanpa berubah.
+ */
+function buangPrefixStatementDebit(teks) {
+  return teks
+    .replace(/^TRANSAKSI DEBIT TGL \d{1,2} \d{1,2}\s+/, '')
+    .replace(/^QR[A-Z]?\d{2,4}\s+/, '') // kode QR glued, mis. "QRC014"
+    .replace(/^QR\s+\d{2,4}\s+/, '') // kode QR dengan spasi, mis. "QR 009"
+    .replace(/^0+\s+0+/, '') // sisa placeholder nominal "00000 00", termasuk
+    // yang "00" keduanya nempel langsung ke nama merchant (mis. "00IDM").
+    .trim();
+}
+
 function buangNoiseDanId(teks) {
   return teks
     .split(' ')
@@ -79,6 +105,6 @@ export function normalisasiMerchant(teksMentah) {
   const dasar = canonicalize(teksMentah);
   if (!dasar) return '';
 
-  const disaring = buangAkhiranBisnis(buangNoiseDanId(dasar));
+  const disaring = buangAkhiranBisnis(buangNoiseDanId(buangPrefixStatementDebit(dasar)));
   return disaring.length >= BATAS_MINIMAL_HASIL ? disaring : dasar;
 }
