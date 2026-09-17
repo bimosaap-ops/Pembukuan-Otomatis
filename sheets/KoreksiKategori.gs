@@ -7,10 +7,27 @@
  *   3. Pilih fungsi jalankanKoreksiKategori lalu Run
  *   4. Cek ringkasan yang muncul di dialog / Execution log
  *
- * Skrip ini hanya menulis kolom "ID Kategori", "Kategori" dan "Diubah Pada"
- * pada tab Transaksi untuk ID Transaksi yang terdaftar di bawah, dan
- * memperbaiki kolom "Kata Kunci" di tab Kategori. Kolom lain tidak disentuh.
+ * Yang dikerjakan skrip ini, berurutan:
+ *   a. menambah kategori baru "Perawatan Diri" di tab Kategori bila belum ada
+ *   b. menulis kolom "ID Kategori", "Kategori", "Diubah Pada" di tab Transaksi
+ *      untuk ID Transaksi yang terdaftar di bawah
+ *   c. merapikan kolom "Kata Kunci" di tab Kategori supaya salah kategori yang
+ *      sama tidak terulang pada impor berikutnya
+ * Kolom lain tidak disentuh.
  */
+
+/** Kategori baru yang dibuat kalau ID-nya belum ada di tab Kategori. */
+var KATEGORI_BARU = [{
+  id: 'kat_f0b8312be1ee20ad',
+  nama: 'Perawatan Diri',
+  tipe: 'pengeluaran',
+  warna: 'var(--c7)',
+  ikon: '💇',
+  kataKunci: 'BARBER, BARBERSHOP, SALON, CUKUR, POTONG RAMBUT, HAIRNERDS, LASH, LASHLIFT, NAIL, KUTEK, KOSMETIK, COSMETIC, BEAUTY, GUARDIAN, WATSONS, SOCIOLLA, THE BODY SHOP, PARFUM, SAFF & CO, SPA, MASSAGE, PIJAT, REFLEKSI, GRIYA SEHAT, RELAXNOW, FACIAL, WAXING',
+  prioritas: 71,
+  bawaan: false,
+  urutan: 999
+}];
 
 var KOREKSI = {
   'trx_0051679954d57079':'kat_transfer_keluar',
@@ -68,9 +85,8 @@ var KOREKSI = {
   'trx_10423c80e1687568':'kat_transport',
   'trx_1087fcfb2401e2e4':'kat_makan',
   'trx_11062d8df395b2e4':'kat_makan',
-  'trx_11147a65c7e2f045':'kat_kesehatan',
+  'trx_11147a65c7e2f045':'kat_f0b8312be1ee20ad',
   'trx_11be77f2cc1fa5e0':'kat_makan',
-  'trx_11d5d15473c12f5b':'kat_kesehatan',
   'trx_11d7a8c190749bb8':'kat_makan',
   'trx_124bdd0667eb499e':'kat_makan',
   'trx_13212ebb2a7b10b6':'kat_makan',
@@ -89,7 +105,7 @@ var KOREKSI = {
   'trx_176fe5bc5ca4752a':'kat_makan',
   'trx_181c44622fddb123':'kat_makan',
   'trx_1851d9a88c7ea046':'kat_makan',
-  'trx_186b78bc364e5962':'kat_kesehatan',
+  'trx_186b78bc364e5962':'kat_f0b8312be1ee20ad',
   'trx_18e18deda8f8215b':'kat_makan',
   'trx_1946520488cb09ee':'kat_transport',
   'trx_19649b456b452326':'kat_c6f57429ab5b5188',
@@ -241,7 +257,6 @@ var KOREKSI = {
   'trx_4ecdcc4ca80e5176':'kat_makan',
   'trx_500f9282628fc170':'kat_makan',
   'trx_502075b757260d0c':'kat_makan',
-  'trx_50b7e8114aa671df':'kat_kesehatan',
   'trx_512163a5e8c749db':'kat_transfer_keluar',
   'trx_515279aad538f271':'kat_9c3026b55044be0d',
   'trx_51b11a7557fa877a':'kat_9c3026b55044be0d',
@@ -329,7 +344,7 @@ var KOREKSI = {
   'trx_69e6ed528a6aed80':'kat_985a9d3cadd814df',
   'trx_6a3c83d5b018543d':'kat_transfer_keluar',
   'trx_6a7d274efa2f9303':'kat_de94901ccdea4072',
-  'trx_6b4de0f2534f3430':'kat_belanja',
+  'trx_6b4de0f2534f3430':'kat_f0b8312be1ee20ad',
   'trx_6ba935cb1a71c424':'kat_operasional',
   'trx_6c49ddec383bbc9e':'kat_makan',
   'trx_6cee17514a6c07bb':'kat_transfer_keluar',
@@ -343,7 +358,7 @@ var KOREKSI = {
   'trx_6e62bd71574fb628':'kat_makan',
   'trx_6ee4e552e69615a4':'kat_makan',
   'trx_6f0e5288c2044b90':'kat_transfer_keluar',
-  'trx_6fb1f1cd1a271583':'kat_kesehatan',
+  'trx_6fb1f1cd1a271583':'kat_f0b8312be1ee20ad',
   'trx_6fdd5c90e422d6bb':'kat_transfer_keluar',
   'trx_710ff2c3f6d46879':'kat_transport',
   'trx_713a8ec1ac1df62b':'kat_makan',
@@ -469,7 +484,7 @@ var KOREKSI = {
   'trx_97f5b37cb3614a4d':'kat_makan',
   'trx_981b10eeb792261e':'kat_transfer_masuk',
   'trx_9986a62f29d57ecf':'kat_langganan',
-  'trx_99d2e1c7a1ebe953':'kat_kesehatan',
+  'trx_99d2e1c7a1ebe953':'kat_f0b8312be1ee20ad',
   'trx_99d81e6204816d4f':'kat_makan',
   'trx_99e4abc1871027c6':'kat_langganan',
   'trx_9a5fe686efdb114d':'kat_d1a38c77804a1c53',
@@ -567,7 +582,6 @@ var KOREKSI = {
   'trx_b7c1a6b8fea55db1':'kat_transport',
   'trx_b7f0934b9756dae5':'kat_makan',
   'trx_b83d429cd62ed160':'kat_belanja_online',
-  'trx_b85aeff8da4e808d':'kat_kesehatan',
   'trx_b8e304b8b73cc28a':'kat_transfer_keluar',
   'trx_b980d7d049f876d9':'kat_operasional',
   'trx_b9f433f6b84d7b5f':'kat_makan',
@@ -615,7 +629,7 @@ var KOREKSI = {
   'trx_c6fc549db0aec20b':'kat_makan',
   'trx_c74c27fd0b965f97':'kat_8b27ebc79d4c9d7d',
   'trx_c772d17f88f44c3d':'kat_makan',
-  'trx_c77987d6045a579e':'kat_kesehatan',
+  'trx_c77987d6045a579e':'kat_f0b8312be1ee20ad',
   'trx_c790975b3fb7288c':'kat_makan',
   'trx_c7e9a37fe4713b30':'kat_transfer_keluar',
   'trx_c7ead6205bcdf089':'kat_makan',
@@ -701,7 +715,7 @@ var KOREKSI = {
   'trx_e2f58cf847fda7f7':'kat_transfer_keluar',
   'trx_e33135f5ef94ec1e':'kat_de94901ccdea4072',
   'trx_e3594e6fbadb6a46':'kat_d1a38c77804a1c53',
-  'trx_e3aa8976c40508f6':'kat_kesehatan',
+  'trx_e3aa8976c40508f6':'kat_f0b8312be1ee20ad',
   'trx_e4a79a9376a05ad9':'kat_transfer_keluar',
   'trx_e4a8effe31838844':'kat_transfer_masuk',
   'trx_e4abf8b999a90558':'kat_d1a38c77804a1c53',
@@ -776,7 +790,7 @@ var KOREKSI = {
   'trx_fbd7f2ee9b29d704':'kat_makan',
   'trx_fbefae22f5f374f4':'kat_makan',
   'trx_fbfabb55bdae6975':'kat_transfer_keluar',
-  'trx_fc6a68286a0b401e':'kat_kesehatan',
+  'trx_fc6a68286a0b401e':'kat_f0b8312be1ee20ad',
   'trx_fcb24a59b8d0a9e0':'kat_makan',
   'trx_fcd39fc4b0a98b21':'kat_transfer_keluar',
   'trx_fcdced6c2a95d30e':'kat_transfer_keluar',
@@ -814,19 +828,67 @@ var KATA_KUNCI_BARU = {
   kat_lain_keluar: '',
   kat_0d09d0eb37a7ba89: 'WD BCA BIMO SAPUTRO, STOCKBIT SEKURITAS',
   kat_d1a38c77804a1c53: 'BIBIT TUMBUH BERSAMA, REKSA DANA, REDEMPTION',
-  kat_222c3502a62bdf63: 'DIVIDEN'
+  kat_222c3502a62bdf63: 'DIVIDEN',
+  // apotek dan klinik tetap Kesehatan; barbershop/salon/spa pindah ke Perawatan Diri
+  kat_kesehatan: 'APOTEK, K24, KIMIA FARMA, KLINIK, RUMAH SAKIT, DOKTER, LABORATORIUM, PRODIA, HALODOC, ALODOKTER'
 };
 
 function jalankanKoreksiKategori() {
   var ss = SpreadsheetApp.getActive();
+  var baru = tambahKategoriBaru_(ss);
   var hasil = koreksiTabTransaksi_(ss);
   var kk = koreksiKataKunci_(ss);
-  var pesan = 'Transaksi diperbarui: ' + hasil.ubah +
+  var pesan = 'Kategori baru ditambahkan: ' + baru +
+              '\nTransaksi diperbarui: ' + hasil.ubah +
               '\nTidak ditemukan: ' + hasil.hilang +
               '\nKata kunci kategori diperbarui: ' + kk;
   Logger.log(pesan);
   try { SpreadsheetApp.getUi().alert('Koreksi selesai', pesan, SpreadsheetApp.getUi().ButtonSet.OK); } catch (e) {}
   return pesan;
+}
+
+/**
+ * Tambah baris kategori baru di tab Kategori kalau ID-nya belum ada. Urutan
+ * kolom diambil dari header, bukan diasumsikan, supaya aman kalau tab Kategori
+ * pernah ditambah kolom.
+ */
+function tambahKategoriBaru_(ss) {
+  var sh = ss.getSheetByName('Kategori');
+  if (!sh) throw new Error('Tab "Kategori" tidak ditemukan.');
+  var header = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+  var kol = {};
+  for (var i = 0; i < header.length; i++) kol[String(header[i]).trim()] = i;
+  if (kol['ID'] === undefined || kol['Nama'] === undefined) {
+    throw new Error('Tab "Kategori" tidak punya kolom ID/Nama.');
+  }
+
+  var adaId = {};
+  if (sh.getLastRow() > 1) {
+    var ids = sh.getRange(2, kol['ID'] + 1, sh.getLastRow() - 1, 1).getValues();
+    for (var r = 0; r < ids.length; r++) adaId[String(ids[r][0] || '').trim()] = true;
+  }
+
+  var stempel = new Date();
+  var tambah = 0;
+  for (var k = 0; k < KATEGORI_BARU.length; k++) {
+    var kat = KATEGORI_BARU[k];
+    if (adaId[kat.id]) continue;
+    var baris = new Array(header.length).fill('');
+    baris[kol['ID']] = kat.id;
+    baris[kol['Nama']] = kat.nama;
+    if (kol['Tipe'] !== undefined) baris[kol['Tipe']] = kat.tipe;
+    if (kol['Warna'] !== undefined) baris[kol['Warna']] = kat.warna;
+    if (kol['Ikon'] !== undefined) baris[kol['Ikon']] = kat.ikon;
+    if (kol['Kata Kunci'] !== undefined) baris[kol['Kata Kunci']] = kat.kataKunci;
+    if (kol['Prioritas'] !== undefined) baris[kol['Prioritas']] = kat.prioritas;
+    if (kol['Bawaan'] !== undefined) baris[kol['Bawaan']] = kat.bawaan;
+    if (kol['Urutan'] !== undefined) baris[kol['Urutan']] = kat.urutan;
+    if (kol['Dibuat Pada'] !== undefined) baris[kol['Dibuat Pada']] = stempel;
+    sh.appendRow(baris);
+    tambah++;
+  }
+  if (tambah) SpreadsheetApp.flush();
+  return tambah;
 }
 
 function koreksiTabTransaksi_(ss) {
