@@ -35,6 +35,9 @@ const KOLOM = [
 
 const POLA_TANGGAL_BCA = /^(\d{1,2})[/-](\d{1,2})$/;
 
+/** Baris judul kolom, dipakai untuk melewati judul yang tercetak ulang. */
+const POLA_JUDUL_KOLOM = /^TANGGAL\b(?=.*\bKETERANGAN\b)(?=.*\bMUTASI\b)/i;
+
 export const info = { kode: 'bca', bank: 'BCA', nama: 'BCA e-Statement' };
 
 export function cocok(teks) {
@@ -115,7 +118,13 @@ export function parse({ baris, barisPerHalaman, teks, kepala }) {
         continue;
       }
       if (barisDiabaikan(teksBaris)) continue;
-      if (/^TANGGAL\b/i.test(teksBaris)) continue;
+      // Judul kolom yang tercetak ulang, bukan sekadar baris yang diawali
+      // "TANGGAL". Uraian lanjutan pada baris kartu debit dan pembayaran
+      // virtual account justru sering diawali "TANGGAL :01/08", dan isinya
+      // yang menentukan kategori: "TANGGAL :02/08 80777/TOKOPEDIA",
+      // "TANGGAL :05/08 70001/GOPAY TOPUP". Guard lama membuang seluruh
+      // barisnya — 23 baris pada satu statement Agustus 2026 saja.
+      if (POLA_JUDUL_KOLOM.test(teksBaris)) continue;
 
       // Tanggal hanya boleh dibaca dari kolom tanggal. Baris lanjutan deskripsi
       // sering diawali "02/07 WSID:..." yang menyerupai tanggal, dan akan salah
