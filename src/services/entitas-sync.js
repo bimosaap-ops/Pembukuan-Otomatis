@@ -9,11 +9,11 @@
  * baru). Tombstone ("Dihapus Pada" terisi) selalu dihormati kalau recordnya
  * masih ada secara lokal — dihapus, bukan diperbarui.
  *
- * Sengaja HANYA dipanggil manual dari tombol di Pengaturan, tidak dipasang
- * sebagai auto-pull saat aplikasi dibuka — sama seperti alasan
- * tarikTransaksiEmail belum di-poll otomatis di sisi PWA: pola ini baru,
- * lebih aman dibuktikan lewat pemakaian manual dulu sebelum dijadikan
- * otomatis.
+ * Sejak "Fase A" (Sheets jadi editor utama untuk Transaksi/Akun/Kategori,
+ * PWA read-only untuk data itu), fungsi ini JUGA dipanggil otomatis secara
+ * berkala oleh services/auto-pull.js — lihat berkas itu untuk pemicu
+ * (app-open, visibilitychange, online, interval). Tombol manual di
+ * Pengaturan tetap dipertahankan sebagai fallback eksplisit.
  */
 
 import {
