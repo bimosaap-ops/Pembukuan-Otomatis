@@ -87,14 +87,52 @@ export function perKategori(transaksi, petaKategori, arah = 'keluar') {
 }
 
 /**
+ * Jumlah seluruh mutasi, TERMASUK transfer internal.
+ *
+ * Bedanya dengan `ringkasArus` disengaja: arus kas memang tidak boleh menghitung
+ * pemindahan dana antar rekening sendiri sebagai pemasukan/pengeluaran, tapi
+ * SALDO tidak punya kemewahan itu — uangnya benar-benar berpindah, dan
+ * `repo/accounts.js hitungUlangSaldo()` (sumber angka "Total Saldo" di
+ * Dashboard) menjumlahkan semuanya tanpa kecuali.
+ */
+export function totalMutasi(transaksi) {
+  return (transaksi || []).reduce((s, t) => s + (Number(t.nominal) || 0), 0);
+}
+
+/**
+ * Saldo pada awal sebuah periode: saldo awal rekening ditambah SELURUH mutasi
+ * yang terjadi sebelum periode itu.
+ *
+ * Wajib dipakai setiap kali saldo berjalan dihitung atas transaksi yang sudah
+ * tersaring periode. Tanpa ini, filter bawaan "12 bulan terakhir" membuat Buku
+ * Kas dan Tren Saldo berangkat dari Saldo Awal rekening seolah tidak pernah
+ * ada mutasi sebelumnya — angka akhirnya meleset persis sebesar seluruh mutasi
+ * yang jatuh di luar jendela, dan berbeda dari "Total Saldo" di Dashboard yang
+ * dihitung dari seluruh riwayat.
+ *
+ * @param {Array} akun rekening yang sedang ditampilkan
+ * @param {Array} transaksiSebelumPeriode transaksi rekening itu yang tanggalnya
+ *   lebih awal dari tanggal mulai periode (boleh kosong)
+ */
+export function saldoPembukaPeriode(akun, transaksiSebelumPeriode = []) {
+  return totalSaldoAwal(akun) + totalMutasi(transaksiSebelumPeriode);
+}
+
+/**
  * Tren saldo gabungan per bulan.
  *
  * Saldo dihitung maju dari `saldoAwal`, bukan diambil dari kolom saldo statement,
  * karena dengan beberapa rekening yang periodenya berbeda kolom saldo masing-masing
  * tidak bisa dijumlahkan begitu saja.
+ *
+ * Transfer internal IKUT dihitung di sini — beda dari `ringkasArus`/`arusPerBulan`
+ * yang memang harus mengeluarkannya. Mengeluarkannya dari saldo membuat garis ini
+ * berakhir di angka yang tidak pernah sama dengan saldo rekening sesungguhnya
+ * (lihat `totalMutasi`), dan pada tampilan satu rekening selisihnya persis
+ * sebesar seluruh dana yang pernah dipindahkan ke/dari rekening itu.
  */
 export function trenSaldo(transaksi, saldoAwal = 0, opsi = {}) {
-  const urut = [...transaksi].filter((t) => !t.transferInternal).sort((a, b) => String(a.tanggal).localeCompare(String(b.tanggal)));
+  const urut = [...transaksi].sort((a, b) => String(a.tanggal).localeCompare(String(b.tanggal)));
   if (!urut.length) return [];
 
   const perBulanNetto = new Map();

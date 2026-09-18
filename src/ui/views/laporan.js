@@ -11,7 +11,7 @@ import * as akunRepo from '../../data/repo/accounts.js';
 import * as trxRepo from '../../data/repo/transactions.js';
 import * as kategoriRepo from '../../data/repo/categories.js';
 import { bukuKas, cashFlow, rekapBulanan, rekapTahunan, judulPeriode } from '../../domain/reports.js';
-import { totalSaldoAwal } from '../../domain/analytics.js';
+import { saldoPembukaPeriode } from '../../domain/analytics.js';
 import { dataView } from '../components/data-view.js';
 import { filterPeriode, pilihRekening, periodeIkutData } from '../components/filterbar.js';
 import { exportCsv, exportExcel, cetakHalaman } from '../../services/export.js';
@@ -52,7 +52,18 @@ export async function mount(wadah) {
       ? `${akunTerpakai[0]?.bank || ''} ${akunTerpakai[0]?.nomorRekening || ''}`.trim()
       : 'Semua rekening';
 
-    const laporan = susun(jenis, transaksi, petaKategori, akunTerpakai, filter);
+    // Saldo berjalan Buku Kas harus berangkat dari saldo pada AWAL periode,
+    // bukan dari Saldo Awal rekening: filter bawaan "12 bulan terakhir"
+    // menyisakan mutasi lebih tua di luar jendela, dan tanpa dihitung di sini
+    // kolom saldo (juga KPI "Saldo Awal"/"Saldo Akhir") meleset persis
+    // sebesar mutasi yang tertinggal itu.
+    const sebelumPeriode = filter.dari
+      ? (await trxRepo.cari({ sampai: filter.dari, accountId: filter.accountId }))
+        .filter((t) => t.tanggal < filter.dari)
+      : [];
+    const saldoPembuka = saldoPembukaPeriode(akunTerpakai, sebelumPeriode);
+
+    const laporan = susun(jenis, transaksi, petaKategori, saldoPembuka, filter);
 
     ganti(isi, [
       h('.kartu.kartu--rapat.tanpa-cetak', null, [
@@ -94,15 +105,15 @@ export async function mount(wadah) {
    Penyusunan tiap jenis laporan
    ========================================================================== */
 
-function susun(jenis, transaksi, petaKategori, akun, filter) {
+function susun(jenis, transaksi, petaKategori, saldoPembuka, filter) {
   if (jenis === 'cash-flow') return laporanCashFlow(transaksi, petaKategori);
   if (jenis === 'rekap-bulanan') return laporanRekapBulanan(transaksi, filter);
   if (jenis === 'rekap-tahunan') return laporanRekapTahunan(transaksi);
-  return laporanBukuKas(transaksi, petaKategori, akun);
+  return laporanBukuKas(transaksi, petaKategori, saldoPembuka);
 }
 
-function laporanBukuKas(transaksi, petaKategori, akun) {
-  const hasil = bukuKas(transaksi, totalSaldoAwal(akun));
+function laporanBukuKas(transaksi, petaKategori, saldoPembuka) {
+  const hasil = bukuKas(transaksi, saldoPembuka);
 
   const kolom = [
     { kunci: 'tanggal', judul: 'Tanggal', lebar: '110px', nilai: (r) => r.tanggal, render: (r) => tanggalTampil(r.tanggal) },

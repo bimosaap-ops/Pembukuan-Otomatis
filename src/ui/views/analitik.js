@@ -11,7 +11,7 @@ import * as akunRepo from '../../data/repo/accounts.js';
 import * as trxRepo from '../../data/repo/transactions.js';
 import * as kategoriRepo from '../../data/repo/categories.js';
 import {
-  arusPerBulan, perKategori, trenSaldo, topPengeluaran, ringkasArus, totalSaldoAwal,
+  arusPerBulan, perKategori, trenSaldo, topPengeluaran, ringkasArus, saldoPembukaPeriode,
 } from '../../domain/analytics.js';
 import { grafikBatang, grafikBatangHorizontal } from '../../charts/bar.js';
 import { grafikGaris } from '../../charts/line.js';
@@ -59,7 +59,19 @@ export async function mount(wadah) {
     const kategoriMasuk = perKategori(transaksi, petaKategori, 'masuk');
     const arus = ringkasArus(transaksi);
     const akunTerpakai = filter.accountId ? akun.filter((a) => a.id === filter.accountId) : akun;
-    const tren = trenSaldo(transaksi, totalSaldoAwal(akunTerpakai), { dari: filter.dari, sampai: filter.sampai });
+    // Titik berangkat garis saldo adalah saldo pada AWAL periode, bukan Saldo
+    // Awal rekening: filter bawaan "12 bulan terakhir" menyisakan mutasi lebih
+    // tua di luar jendela, dan tanpa dihitung di sini garisnya berakhir di
+    // angka yang berbeda dari "Total Saldo" di Dashboard.
+    const sebelumPeriode = filter.dari
+      ? (await trxRepo.cari({ sampai: filter.dari, accountId: filter.accountId }))
+        .filter((t) => t.tanggal < filter.dari)
+      : [];
+    const tren = trenSaldo(
+      transaksi,
+      saldoPembukaPeriode(akunTerpakai, sebelumPeriode),
+      { dari: filter.dari, sampai: filter.sampai },
+    );
     const top = topPengeluaran(transaksi, 8);
 
     ganti(isi, [
