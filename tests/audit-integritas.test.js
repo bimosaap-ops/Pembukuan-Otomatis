@@ -247,9 +247,19 @@ test('rekening yang saldo awalnya masih kosong diisi dari statement terawal', ()
   assert.equal(koreksiSaldoAwalAkun(undefined, UPLOAD_PERMATA), 3656649);
 });
 
-test('angka yang diketik sendiri oleh pengguna tidak pernah ditimpa', () => {
-  // 7.500.000 tidak sama dengan Saldo Awal statement mana pun -> milik pengguna.
-  assert.equal(koreksiSaldoAwalAkun(7500000, UPLOAD_PERMATA), null);
+test('angka yang bertentangan dengan cetakan bank dikoreksi, apa pun asalnya', () => {
+  // Di data produksi angka lamanya justru TIDAK sama dengan Saldo Awal
+  // statement mana pun (diisi jalur lama dari badan tabel, yang tidak pernah
+  // ikut tersimpan ke rekaman upload) — jadi menebak asal-usulnya bukan
+  // penjagaan yang bisa diandalkan. Cetakan bank pada statement terawal menang.
+  assert.equal(koreksiSaldoAwalAkun(7500000, UPLOAD_PERMATA), 3656649);
+  assert.equal(koreksiSaldoAwalAkun(2181261.68, UPLOAD_PERMATA), 3656649);
+});
+
+test('akun kas/tunai tanpa statement tidak pernah disentuh', () => {
+  // Satu-satunya sumber Saldo Awal akun kas adalah pengguna sendiri.
+  assert.equal(koreksiSaldoAwalAkun(2500000, []), null);
+  assert.equal(koreksiSaldoAwalAkun(2500000, [{ id: 'u', periodeAwal: '2025-01-01' }]), null);
 });
 
 test('rekening tanpa statement bersaldo dibiarkan apa adanya', () => {
@@ -269,4 +279,45 @@ test('saldo awal nol yang memang benar tidak dilaporkan sebagai perubahan', () =
   const nol = [{ id: 'u1', periodeAwal: '2025-01-01', saldoAwalStatement: 0 }];
   assert.equal(koreksiSaldoAwalAkun(0, nol), null);
   assert.equal(koreksiSaldoAwalAkun(null, nol), null);
+});
+
+/* ==========================================================================
+   8. Statement bulan tengah tidak boleh jadi titik berangkat
+
+   Angkanya dari rekening BCA 6090378994 di pembukuan produksi: 23 dari 23
+   statement tidak menyimpan Saldo Awal cetakan bank, jadi meng-upload ulang
+   satu statement bulan tengah membuatnya jadi satu-satunya yang bersaldo.
+   ========================================================================== */
+
+/** Statement Jul 2025 s/d Agu 2026, hanya Juni 2026 yang menyimpan saldo. */
+const UPLOAD_BCA = [
+  { id: 'upl_jul25', periodeAwal: '2025-07-01', saldoAwalStatement: null },
+  { id: 'upl_agu25', periodeAwal: '2025-08-01', saldoAwalStatement: null },
+  { id: 'upl_jun26', periodeAwal: '2026-06-01', saldoAwalStatement: 4514109.68 },
+  { id: 'upl_agu26', periodeAwal: '2026-08-01', saldoAwalStatement: null },
+];
+
+test('statement bulan tengah tidak dipakai kalau ada statement yang lebih awal', () => {
+  assert.equal(statementTerawalBersaldo(UPLOAD_BCA), null);
+  assert.equal(koreksiSaldoAwalAkun(2181261.68, UPLOAD_BCA), null,
+    'memakai saldo awal Juni 2026 akan menggeser pembukuan sebesar netto sebelas bulan sebelumnya');
+});
+
+test('rekening yang saldo awalnya kosong pun tidak ditebak dari statement bulan tengah', () => {
+  assert.equal(koreksiSaldoAwalAkun(0, UPLOAD_BCA), null);
+  assert.equal(koreksiSaldoAwalAkun(null, UPLOAD_BCA), null);
+});
+
+test('begitu statement TERAWAL ikut menyimpan saldo, koreksinya jalan', () => {
+  const lengkap = UPLOAD_BCA.map((u) => (u.id === 'upl_jul25'
+    ? { ...u, saldoAwalStatement: 4950772.68 }
+    : u));
+  assert.equal(statementTerawalBersaldo(lengkap).periodeAwal, '2025-07-01');
+  assert.equal(koreksiSaldoAwalAkun(2181261.68, lengkap), 4950772.68);
+});
+
+test('Permata tetap terkoreksi: statement bersaldo terawal memang yang paling awal', () => {
+  // Tidak ada statement Permata yang periodenya lebih awal dari Des 2024.
+  assert.equal(statementTerawalBersaldo(UPLOAD_PERMATA).periodeAwal, '2024-12-01');
+  assert.equal(koreksiSaldoAwalAkun(11669299, UPLOAD_PERMATA), 3656649);
 });
