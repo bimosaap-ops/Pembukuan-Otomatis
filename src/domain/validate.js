@@ -174,24 +174,46 @@ export function uploadTumpangTindih(daftar) {
  * Saldo Awal rekening menurut e-statement PALING AWAL yang pernah di-upload
  * untuk rekening itu.
  *
+ * Hanya dikembalikan bila statement itu memang yang paling awal untuk rekening
+ * itu — lihat catatan di dalam fungsi soal kenapa statement bulan tengah tidak
+ * boleh dipakai sebagai titik berangkat.
+ *
  * @param {Array} uploads rekaman upload milik SATU rekening
  * @returns {{nilai:number, periodeAwal:string, id:string}|null} null bila tidak
- *   ada satu pun upload yang menyimpan angka Saldo Awal cetakan bank
+ *   ada satu pun upload yang menyimpan angka Saldo Awal cetakan bank, atau bila
+ *   yang menyimpannya bukan statement terawal rekening itu
  */
 export function statementTerawalBersaldo(uploads) {
-  const layak = (uploads || [])
-    .filter((u) => u && u.periodeAwal && Number.isFinite(Number(u.saldoAwalStatement))
+  const daftar = (uploads || []).filter((u) => u && u.periodeAwal);
+  const layak = daftar
+    .filter((u) => Number.isFinite(Number(u.saldoAwalStatement))
       && u.saldoAwalStatement !== null && u.saldoAwalStatement !== '')
     .sort((a, b) => String(a.periodeAwal).localeCompare(String(b.periodeAwal)));
 
   if (!layak.length) return null;
   const t = layak[0];
+
+  // Angka ini cuma berlaku sebagai titik berangkat SELURUH pembukuan rekening
+  // bila tidak ada statement lain yang periodenya lebih awal. Kalau ada — dan
+  // kebetulan statement itulah yang tidak menyimpan angka saldo cetakan bank —
+  // maka saldo sebelum periode ini memang tidak diketahui, dan memakai angka
+  // ini berarti seluruh mutasi di bulan-bulan sebelumnya terhitung dua kali.
+  //
+  // Bukan kasus karangan: pada satu rekening BCA di data produksi, 23 dari 23
+  // statement tidak menyimpan angka saldo sama sekali. Meng-upload ulang SATU
+  // statement bulan tengah akan membuat statement itu jadi "yang terawal
+  // bersaldo" — dan tanpa penjagaan ini, Saldo Awal rekening akan dipindahkan
+  // ke saldo awal bulan itu, menggeser pembukuan sebesar netto sebelas bulan
+  // sebelumnya.
+  const adaYangLebihAwal = daftar.some((u) => String(u.periodeAwal) < String(t.periodeAwal));
+  if (adaYangLebihAwal) return null;
+
   return { nilai: Number(t.saldoAwalStatement), periodeAwal: t.periodeAwal, id: t.id || '' };
 }
 
 /**
  * Nilai Saldo Awal yang SEHARUSNYA dipakai rekening, atau null bila yang
- * tersimpan sekarang sudah benar / tidak boleh disentuh.
+ * tersimpan sekarang sudah benar / tidak bisa ditentukan.
  *
  * Kenapa ini perlu: Saldo Awal rekening dulu diisi dari statement yang
  * KEBETULAN di-upload lebih dulu, bukan dari statement yang periodenya paling
@@ -199,15 +221,21 @@ export function statementTerawalBersaldo(uploads) {
  * lebih tua sesudahnya menambahkan transaksinya ke pembukuan tanpa memundurkan
  * titik berangkatnya, sehingga SELURUH saldo hitungan rekening itu bergeser
  * sebesar mutasi yang terlewat — diam-diam, dan untuk selamanya. Terlihat di
- * data produksi: satu rekening bergeser Rp 8.012.650, dan tab "Kontrol Saldo"
- * melaporkan selisih yang sama persis di SEMUA 21 bulan sekaligus, membuat
- * seluruh laporan kontrol rekening itu tidak terpakai.
+ * data produksi pada DUA rekening sekaligus: satu bergeser Rp 8.012.650 (tab
+ * "Kontrol Saldo" melaporkan selisih yang sama persis di SEMUA 21 bulannya),
+ * satu lagi Rp 2.769.511.
  *
- * Angka yang diketik sendiri oleh pengguna (mis. saldo pembuka kas tunai)
- * TIDAK PERNAH ditimpa: koreksi hanya berlaku bila nilai yang tersimpan
- * kosong/nol, atau terbukti berasal dari salah satu statement rekening itu
- * sendiri. Angka yang tidak cocok dengan statement mana pun dianggap milik
- * pengguna dan dibiarkan.
+ * Angka cetakan bank pada statement TERAWAL menang atas apa pun yang tersimpan:
+ * untuk rekening bank, "saldo sebelum transaksi pertama yang diimpor" justru
+ * itulah yang dicetak bank di situ, jadi nilai lain yang bertentangan dengannya
+ * memang salah. Yang menjaga pengguna bukan menebak-nebak dari mana angka lama
+ * berasal, melainkan dua syarat yang jauh lebih tegas:
+ *
+ *   - rekening tanpa statement bersaldo sama sekali tidak pernah disentuh —
+ *     termasuk seluruh akun kas/tunai, yang Saldo Awalnya memang hanya bisa
+ *     datang dari pengguna;
+ *   - statement bulan tengah tidak pernah dipakai sebagai titik berangkat
+ *     (lihat statementTerawalBersaldo).
  *
  * @param {number|null|undefined} saldoAwalSekarang nilai di record rekening
  * @param {Array} uploads rekaman upload milik rekening itu, termasuk yang baru
@@ -218,21 +246,12 @@ export function koreksiSaldoAwalAkun(saldoAwalSekarang, uploads) {
   if (!terawal) return null;
 
   const sekarang = Number(saldoAwalSekarang);
-  const belumTerisi = saldoAwalSekarang === null || saldoAwalSekarang === undefined
-    || saldoAwalSekarang === '' || !Number.isFinite(sekarang) || sekarang === 0;
+  const kosong = saldoAwalSekarang === null || saldoAwalSekarang === undefined
+    || saldoAwalSekarang === '' || !Number.isFinite(sekarang);
 
-  if (belumTerisi) return terawal.nilai === 0 ? null : terawal.nilai;
+  if (kosong) return terawal.nilai === 0 ? null : terawal.nilai;
   if (Math.abs(sekarang - terawal.nilai) <= TOLERANSI) return null;
-
-  // Bukan angka milik pengguna kalau ia persis sama dengan Saldo Awal cetakan
-  // salah satu statement rekening ini — itu jejak pengisian otomatis dari
-  // statement yang ternyata bukan yang paling awal.
-  const dariStatementLain = (uploads || []).some((u) => u
-    && Number.isFinite(Number(u.saldoAwalStatement))
-    && u.saldoAwalStatement !== null && u.saldoAwalStatement !== ''
-    && Math.abs(Number(u.saldoAwalStatement) - sekarang) <= TOLERANSI);
-
-  return dariStatementLain ? terawal.nilai : null;
+  return terawal.nilai;
 }
 
 /**
