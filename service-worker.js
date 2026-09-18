@@ -20,7 +20,7 @@
  * Naikkan CACHE_NAME setiap kali aset berubah agar versi lama dibersihkan.
  */
 
-const CACHE_NAME = 'pembukuan-v20';
+const CACHE_NAME = 'pembukuan-v21';
 
 /** Berapa lama menunggu jaringan sebelum memakai salinan cache. */
 const BATAS_JARINGAN_MS = 2500;
@@ -54,6 +54,7 @@ const ASET = [
   './src/ui/views/upload.js',
   './src/ui/views/rekening.js',
   './src/ui/views/transaksi.js',
+  './src/ui/views/email-transaksi.js',
   './src/ui/views/analitik.js',
   './src/ui/views/laporan.js',
   './src/ui/views/riwayat.js',
@@ -65,6 +66,7 @@ const ASET = [
   './src/core/dates.js',
   './src/core/hash.js',
   './src/core/events.js',
+  './src/core/mode.js',
 
   './src/data/db.js',
   './src/data/repo/accounts.js',
@@ -72,6 +74,8 @@ const ASET = [
   './src/data/repo/uploads.js',
   './src/data/repo/categories.js',
   './src/data/repo/settings.js',
+  './src/data/repo/email-transactions.js',
+  './src/data/repo/merchant-dictionary.js',
   './src/data/migrasi.js',
 
   './src/domain/entities.js',
@@ -80,6 +84,10 @@ const ASET = [
   './src/domain/validate.js',
   './src/domain/analytics.js',
   './src/domain/reports.js',
+  './src/domain/kategoriEmail.js',
+  './src/domain/merchantNormalisasi.js',
+  './src/domain/rekonsiliasiEmail.js',
+  './src/domain/tinjauanOtomatis.js',
 
   './src/parsers/layout.js',
   './src/parsers/pdf-loader.js',
@@ -94,6 +102,12 @@ const ASET = [
   './src/services/ingest.js',
   './src/services/export.js',
   './src/services/sheets-sync.js',
+  './src/services/auto-pull.js',
+  './src/services/email-feed-sync.js',
+  './src/services/email-ledger-merge.js',
+  './src/services/email-review.js',
+  './src/services/entitas-sync.js',
+  './src/services/transaksi-sync.js',
 
   './src/charts/svg.js',
   './src/charts/bar.js',

@@ -15,7 +15,9 @@
 import { hashBiner } from '../core/hash.js';
 import { bukaDokumen, ekstrakPotongan, ButuhPassword } from '../parsers/pdf-loader.js';
 import { parseStatement } from '../parsers/registry.js';
-import { validasiBaris, cocokkanRingkasan, periodeDariBaris } from '../domain/validate.js';
+import {
+  validasiBaris, cocokkanRingkasan, periodeDariBaris, koreksiSaldoAwalAkun,
+} from '../domain/validate.js';
 import { bubuhiBaseHash, tandaiDuplikat, ringkasDuplikat, hashFinal } from '../domain/dedupe.js';
 import { kategorikanBanyak } from '../domain/categorize.js';
 import { buatTransaksi, SUMBER, STATUS_UPLOAD } from '../domain/entities.js';
@@ -24,7 +26,7 @@ import * as trxRepo from '../data/repo/transactions.js';
 import * as uploadRepo from '../data/repo/uploads.js';
 import * as kategoriRepo from '../data/repo/categories.js';
 import { emit, EVENT } from '../core/events.js';
-import { syncAtauAntri, syncStatementKeSheets } from './sheets-sync.js';
+import { syncAtauAntri, syncStatementKeSheets, syncEntitasKeSheets } from './sheets-sync.js';
 import { ledgerMergeAktif, rekonsiliasiSetelahUpload } from './email-ledger-merge.js';
 
 export const LANGKAH = [
@@ -220,10 +222,6 @@ export async function simpanDraft(draft, pilihan = {}) {
   }
   if (!akun) throw new Error('Rekening tujuan tidak ditemukan.');
 
-  if (draft.hasil.saldoAwal !== null && draft.hasil.saldoAwal !== undefined && (akun.saldoAwal == null || akun.saldoAwal === 0)) {
-    akun = await akunRepo.simpanAkun({ ...akun, saldoAwal: draft.hasil.saldoAwal });
-  }
-
   // Hash dihitung ULANG di sini, dengan rekening yang sudah pasti.
   //
   // Yang dihitung di `prosesFile` hanya tebakan — rekeningnya bisa saja belum
@@ -285,6 +283,25 @@ export async function simpanDraft(draft, pilihan = {}) {
     mutasiDebetStatement: ringkasanStatement.mutasiDebet ?? null,
     mutasiKreditStatement: ringkasanStatement.mutasiKredit ?? null,
   });
+
+  // Saldo Awal rekening ditentukan dari statement PALING AWAL yang pernah
+  // di-upload untuk rekening ini, bukan dari statement yang kebetulan
+  // di-upload lebih dulu — dan dihitung ULANG setiap kali ada upload baru,
+  // supaya statement lama yang menyusul benar-benar memundurkan titik
+  // berangkatnya. Lihat koreksiSaldoAwalAkun() di domain/validate.js soal
+  // kenapa ini penting dan kenapa angka yang diketik pengguna tidak pernah
+  // ikut tertimpa. Dijalankan SESUDAH rekaman upload tersimpan supaya
+  // statement yang baru saja masuk ikut dipertimbangkan.
+  const uploadAkun = (await uploadRepo.daftar()).filter((u) => u.accountId === akun.id);
+  const saldoAwalBaru = koreksiSaldoAwalAkun(akun.saldoAwal, uploadAkun);
+  if (saldoAwalBaru !== null) {
+    akun = await akunRepo.simpanAkun({ ...akun, saldoAwal: saldoAwalBaru });
+    // Tab "Akun" di Sheet adalah sumber angka Saldo Awal untuk tab "Kontrol
+    // Saldo"; tanpa dikirim balik, koreksinya cuma berlaku di perangkat ini
+    // dan kontrol saldonya tetap melaporkan selisih yang sudah tidak ada.
+    // Latar belakang, tidak ditunggu — sama seperti jalur Sheets lainnya.
+    syncEntitasKeSheets('akun', [akun]).catch((e) => console.warn('Sheets akun gagal:', e));
+  }
 
   const transaksi = siapSimpan.map((b, i) => buatTransaksi({
     urutan: i,

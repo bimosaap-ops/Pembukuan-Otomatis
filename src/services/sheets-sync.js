@@ -175,6 +175,22 @@ export function transaksiDariBarisSheet(row) {
   return {
     id: row.id || '',
     hash: row.hash || '',
+    // `baseHash` tidak punya kolom sendiri di Sheet, dan tanpa dipulihkan di
+    // sini baris hasil pull tersimpan dengan baseHash KOSONG. Akibatnya dua
+    // hal yang sama-sama mahal: (1) hitungPerBaseHash() -- yang membaca
+    // indeks `baseHash` -- tidak melihat baris itu sama sekali, sehingga
+    // meng-upload ulang e-statement yang sama di perangkat ini dilaporkan
+    // "seluruhnya baru"; (2) hash penuh baris itu justru IDENTIK dengan hash
+    // yang dihitung ulang saat upload, dan indeks `hash` bersifat unique --
+    // penyimpanannya ditolak dan SELURUH upload batal padahal rekaman
+    // uploadnya sudah tertulis.
+    //
+    // Aman diturunkan dari `hash`: setiap pembuat hash di aplikasi ini
+    // memakai hashFinal(baseHash, ordinal) = `${baseHash}#${ordinal}`
+    // (dedupe.js) -- jalur PDF, manual (`m<waktu>`), maupun provisional
+    // email (`e<id>`) -- dan baseHash sendiri hex SHA-256, tidak pernah
+    // memuat '#'.
+    baseHash: String(row.hash || '').split('#')[0],
     tanggal: row.tanggal || '',
     deskripsi: row.deskripsi || '',
     nominal: Number(row.nominal) || 0,

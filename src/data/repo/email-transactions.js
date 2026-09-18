@@ -30,6 +30,32 @@ export async function simpanSatu(data) {
 }
 
 /**
+ * Saring baris tarikan menjadi yang benar-benar baru — murni, diekspor supaya
+ * bisa diuji tanpa IndexedDB.
+ *
+ * Penyaringannya DUA arah, dan arah kedua bukan sekadar kehati-hatian:
+ * indeks `gmailMessageId` bersifat unique (lihat db.js), jadi satu tarikan
+ * yang kebetulan memuat dua baris ber-`gmailMessageId` sama — termasuk dua
+ * baris yang sama-sama kosong — membuat `put` kedua ditolak dan SELURUH
+ * transaksi penyimpanan dibatalkan. Akibatnya bukan satu baris yang hilang,
+ * melainkan seluruh tarikan gagal, checkpoint tidak pernah maju, dan
+ * kegagalan yang sama terulang setiap kali tombol "Tarik email" ditekan.
+ * Kejadian pertama yang menang, konsisten dengan urutan kedatangan.
+ *
+ * @param {Array} daftar baris hasil tarikTransaksiEmail()
+ * @param {Set<string>} idSudahAda gmailMessageId yang sudah tersimpan
+ */
+export function saringBarisBaru(daftar, idSudahAda) {
+  const terlihat = new Set();
+  return (daftar || []).filter((d) => {
+    const gid = d && d.gmailMessageId ? String(d.gmailMessageId) : '';
+    if (idSudahAda.has(gid) || terlihat.has(gid)) return false;
+    terlihat.add(gid);
+    return true;
+  });
+}
+
+/**
  * Simpan banyak transaksi email sekaligus, MELEWATI yang `gmailMessageId`-nya
  * sudah tersimpan — jalur dedup utama saat menarik hasil pull dari Sheets
  * (lihat src/services/email-feed-sync.js), karena pull yang sama bisa saja
@@ -39,8 +65,11 @@ export async function simpanSatu(data) {
 export async function simpanBanyakBaru(daftar) {
   if (!daftar.length) return [];
   const sudahAda = await ambilSemua(STORE.EMAIL_TRANSACTIONS);
-  const idSudahAda = new Set(sudahAda.map((t) => t.gmailMessageId).filter(Boolean));
-  const baru = daftar.filter((d) => !idSudahAda.has(d.gmailMessageId));
+  // String kosong IKUT dihitung, tidak disaring keluar: indeks unique tidak
+  // membedakannya dari kunci lain, jadi satu record ber-gmailMessageId kosong
+  // yang sudah tersimpan tetap membuat penyimpanan berikutnya ditolak.
+  const idSudahAda = new Set(sudahAda.map((t) => String(t.gmailMessageId || '')));
+  const baru = saringBarisBaru(daftar, idSudahAda);
   if (!baru.length) return [];
 
   const siap = baru.map((d) => buatTransaksiEmail(d));

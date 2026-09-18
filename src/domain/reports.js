@@ -14,9 +14,20 @@ import { tanpaTransferInternal } from './analytics.js';
  * di tengah atau beberapa rekening digabung dalam satu laporan.
  */
 export function bukuKas(transaksi, saldoAwal = 0) {
-  const urut = [...transaksi].sort((a, b) => (a.tanggal === b.tanggal
-    ? String(a.dibuatPada).localeCompare(String(b.dibuatPada))
-    : String(a.tanggal).localeCompare(String(b.tanggal))));
+  // Urutannya HARUS sama dengan repo/transactions.js `bandingkan`: tanggal,
+  // lalu nomor urut baris di dalam statement, baru waktu pembuatan. Memakai
+  // `dibuatPada` lebih dulu — seperti sebelumnya — membuat baris yang
+  // bertanggal sama tersusun menurut kapan record-nya kebetulan ditulis ke
+  // database, bukan menurut urutan cetak statement; saldo berjalan di kolom
+  // paling kanan jadi melompat-lompat dan tidak bisa dicocokkan baris per
+  // baris dengan rekening koran aslinya maupun dengan halaman Transaksi.
+  const urut = [...transaksi].sort((a, b) => {
+    if (a.tanggal !== b.tanggal) return String(a.tanggal).localeCompare(String(b.tanggal));
+    const ua = Number(a.urutan) || 0;
+    const ub = Number(b.urutan) || 0;
+    if (ua !== ub) return ua - ub;
+    return String(a.dibuatPada).localeCompare(String(b.dibuatPada));
+  });
 
   let saldo = saldoAwal;
   const baris = urut.map((t) => {
