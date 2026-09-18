@@ -27,6 +27,7 @@ import { buatTransaksi } from '../src/domain/entities.js';
 import { trenSaldo, saldoPembukaPeriode, totalMutasi, totalSaldoAwal } from '../src/domain/analytics.js';
 import { bukuKas } from '../src/domain/reports.js';
 import { saringBarisBaru } from '../src/data/repo/email-transactions.js';
+import { statementTerawalBersaldo, koreksiSaldoAwalAkun } from '../src/domain/validate.js';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 const AKAR = join(DIR, '..');
@@ -204,4 +205,68 @@ test('baris ber-gmailMessageId kosong juga cuma boleh lolos satu kali', () => {
 test('yang sudah tersimpan tetap dilewati seperti sebelumnya', () => {
   const hasil = saringBarisBaru([{ gmailMessageId: 'm1' }, { gmailMessageId: 'm2' }], new Set(['m1']));
   assert.deepEqual(hasil.map((b) => b.gmailMessageId), ['m2']);
+});
+
+/* ==========================================================================
+   7. Saldo Awal rekening diambil dari statement PALING AWAL
+
+   Skenario di bawah bukan karangan: angkanya diambil apa adanya dari tab
+   "Statement", "Akun", dan "Kontrol Saldo" pada pembukuan produksi
+   (rekening Permata), tempat kesalahan ini menggeser seluruh saldo hitungan
+   sebesar Rp 8.012.650 dan membuat 21 dari 21 bulan dilaporkan ❌.
+   ========================================================================== */
+
+/** Urutannya sengaja acak: yang menentukan periode, bukan urutan pemanggilan. */
+const UPLOAD_PERMATA = [
+  { id: 'upl_mei25', periodeAwal: '2025-05-04', saldoAwalStatement: 11669299 },
+  { id: 'upl_des24', periodeAwal: '2024-12-01', saldoAwalStatement: 3656649 },
+  { id: 'upl_apr25', periodeAwal: '2025-04-01', saldoAwalStatement: 11824666 },
+  { id: 'upl_agu26', periodeAwal: '2026-08-01', saldoAwalStatement: 454954 },
+];
+
+test('statement terawal dikenali dari periode, bukan dari urutan upload', () => {
+  const t = statementTerawalBersaldo(UPLOAD_PERMATA);
+  assert.equal(t.id, 'upl_des24');
+  assert.equal(t.nilai, 3656649);
+});
+
+test('saldo awal yang terlanjur diisi statement bukan-terawal dikoreksi', () => {
+  // Rp 11.669.299 = Saldo Awal statement Mei 2025, yang kebetulan di-upload
+  // paling dulu. Statement Desember 2024 menyusul belakangan.
+  assert.equal(koreksiSaldoAwalAkun(11669299, UPLOAD_PERMATA), 3656649);
+  assert.equal(11669299 - 3656649, 8012650, 'persis selisih yang dilaporkan Kontrol Saldo');
+});
+
+test('saldo awal yang sudah benar tidak disentuh', () => {
+  assert.equal(koreksiSaldoAwalAkun(3656649, UPLOAD_PERMATA), null);
+});
+
+test('rekening yang saldo awalnya masih kosong diisi dari statement terawal', () => {
+  assert.equal(koreksiSaldoAwalAkun(0, UPLOAD_PERMATA), 3656649);
+  assert.equal(koreksiSaldoAwalAkun(null, UPLOAD_PERMATA), 3656649);
+  assert.equal(koreksiSaldoAwalAkun(undefined, UPLOAD_PERMATA), 3656649);
+});
+
+test('angka yang diketik sendiri oleh pengguna tidak pernah ditimpa', () => {
+  // 7.500.000 tidak sama dengan Saldo Awal statement mana pun -> milik pengguna.
+  assert.equal(koreksiSaldoAwalAkun(7500000, UPLOAD_PERMATA), null);
+});
+
+test('rekening tanpa statement bersaldo dibiarkan apa adanya', () => {
+  // Seluruh 23 statement BCA pada pembukuan produksi tidak menyimpan Saldo
+  // Awal — jalur ini tidak boleh menebak angka apa pun untuk mereka.
+  const tanpaSaldo = [
+    { id: 'u1', periodeAwal: '2025-07-01', saldoAwalStatement: null },
+    { id: 'u2', periodeAwal: '2025-08-01', saldoAwalStatement: '' },
+  ];
+  assert.equal(statementTerawalBersaldo(tanpaSaldo), null);
+  assert.equal(koreksiSaldoAwalAkun(0, tanpaSaldo), null);
+  assert.equal(koreksiSaldoAwalAkun(2181262, tanpaSaldo), null);
+  assert.equal(koreksiSaldoAwalAkun(0, []), null);
+});
+
+test('saldo awal nol yang memang benar tidak dilaporkan sebagai perubahan', () => {
+  const nol = [{ id: 'u1', periodeAwal: '2025-01-01', saldoAwalStatement: 0 }];
+  assert.equal(koreksiSaldoAwalAkun(0, nol), null);
+  assert.equal(koreksiSaldoAwalAkun(null, nol), null);
 });

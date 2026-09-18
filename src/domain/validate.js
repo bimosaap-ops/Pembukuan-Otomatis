@@ -171,6 +171,71 @@ export function uploadTumpangTindih(daftar) {
 }
 
 /**
+ * Saldo Awal rekening menurut e-statement PALING AWAL yang pernah di-upload
+ * untuk rekening itu.
+ *
+ * @param {Array} uploads rekaman upload milik SATU rekening
+ * @returns {{nilai:number, periodeAwal:string, id:string}|null} null bila tidak
+ *   ada satu pun upload yang menyimpan angka Saldo Awal cetakan bank
+ */
+export function statementTerawalBersaldo(uploads) {
+  const layak = (uploads || [])
+    .filter((u) => u && u.periodeAwal && Number.isFinite(Number(u.saldoAwalStatement))
+      && u.saldoAwalStatement !== null && u.saldoAwalStatement !== '')
+    .sort((a, b) => String(a.periodeAwal).localeCompare(String(b.periodeAwal)));
+
+  if (!layak.length) return null;
+  const t = layak[0];
+  return { nilai: Number(t.saldoAwalStatement), periodeAwal: t.periodeAwal, id: t.id || '' };
+}
+
+/**
+ * Nilai Saldo Awal yang SEHARUSNYA dipakai rekening, atau null bila yang
+ * tersimpan sekarang sudah benar / tidak boleh disentuh.
+ *
+ * Kenapa ini perlu: Saldo Awal rekening dulu diisi dari statement yang
+ * KEBETULAN di-upload lebih dulu, bukan dari statement yang periodenya paling
+ * awal — dan sekali terisi tidak pernah dikoreksi. Meng-upload statement yang
+ * lebih tua sesudahnya menambahkan transaksinya ke pembukuan tanpa memundurkan
+ * titik berangkatnya, sehingga SELURUH saldo hitungan rekening itu bergeser
+ * sebesar mutasi yang terlewat — diam-diam, dan untuk selamanya. Terlihat di
+ * data produksi: satu rekening bergeser Rp 8.012.650, dan tab "Kontrol Saldo"
+ * melaporkan selisih yang sama persis di SEMUA 21 bulan sekaligus, membuat
+ * seluruh laporan kontrol rekening itu tidak terpakai.
+ *
+ * Angka yang diketik sendiri oleh pengguna (mis. saldo pembuka kas tunai)
+ * TIDAK PERNAH ditimpa: koreksi hanya berlaku bila nilai yang tersimpan
+ * kosong/nol, atau terbukti berasal dari salah satu statement rekening itu
+ * sendiri. Angka yang tidak cocok dengan statement mana pun dianggap milik
+ * pengguna dan dibiarkan.
+ *
+ * @param {number|null|undefined} saldoAwalSekarang nilai di record rekening
+ * @param {Array} uploads rekaman upload milik rekening itu, termasuk yang baru
+ * @returns {number|null} nilai baru, atau null bila tidak ada yang perlu diubah
+ */
+export function koreksiSaldoAwalAkun(saldoAwalSekarang, uploads) {
+  const terawal = statementTerawalBersaldo(uploads);
+  if (!terawal) return null;
+
+  const sekarang = Number(saldoAwalSekarang);
+  const belumTerisi = saldoAwalSekarang === null || saldoAwalSekarang === undefined
+    || saldoAwalSekarang === '' || !Number.isFinite(sekarang) || sekarang === 0;
+
+  if (belumTerisi) return terawal.nilai === 0 ? null : terawal.nilai;
+  if (Math.abs(sekarang - terawal.nilai) <= TOLERANSI) return null;
+
+  // Bukan angka milik pengguna kalau ia persis sama dengan Saldo Awal cetakan
+  // salah satu statement rekening ini — itu jejak pengisian otomatis dari
+  // statement yang ternyata bukan yang paling awal.
+  const dariStatementLain = (uploads || []).some((u) => u
+    && Number.isFinite(Number(u.saldoAwalStatement))
+    && u.saldoAwalStatement !== null && u.saldoAwalStatement !== ''
+    && Math.abs(Number(u.saldoAwalStatement) - sekarang) <= TOLERANSI);
+
+  return dariStatementLain ? terawal.nilai : null;
+}
+
+/**
  * Transaksi kembar yang datang dari BERKAS BERBEDA.
  *
  * Dua pembayaran QRIS Rp 20.000 di hari yang sama memang bisa benar-benar
