@@ -19,6 +19,7 @@ import { jalankanAutoPull } from '../services/auto-pull.js';
 import {
   jalankanMigrasi, migrasiKataKunciBawaan, migrasiKategoriInvestasi, migrasiKategoriFinalEmail,
   hapusProvisionalYatimDuplikat, hapusProvisionalDobelEmail, migrasiTanggalProvisionalWib,
+  hapusProvisionalYatimDiSheet,
 } from '../data/migrasi.js';
 
 /**
@@ -153,6 +154,17 @@ async function mulai() {
     if (migrasiHapusDobel?.dijalankan && migrasiHapusDobel.jumlah) {
       toastSukses(`${migrasiHapusDobel.jumlah} baris transaksi email dobel dibersihkan `
         + `(${rupiah(migrasiHapusDobel.nominal)}).`);
+    }
+
+    // Kembaran yang hanya ada di Sheet -- tidak terlihat oleh pembersih lokal
+    // di atas karena tidak pernah tertarik ke perangkat ini.
+    const migrasiYatimSheet = await hapusProvisionalYatimDiSheet().catch((e) => {
+      console.error('Migrasi hapus provisional yatim di Sheet gagal:', e);
+      return null;
+    });
+    if (migrasiYatimSheet?.dijalankan && migrasiYatimSheet.jumlah) {
+      toastSukses(`${migrasiYatimSheet.jumlah} baris transaksi email dobel di Google Sheet dihapus `
+        + `(${rupiah(migrasiYatimSheet.nominal)}).`);
     }
 
     // Sesudah pembersihan dobel di atas (yang masih mengelompokkan per
