@@ -18,7 +18,11 @@ import * as emailTrxRepo from './repo/email-transactions.js';
 import * as akunRepo from './repo/accounts.js';
 import { hitungBaseHash, hashFinal } from '../domain/dedupe.js';
 import { KATEGORI_BAWAAN, tambahPola } from '../domain/categorize.js';
-import { KUNCI_SHEETS, hapusDariSheets } from '../services/sheets-sync.js';
+import { KUNCI_SHEETS, hapusDariSheets, syncAtauAntri } from '../services/sheets-sync.js';
+import {
+  rencanakanBersihProvisionalDobel, rencanakanKoreksiTanggalProvisional,
+} from '../services/email-ledger-merge.js';
+import { SUMBER } from '../domain/entities.js';
 
 /** Bendera di store settings; nilainya versi migrasi yang sudah dijalankan. */
 export const KUNCI_MIGRASI = 'migrasiHashRekening';
@@ -43,6 +47,10 @@ export const KUNCI_MIGRASI_KATEGORI_INVESTASI = 'migrasiKategoriInvestasiV1';
 export const KUNCI_MIGRASI_KATEGORI_FINAL_EMAIL = 'migrasiKategoriFinalEmailV1';
 /** Bendera migrasi pembersihan baris provisional yatim — lihat hapusProvisionalYatimDuplikat. */
 export const KUNCI_MIGRASI_HAPUS_PROVISIONAL_YATIM = 'hapusProvisionalYatimDuplikatV1';
+/** Bendera pembersihan provisional dobel lintas id email — lihat hapusProvisionalDobelEmail. */
+export const KUNCI_MIGRASI_HAPUS_PROVISIONAL_DOBEL_EMAIL = 'hapusProvisionalDobelEmailV1';
+/** Bendera koreksi tanggal UTC -> WIB baris provisional — lihat migrasiTanggalProvisionalWib. */
+export const KUNCI_MIGRASI_TANGGAL_PROVISIONAL_WIB = 'tanggalProvisionalWibV1';
 
 /**
  * 13 baris ledger provisional dobel yang ditemukan lewat backup database
@@ -345,4 +353,100 @@ export async function hapusProvisionalYatimDuplikat() {
 
   await pengaturanRepo.tulis(KUNCI_MIGRASI_HAPUS_PROVISIONAL_YATIM, '1');
   return { dijalankan: true, jumlah: hashDihapus.length };
+}
+
+/**
+ * Bersihkan baris provisional dobel dari insiden 2026-10-06: satu transaksi
+ * email tercatat dua kali karena diproses dengan dua id email berbeda (id
+ * dulu acak per perangkat, lihat buatTransaksiEmail() di entities.js).
+ * Penyebabnya sudah ditutup di dua tempat (id deterministik dari
+ * gmailMessageId, dan pengaman adopsi di buatProvisionalDariEmail()); ini
+ * membersihkan yang sudah terlanjur ada.
+ *
+ * Berbeda dari hapusProvisionalYatimDuplikat() di atas, sasarannya DIHITUNG
+ * (lihat rencanakanBersihProvisionalDobel), bukan daftar id: id baris
+ * hasil tarik Sheets berbeda di setiap perangkat. Aturannya konservatif --
+ * hanya kelompok yang jumlah barisnya melebihi jumlah email pasangannya
+ * yang disentuh, dan baris yang dipegang email lokal tidak pernah dihapus.
+ */
+export async function hapusProvisionalDobelEmail() {
+  const sudah = await pengaturanRepo.baca(KUNCI_MIGRASI_HAPUS_PROVISIONAL_DOBEL_EMAIL, '');
+  if (sudah) return { dilewati: true };
+
+  const [provisional, emailLokal, akunMap] = await Promise.all([
+    trxRepo.perSumber(SUMBER.EMAIL_PROVISIONAL),
+    emailTrxRepo.semua(),
+    akunRepo.peta(),
+  ]);
+  const { hapus, tautkan } = rencanakanBersihProvisionalDobel(provisional, emailLokal, akunMap);
+
+  const akunTersentuh = new Set();
+  for (const t of hapus) {
+    await trxRepo.hapusTransaksi(t.id);
+    akunTersentuh.add(t.accountId);
+  }
+  for (const { email, trx } of tautkan) {
+    await trxRepo.simpanSatu({ ...trx, emailTrxId: email.id });
+    await emailTrxRepo.simpanSatu({ ...email, provisionalTrxId: trx.id });
+  }
+  for (const accountId of akunTersentuh) {
+    if (accountId) await akunRepo.hitungUlangSaldo(accountId);
+  }
+
+  const hashDihapus = hapus.map((t) => t.hash).filter(Boolean);
+  if (hashDihapus.length) {
+    hapusDariSheets(hashDihapus).catch((e) => console.warn('Hapus provisional dobel di Sheets gagal:', e));
+  }
+
+  await pengaturanRepo.tulis(KUNCI_MIGRASI_HAPUS_PROVISIONAL_DOBEL_EMAIL, '1');
+  return {
+    dijalankan: true,
+    jumlah: hapus.length,
+    nominal: hapus.reduce((n, t) => n + Math.abs(Number(t.nominal) || 0), 0),
+  };
+}
+
+/**
+ * Koreksi tanggal baris provisional yang tercatat dengan tanggal UTC
+ * (transaksi email pukul 00:00-06:59 WIB jatuh sehari lebih awal; lihat
+ * tanggalWib() di core/dates.js). WAJIB dijalankan SESUDAH
+ * hapusProvisionalDobelEmail(): pembersih itu mengelompokkan baris per
+ * baseHash, dan baseHash ikut berubah di sini.
+ *
+ * Hash tidak diubah, jadi sinkron Sheets memperbarui baris yang sama
+ * (upsert berbasis hash), bukan menambah baris baru.
+ */
+export async function migrasiTanggalProvisionalWib() {
+  const sudah = await pengaturanRepo.baca(KUNCI_MIGRASI_TANGGAL_PROVISIONAL_WIB, '');
+  if (sudah) return { dilewati: true };
+
+  const [provisional, emailLokal] = await Promise.all([
+    trxRepo.perSumber(SUMBER.EMAIL_PROVISIONAL),
+    emailTrxRepo.semua(),
+  ]);
+  const rencana = rencanakanKoreksiTanggalProvisional(provisional, emailLokal);
+
+  const diperbarui = [];
+  const akunTersentuh = new Set();
+  for (const { trx, tanggal } of rencana) {
+    const baseHash = await hitungBaseHash({
+      accountId: trx.accountId, tanggal, deskripsi: trx.deskripsi, nominal: trx.nominal,
+    });
+    diperbarui.push(await trxRepo.simpanSatu({
+      ...trx, tanggal, baseHash, diubahPada: new Date().toISOString(),
+    }));
+    akunTersentuh.add(trx.accountId);
+  }
+  for (const accountId of akunTersentuh) {
+    if (accountId) await akunRepo.hitungUlangSaldo(accountId);
+  }
+
+  if (diperbarui.length) {
+    Promise.all([akunRepo.peta(), kategoriRepo.peta()])
+      .then(([akunMap, kategoriMap]) => syncAtauAntri(diperbarui, akunMap, kategoriMap))
+      .catch((e) => console.warn('Sheets sync koreksi tanggal provisional gagal:', e));
+  }
+
+  await pengaturanRepo.tulis(KUNCI_MIGRASI_TANGGAL_PROVISIONAL_WIB, '1');
+  return { dijalankan: true, jumlah: diperbarui.length };
 }

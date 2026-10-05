@@ -13,11 +13,12 @@ import {
 import { cegahDropDiLuar } from './components/dropzone.js';
 import { toastGagal, toastSukses } from './components/toast.js';
 import { on, EVENT } from '../core/events.js';
+import { rupiah } from '../core/format.js';
 import { pantauKoneksiSheets } from '../services/sheets-sync.js';
 import { jalankanAutoPull } from '../services/auto-pull.js';
 import {
   jalankanMigrasi, migrasiKataKunciBawaan, migrasiKategoriInvestasi, migrasiKategoriFinalEmail,
-  hapusProvisionalYatimDuplikat,
+  hapusProvisionalYatimDuplikat, hapusProvisionalDobelEmail, migrasiTanggalProvisionalWib,
 } from '../data/migrasi.js';
 
 /**
@@ -141,6 +142,28 @@ async function mulai() {
     });
     if (migrasiHapusYatim?.dijalankan && migrasiHapusYatim.jumlah) {
       toastSukses(`${migrasiHapusYatim.jumlah} baris provisional dobel (insiden lama) dibersihkan.`);
+    }
+
+    // Pembersihan insiden 2026-10-06: transaksi email yang tercatat dua kali
+    // dengan id email berbeda (lihat migrasi.js hapusProvisionalDobelEmail).
+    const migrasiHapusDobel = await hapusProvisionalDobelEmail().catch((e) => {
+      console.error('Migrasi hapus provisional dobel gagal:', e);
+      return null;
+    });
+    if (migrasiHapusDobel?.dijalankan && migrasiHapusDobel.jumlah) {
+      toastSukses(`${migrasiHapusDobel.jumlah} baris transaksi email dobel dibersihkan `
+        + `(${rupiah(migrasiHapusDobel.nominal)}).`);
+    }
+
+    // Sesudah pembersihan dobel di atas (yang masih mengelompokkan per
+    // baseHash bertanggal UTC): transaksi email dini hari WIB yang tercatat
+    // sehari lebih awal dikoreksi tanggalnya.
+    const migrasiTanggal = await migrasiTanggalProvisionalWib().catch((e) => {
+      console.error('Migrasi tanggal provisional WIB gagal:', e);
+      return null;
+    });
+    if (migrasiTanggal?.dijalankan && migrasiTanggal.jumlah) {
+      toastSukses(`Tanggal ${migrasiTanggal.jumlah} transaksi email dini hari dikoreksi ke WIB.`);
     }
 
     // Antrean retry Sheets (kalau ada, dari sesi sebelumnya yang gagal

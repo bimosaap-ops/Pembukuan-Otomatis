@@ -183,6 +183,24 @@ export function periodePreset(nama, acuan = hariIni()) {
   }
 }
 
+/** Selisih WIB terhadap UTC. Indonesia bagian barat tidak memakai DST. */
+const OFFSET_WIB_MS = 7 * 60 * 60 * 1000;
+
+/**
+ * Tanggal kalender WIB ('YYYY-MM-DD') dari sebuah waktu ISO.
+ *
+ * `waktuTransaksi` email dikirim Apps Script lewat toISOString() -- UTC.
+ * Memotong 10 karakter pertamanya memberi tanggal UTC, sehingga transaksi
+ * pukul 00:00-06:59 WIB tercatat sehari lebih awal (di awal bulan, masuk ke
+ * bulan sebelumnya). Tanggal di e-statement bank selalu WIB. Masukan yang
+ * tidak bisa diurai dipotong 10 karakter seperti perilaku lama.
+ */
+export function tanggalWib(waktuIso) {
+  const t = new Date(waktuIso);
+  if (!waktuIso || Number.isNaN(t.getTime())) return String(waktuIso || '').slice(0, 10);
+  return new Date(t.getTime() + OFFSET_WIB_MS).toISOString().slice(0, 10);
+}
+
 /**
  * Rentang tanggal (string 'YYYY-MM-DD') di sekitar sebuah waktu transaksi —
  * dipakai mencari kandidat rekonsiliasi transaksi email vs e-statement lewat
