@@ -244,6 +244,83 @@ export function rencanakanBersihProvisionalDobel(provisional, emailLokal, akunMa
 }
 
 /**
+ * Rencana penghapusan baris provisional dobel yang HANYA ada di Sheet --
+ * murni, diekspor untuk tes; dijalankan sekali oleh
+ * hapusProvisionalYatimDiSheet() (data/migrasi.js).
+ *
+ * Melengkapi rencanakanBersihProvisionalDobel(), yang hanya melihat database
+ * lokal. Di data produksi insiden 2026-10-06, perangkat utama memegang 2290
+ * transaksi sementara Sheet 2343 -- selisihnya tepat 53 baris dobel, yang
+ * tidak pernah tertarik ke perangkat (checkpoint tarik sudah melewatinya).
+ * Pembersih lokal tidak melihat satu pun kelompok berisi dua baris.
+ *
+ * Baris Sheet dianggap yatim bila ber-sumber email_provisional, hash dan
+ * id-nya tidak ada di perangkat ini, dan perangkat ini sudah memegang baris
+ * provisional dengan awalan hash yang sama. Yang dihapus hanya kelebihannya
+ * terhadap jumlah email pasangan; kelompok tanpa email pasangan atau tanpa
+ * baris lokal dilewati (bisa jadi transaksi sah yang belum tertarik).
+ *
+ * Kelompok dipakai lewat AWALAN HASH, bukan field baseHash: hash tidak
+ * pernah berubah, sedangkan baseHash lokal dihitung ulang oleh
+ * migrasiTanggalProvisionalWib().
+ *
+ * @param {Array} barisSheet hasil tarikTransaksiDariSheets(null).baris
+ * @param {Array} transaksiLokal seluruh transaksi lokal
+ * @param {Array} emailLokal seluruh record email_transactions lokal
+ * @param {Map} akunMap accountId -> akun (untuk bank)
+ * @returns {Array} baris Sheet yang harus dihapus
+ */
+export function rencanakanHapusYatimSheet(barisSheet, transaksiLokal, emailLokal, akunMap) {
+  const awalan = (t) => String(t.hash || '').split('#')[0];
+  const hashLokal = new Set(transaksiLokal.map((t) => t.hash).filter(Boolean));
+  const idLokal = new Set(transaksiLokal.map((t) => t.id));
+
+  const lokalPerAwalan = new Map();
+  for (const t of transaksiLokal) {
+    if (t.sumber !== SUMBER.EMAIL_PROVISIONAL || !awalan(t)) continue;
+    if (!lokalPerAwalan.has(awalan(t))) lokalPerAwalan.set(awalan(t), []);
+    lokalPerAwalan.get(awalan(t)).push(t);
+  }
+
+  const yatimPerAwalan = new Map();
+  for (const r of barisSheet) {
+    if (r.sumber !== SUMBER.EMAIL_PROVISIONAL || !awalan(r)) continue;
+    if (hashLokal.has(r.hash) || idLokal.has(r.id)) continue;
+    if (!yatimPerAwalan.has(awalan(r))) yatimPerAwalan.set(awalan(r), []);
+    yatimPerAwalan.get(awalan(r)).push(r);
+  }
+
+  const kunci = (bank, tanggal, deskripsi, nominal) => [
+    bank || '', tanggal, normalisasiDeskripsi(deskripsi), (Math.round(Number(nominal) * 100) / 100).toFixed(2),
+  ].join('|');
+  const jumlahEmail = new Map();
+  for (const e of emailLokal) {
+    const b = bentukBarisEmail(e);
+    for (const tgl of new Set([b.tanggal, b.tanggalLama])) {
+      const k = kunci(e.bank, tgl, b.deskripsi, b.nominal);
+      jumlahEmail.set(k, (jumlahEmail.get(k) || 0) + 1);
+    }
+  }
+
+  const hapus = [];
+  for (const [aw, yatim] of yatimPerAwalan) {
+    const lokal = lokalPerAwalan.get(aw) || [];
+    if (!lokal.length) continue;
+    const contoh = lokal[0];
+    // Tanggal dari baris Sheet (tanggal asal awalan hash), bukan dari baris
+    // lokal yang mungkin sudah dikoreksi ke WIB.
+    const harapan = jumlahEmail.get(kunci(
+      akunMap.get(contoh.accountId)?.bank, yatim[0].tanggal, contoh.deskripsi, contoh.nominal,
+    )) || 0;
+    if (!harapan) continue;
+    const kuota = Math.max(harapan - lokal.length, 0);
+    const urut = [...yatim].sort((a, b) => String(b.diubahPada || '').localeCompare(String(a.diubahPada || '')));
+    hapus.push(...urut.slice(kuota));
+  }
+  return hapus;
+}
+
+/**
  * Rencana koreksi tanggal baris provisional lama yang tercatat dengan tanggal
  * UTC -- murni, diekspor untuk tes; dijalankan sekali oleh
  * migrasiTanggalProvisionalWib() (data/migrasi.js).

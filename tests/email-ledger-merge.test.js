@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import {
   kunciSettingAkunBca, rencanakanRekonsiliasi, putuskanAksiBackfill,
   pilihProvisionalTanpaPemilik, rencanakanBersihProvisionalDobel, bentukBarisEmail,
-  rencanakanKoreksiTanggalProvisional,
+  rencanakanKoreksiTanggalProvisional, rencanakanHapusYatimSheet,
 } from '../src/services/email-ledger-merge.js';
 import { KUNCI } from '../src/data/repo/settings.js';
 import { STATUS_COCOK_EMAIL, buatTransaksiEmail } from '../src/domain/entities.js';
@@ -343,4 +343,49 @@ test('rencanakanKoreksiTanggalProvisional: baris yang tanggalnya sudah benar ata
   const siang = provisional({ id: 'trx_3', tanggal: '2026-09-28', hash: 'y#etrxe_lokal' });
   const tanpaEmail = provisional({ id: 'trx_4', tanggal: '2026-09-19', hash: 'z#etrxe_asing' });
   assert.equal(rencanakanKoreksiTanggalProvisional([sudahBenar, diubahPengguna, siang, tanpaEmail], [emailDiniHari, emailKabita]).length, 0);
+});
+
+/* ==========================================================================
+   Kembaran yang hanya ada di Sheet (perangkat 2290 baris, Sheet 2343)
+   ========================================================================== */
+
+function barisSheet(over = {}) {
+  return {
+    id: 'trx_sheet', hash: 'bh1#etrxe_asing', sumber: 'email_provisional',
+    tanggal: '2026-09-28', deskripsi: 'Warung kabita', nominal: -15000, diubahPada: '2026-10-06T02:17:34.558Z',
+    ...over,
+  };
+}
+const lokalKabita = provisional({ id: 'trx_lokal', hash: 'bh1#etrxe_lokal', sumber: 'email_provisional' });
+
+test('rencanakanHapusYatimSheet: kembaran yang hanya ada di Sheet dihapus, baris lokal tidak', () => {
+  const sheet = [barisSheet({ id: 'trx_lokal', hash: 'bh1#etrxe_lokal' }), barisSheet()];
+  const hapus = rencanakanHapusYatimSheet(sheet, [lokalKabita], [emailKabita], akunMap);
+  assert.deepEqual(hapus.map((r) => r.hash), ['bh1#etrxe_asing']);
+});
+
+test('rencanakanHapusYatimSheet: dua email kembar sah, satu baris belum tertarik -> tidak dihapus', () => {
+  const e2 = { ...emailKabita, id: 'trxe_kedua' };
+  const hapus = rencanakanHapusYatimSheet([barisSheet()], [lokalKabita], [emailKabita, e2], akunMap);
+  assert.equal(hapus.length, 0);
+});
+
+test('rencanakanHapusYatimSheet: tanpa baris lokal atau tanpa email pasangan -> tidak disentuh', () => {
+  assert.equal(rencanakanHapusYatimSheet([barisSheet()], [], [emailKabita], akunMap).length, 0);
+  assert.equal(rencanakanHapusYatimSheet([barisSheet()], [lokalKabita], [], akunMap).length, 0);
+});
+
+test('rencanakanHapusYatimSheet: baris non-provisional di Sheet tidak pernah disentuh', () => {
+  const pdf = barisSheet({ sumber: 'pdf', hash: 'bh1#1' });
+  assert.equal(rencanakanHapusYatimSheet([pdf], [lokalKabita], [emailKabita], akunMap).length, 0);
+});
+
+test('rencanakanHapusYatimSheet: tetap cocok setelah tanggal lokal dikoreksi ke WIB', () => {
+  const lokalWib = provisional({
+    id: 'trx_l', hash: 'bhD#etrxe_diva', baseHash: 'bhBaru', sumber: 'email_provisional',
+    tanggal: '2026-09-20', deskripsi: 'DIVA QUINTA MAHMUDA', nominal: -700000,
+  });
+  const yatim = barisSheet({ hash: 'bhD#etrxe_x', tanggal: '2026-09-19', deskripsi: 'DIVA QUINTA MAHMUDA', nominal: -700000 });
+  const hapus = rencanakanHapusYatimSheet([yatim], [lokalWib], [emailDiniHari], akunMap);
+  assert.equal(hapus.length, 1);
 });

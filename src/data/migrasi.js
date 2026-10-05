@@ -18,9 +18,11 @@ import * as emailTrxRepo from './repo/email-transactions.js';
 import * as akunRepo from './repo/accounts.js';
 import { hitungBaseHash, hashFinal } from '../domain/dedupe.js';
 import { KATEGORI_BAWAAN, tambahPola } from '../domain/categorize.js';
-import { KUNCI_SHEETS, hapusDariSheets, syncAtauAntri } from '../services/sheets-sync.js';
 import {
-  rencanakanBersihProvisionalDobel, rencanakanKoreksiTanggalProvisional,
+  KUNCI_SHEETS, hapusDariSheets, syncAtauAntri, tarikTransaksiDariSheets,
+} from '../services/sheets-sync.js';
+import {
+  rencanakanBersihProvisionalDobel, rencanakanKoreksiTanggalProvisional, rencanakanHapusYatimSheet,
 } from '../services/email-ledger-merge.js';
 import { SUMBER } from '../domain/entities.js';
 
@@ -51,6 +53,8 @@ export const KUNCI_MIGRASI_HAPUS_PROVISIONAL_YATIM = 'hapusProvisionalYatimDupli
 export const KUNCI_MIGRASI_HAPUS_PROVISIONAL_DOBEL_EMAIL = 'hapusProvisionalDobelEmailV1';
 /** Bendera koreksi tanggal UTC -> WIB baris provisional — lihat migrasiTanggalProvisionalWib. */
 export const KUNCI_MIGRASI_TANGGAL_PROVISIONAL_WIB = 'tanggalProvisionalWibV1';
+/** Bendera pembersihan provisional dobel yang hanya ada di Sheet — lihat hapusProvisionalYatimDiSheet. */
+export const KUNCI_MIGRASI_HAPUS_YATIM_SHEET = 'hapusProvisionalYatimSheetV1';
 
 /**
  * 13 baris ledger provisional dobel yang ditemukan lewat backup database
@@ -449,4 +453,40 @@ export async function migrasiTanggalProvisionalWib() {
 
   await pengaturanRepo.tulis(KUNCI_MIGRASI_TANGGAL_PROVISIONAL_WIB, '1');
   return { dijalankan: true, jumlah: diperbarui.length };
+}
+
+/**
+ * Hapus baris provisional dobel yang HANYA ada di Sheet (lihat
+ * rencanakanHapusYatimSheet). Butuh satu tarik penuh dari Sheet; kalau
+ * Sheets tidak aktif atau tarik gagal, bendera TIDAK ditulis supaya dicoba
+ * lagi saat aplikasi dibuka berikutnya.
+ *
+ * Perangkat lain yang terlanjur menarik baris itu ikut membersihkannya
+ * lewat jalur tarik biasa (`dihapus` dari tab _Arsip).
+ */
+export async function hapusProvisionalYatimDiSheet() {
+  const sudah = await pengaturanRepo.baca(KUNCI_MIGRASI_HAPUS_YATIM_SHEET, '');
+  if (sudah) return { dilewati: true };
+
+  const hasil = await tarikTransaksiDariSheets(null);
+  if (hasil.skipped) return { dilewati: true };
+
+  const [transaksiLokal, emailLokal, akunMap] = await Promise.all([
+    trxRepo.semua(),
+    emailTrxRepo.semua(),
+    akunRepo.peta(),
+  ]);
+  const hapus = rencanakanHapusYatimSheet(hasil.baris, transaksiLokal, emailLokal, akunMap);
+
+  if (hapus.length) {
+    const kirim = await hapusDariSheets(hapus.map((r) => r.hash));
+    if (kirim.skipped) return { dilewati: true };
+  }
+
+  await pengaturanRepo.tulis(KUNCI_MIGRASI_HAPUS_YATIM_SHEET, '1');
+  return {
+    dijalankan: true,
+    jumlah: hapus.length,
+    nominal: hapus.reduce((n, r) => n + Math.abs(Number(r.nominal) || 0), 0),
+  };
 }
