@@ -40,6 +40,7 @@ import { hitungBaseHash, hashFinal } from '../domain/dedupe.js';
 import { cocokkanTransaksiEmail } from '../domain/rekonsiliasiEmail.js';
 import { sarankanKategoriEmail } from '../domain/kategoriEmail.js';
 import { rentangTanggalKandidat } from '../core/dates.js';
+import { normalisasiDeskripsi } from '../core/format.js';
 import { syncAtauAntri, hapusDariSheets } from './sheets-sync.js';
 
 /** Kata kunci penanda rekening RDN pada teks notifikasi email BCA (keputusan
@@ -106,6 +107,134 @@ export async function resolusiAkunEmail(trxEmail) {
 }
 
 /**
+ * Tanggal, deskripsi, dan nominal bertanda baris ledger provisional untuk
+ * satu transaksi email -- murni. Dipakai bersama oleh pembuat baris
+ * (buatProvisionalDariEmail) dan pembersih dobel
+ * (rencanakanBersihProvisionalDobel) supaya keduanya pasti menghitung kunci
+ * yang sama.
+ */
+export function bentukBarisEmail(trxEmail) {
+  const magnitudo = Math.abs(Number(trxEmail.nominal) || 0);
+  return {
+    tanggal: String(trxEmail.waktuTransaksi || '').slice(0, 10),
+    deskripsi: trxEmail.merchantMentah || `Transaksi ${trxEmail.bank || ''}`.trim(),
+    nominal: trxEmail.arah === 'debit' ? -magnitudo : magnitudo,
+  };
+}
+
+/** baseHash sebuah baris ledger. Baris hasil tarik Sheets dari sebelum
+ *  perbaikan pull (#40) tersimpan dengan baseHash kosong -- dipulihkan dari
+ *  hash penuh, yang selalu berbentuk `<baseHash>#<ordinal>`. */
+function baseHashDari(t) {
+  return t.baseHash || String(t.hash || '').split('#')[0];
+}
+
+/** Id email pemilik sebuah baris provisional: `emailTrxId`, atau -- untuk
+ *  baris hasil tarik Sheets yang tidak membawa kolom itu -- ordinal
+ *  `e<id>` pada hash penuh. */
+function idEmailPemilik(t) {
+  if (t.emailTrxId) return t.emailTrxId;
+  const ordinal = String(t.hash || '').split('#')[1] || '';
+  return ordinal.startsWith('e') ? ordinal.slice(1) : '';
+}
+
+/**
+ * Dari baris provisional yang ber-baseHash sama dengan transaksi email
+ * `idEmail`, pilih satu yang boleh diadopsi -- murni, diekspor untuk tes.
+ *
+ * Boleh diadopsi = milik email ini sendiri, ATAU tidak dimiliki email LAIN
+ * yang ada di perangkat ini (pemiliknya id asing). Baris yang sudah dipegang
+ * email lokal lain TIDAK disentuh: itu transaksi kembar yang sah (dua kali
+ * beli di toko sama, nominal sama, hari sama -- dua email berbeda).
+ *
+ * @param {Array} kandidat baris provisional dengan baseHash yang sama
+ * @param {string} idEmail id transaksi email yang sedang diproses
+ * @param {Array} emailLokal seluruh record email_transactions lokal
+ * @returns {object|null}
+ */
+export function pilihProvisionalTanpaPemilik(kandidat, idEmail, emailLokal) {
+  const idLokal = new Set(emailLokal.map((e) => e.id));
+  const dirujuk = new Map(emailLokal.filter((e) => e.provisionalTrxId).map((e) => [e.provisionalTrxId, e.id]));
+  const milikSendiri = kandidat.find((t) => idEmailPemilik(t) === idEmail || dirujuk.get(t.id) === idEmail);
+  if (milikSendiri) return milikSendiri;
+  return kandidat.find((t) => !dirujuk.has(t.id) && !idLokal.has(idEmailPemilik(t))) || null;
+}
+
+/**
+ * Rencana pembersihan baris provisional dobel yang SUDAH terlanjur ada --
+ * murni, diekspor untuk tes; dijalankan sekali oleh migrasi
+ * hapusProvisionalDobelEmail() (data/migrasi.js).
+ *
+ * Per kelompok baseHash yang berisi lebih dari satu baris provisional,
+ * jumlah yang dipertahankan = jumlah transaksi email lokal yang memang
+ * menghasilkan kunci itu (bank + tanggal + deskripsi + nominal). Kelompok
+ * tanpa satu pun email pasangan DILEWATI -- tanpa pembanding, dua baris
+ * kembar tidak bisa dibedakan dari dua transaksi sah, dan menghapus uang
+ * yang benar-benar keluar lebih buruk daripada membiarkan dobel.
+ *
+ * Yang dipertahankan lebih dulu: baris yang dirujuk `provisionalTrxId`
+ * email lokal (tidak pernah dihapus), lalu baris yang paling akhir diubah
+ * (menjaga koreksi kategori yang mungkin dibuat pengguna di Sheet). Email
+ * yang belum memegang baris mana pun ditautkan ke baris yang dipertahankan,
+ * supaya rekonsiliasi saat e-statement bulan itu diupload bisa
+ * menggantikannya -- tanpa tautan, baris itu akan dobel lagi dengan baris
+ * statement.
+ *
+ * @param {Array} provisional seluruh baris ledger ber-sumber email_provisional
+ * @param {Array} emailLokal seluruh record email_transactions lokal
+ * @param {Map} akunMap accountId -> akun (untuk bank)
+ * @returns {{hapus: Array, tautkan: Array<{email: object, trx: object}>}}
+ */
+export function rencanakanBersihProvisionalDobel(provisional, emailLokal, akunMap) {
+  const kunci = (bank, tanggal, deskripsi, nominal) => [
+    bank || '', tanggal, normalisasiDeskripsi(deskripsi), (Math.round(Number(nominal) * 100) / 100).toFixed(2),
+  ].join('|');
+
+  const emailPerKunci = new Map();
+  for (const e of emailLokal) {
+    const b = bentukBarisEmail(e);
+    const k = kunci(e.bank, b.tanggal, b.deskripsi, b.nominal);
+    if (!emailPerKunci.has(k)) emailPerKunci.set(k, []);
+    emailPerKunci.get(k).push(e);
+  }
+
+  const idAda = new Set(provisional.map((t) => t.id));
+  const dirujuk = new Set(emailLokal.map((e) => e.provisionalTrxId).filter((id) => idAda.has(id)));
+
+  const kelompok = new Map();
+  for (const t of provisional) {
+    const bh = baseHashDari(t);
+    if (!bh) continue;
+    if (!kelompok.has(bh)) kelompok.set(bh, []);
+    kelompok.get(bh).push(t);
+  }
+
+  const hapus = [];
+  const tautkan = [];
+  for (const baris of kelompok.values()) {
+    if (baris.length < 2) continue;
+    const contoh = baris[0];
+    const email = emailPerKunci.get(kunci(
+      akunMap.get(contoh.accountId)?.bank, contoh.tanggal, contoh.deskripsi, contoh.nominal,
+    )) || [];
+    if (!email.length) continue;
+
+    const dipegang = baris.filter((t) => dirujuk.has(t.id));
+    const bebas = baris.filter((t) => !dirujuk.has(t.id))
+      .sort((a, b) => String(b.diubahPada || '').localeCompare(String(a.diubahPada || '')));
+    const sisaKuota = Math.max(email.length - dipegang.length, 0);
+    const dipertahankan = bebas.slice(0, sisaKuota);
+    hapus.push(...bebas.slice(sisaKuota));
+
+    const emailTanpaBaris = email.filter((e) => !dirujuk.has(e.provisionalTrxId));
+    dipertahankan.forEach((trx, i) => {
+      if (emailTanpaBaris[i]) tautkan.push({ email: emailTanpaBaris[i], trx });
+    });
+  }
+  return { hapus, tautkan };
+}
+
+/**
  * Buat baris ledger PROVISIONAL dari satu transaksi email berstatus MISSING
  * (tidak ada padanan e-statement sama sekali). Dipanggil dari
  * email-feed-sync.js SETELAH email itu sendiri sudah tersimpan di
@@ -113,10 +242,7 @@ export async function resolusiAkunEmail(trxEmail) {
  */
 export async function buatProvisionalDariEmail(trxEmail, daftarKategori, kamusMap) {
   const akun = await resolusiAkunEmail(trxEmail);
-  const magnitudo = Math.abs(Number(trxEmail.nominal) || 0);
-  const nominalBertanda = trxEmail.arah === 'debit' ? -magnitudo : magnitudo;
-  const tanggal = String(trxEmail.waktuTransaksi || '').slice(0, 10);
-  const deskripsi = trxEmail.merchantMentah || `Transaksi ${trxEmail.bank || ''}`.trim();
+  const { tanggal, deskripsi, nominal: nominalBertanda } = bentukBarisEmail(trxEmail);
 
   const saran = sarankanKategoriEmail(trxEmail, kamusMap, daftarKategori);
   const kategoriId = trxEmail.overrideUser ? trxEmail.kategoriFinal : saran.kategoriId;
@@ -146,6 +272,26 @@ export async function buatProvisionalDariEmail(trxEmail, daftarKategori, kamusMa
   if (barisSama) {
     await emailTrxRepo.simpanSatu({ ...trxEmail, provisionalTrxId: barisSama.id });
     return barisSama;
+  }
+
+  // Pengaman kedua: baris provisional untuk email yang SAMA tapi dibuat
+  // dengan id email LAIN -- id dari perangkat lain (tiba lewat tarik Sheets,
+  // `emailTrxId`-nya tidak ikut terbawa) atau dari data lokal yang pernah
+  // dibersihkan. Hash penuhnya berbeda, jadi pengaman di atas tidak
+  // melihatnya; inilah yang membuat 53 transaksi email 18-29 Sep tercatat
+  // dua kali (insiden 2026-10-06). Baris seperti itu diadopsi, bukan
+  // diduplikasi. Hash-nya sengaja TIDAK diganti: hash adalah kunci upsert
+  // Sheets, mengubahnya berarti hapus + tulis ulang di sana.
+  const kandidatYatim = (await trxRepo.perSumber(SUMBER.EMAIL_PROVISIONAL))
+    .filter((t) => baseHashDari(t) === baseHash);
+  if (kandidatYatim.length) {
+    const emailLokal = await emailTrxRepo.semua();
+    const yatim = pilihProvisionalTanpaPemilik(kandidatYatim, trxEmail.id, emailLokal);
+    if (yatim) {
+      const diadopsi = await trxRepo.simpanSatu({ ...yatim, emailTrxId: trxEmail.id });
+      await emailTrxRepo.simpanSatu({ ...trxEmail, provisionalTrxId: diadopsi.id });
+      return diadopsi;
+    }
   }
 
   const data = buatTransaksi({

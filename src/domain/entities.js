@@ -194,7 +194,14 @@ export const STATUS_RESOLUSI_EMAIL = {
  */
 export function buatTransaksiEmail(data = {}) {
   return {
-    id: data.id || idBaru('trxe'),
+    // Diturunkan dari gmailMessageId, BUKAN acak, supaya satu email punya id
+    // yang SAMA di setiap perangkat/instalasi. Id ini ikut tertanam di hash
+    // baris provisional (`<baseHash>#e<id>`, lihat email-ledger-merge.js), dan
+    // upsert Sheets berbasis hash -- selama id-nya acak, email yang sama yang
+    // diproses di dua perangkat (atau sesudah data lokal dibersihkan) menjadi
+    // dua baris berbeda di tab Transaksi. Insiden 2026-10-06: 53 transaksi
+    // email 18-29 Sep tercatat dua kali, masing-masing dengan id acak berbeda.
+    id: data.id || (data.gmailMessageId ? `trxe_${data.gmailMessageId}` : idBaru('trxe')),
     gmailMessageId: data.gmailMessageId || '',
     bank: data.bank || '',
     waktuTransaksi: data.waktuTransaksi || '',

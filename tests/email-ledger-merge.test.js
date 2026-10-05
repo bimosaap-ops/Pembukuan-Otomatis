@@ -8,9 +8,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { kunciSettingAkunBca, rencanakanRekonsiliasi, putuskanAksiBackfill } from '../src/services/email-ledger-merge.js';
+import {
+  kunciSettingAkunBca, rencanakanRekonsiliasi, putuskanAksiBackfill,
+  pilihProvisionalTanpaPemilik, rencanakanBersihProvisionalDobel, bentukBarisEmail,
+} from '../src/services/email-ledger-merge.js';
 import { KUNCI } from '../src/data/repo/settings.js';
-import { STATUS_COCOK_EMAIL } from '../src/domain/entities.js';
+import { STATUS_COCOK_EMAIL, buatTransaksiEmail } from '../src/domain/entities.js';
 
 /* ==========================================================================
    kunciSettingAkunBca
@@ -190,4 +193,104 @@ test('putuskanAksiBackfill: AMBIGUOUS (dua kandidat skor nyaris sama) -> TETAP "
   const { aksi, cocok } = putuskanAksiBackfill(emailTrx(), [statementSama1, statementSama2]);
   assert.equal(aksi, 'provisional');
   assert.equal(cocok.status, STATUS_COCOK_EMAIL.AMBIGUOUS);
+});
+
+/* ==========================================================================
+   Insiden 2026-10-06: satu email, dua baris provisional dengan id email beda
+   ========================================================================== */
+
+
+function provisional(over = {}) {
+  return {
+    id: 'trx_1',
+    accountId: 'acc_bca',
+    tanggal: '2026-09-28',
+    deskripsi: 'Warung kabita',
+    nominal: -15000,
+    baseHash: 'bh1',
+    hash: 'bh1#etrxe_lain',
+    emailTrxId: '',
+    diubahPada: '2026-10-06T02:17:34.558Z',
+    ...over,
+  };
+}
+
+const akunMap = new Map([['acc_bca', { id: 'acc_bca', bank: 'BCA' }]]);
+const emailKabita = emailTrx({
+  id: 'trxe_lokal', bank: 'BCA', waktuTransaksi: '2026-09-28T14:52:33.000Z', nominal: 15000, merchantMentah: 'Warung kabita',
+});
+
+test('buatTransaksiEmail: id diturunkan dari gmailMessageId supaya sama di semua perangkat', () => {
+  assert.equal(buatTransaksiEmail({ gmailMessageId: '1a0e880ed813c1b5' }).id, 'trxe_1a0e880ed813c1b5');
+  assert.equal(buatTransaksiEmail({ gmailMessageId: '1a0e880ed813c1b5' }).id,
+    buatTransaksiEmail({ gmailMessageId: '1a0e880ed813c1b5' }).id);
+});
+
+test('bentukBarisEmail: debit jadi nominal negatif, tanggal dari waktuTransaksi', () => {
+  assert.deepEqual(bentukBarisEmail(emailKabita), { tanggal: '2026-09-28', deskripsi: 'Warung kabita', nominal: -15000 });
+});
+
+test('pilihProvisionalTanpaPemilik: baris dari id email asing (hasil tarik Sheets) diadopsi', () => {
+  const baris = provisional();
+  assert.equal(pilihProvisionalTanpaPemilik([baris], 'trxe_lokal', [emailKabita]), baris);
+});
+
+test('pilihProvisionalTanpaPemilik: baris milik email lokal LAIN (transaksi kembar sah) tidak diadopsi', () => {
+  const kembar = emailTrx({ id: 'trxe_kembar', provisionalTrxId: 'trx_1' });
+  const baris = provisional({ hash: 'bh1#etrxe_kembar', emailTrxId: 'trxe_kembar' });
+  assert.equal(pilihProvisionalTanpaPemilik([baris], 'trxe_lokal', [emailKabita, kembar]), null);
+});
+
+test('pilihProvisionalTanpaPemilik: dua email kembar mengadopsi dua baris yang berbeda', () => {
+  const a = provisional({ id: 'trx_a', hash: 'bh1#etrxe_asingA' });
+  const b = provisional({ id: 'trx_b', hash: 'bh1#etrxe_asingB' });
+  const e1 = emailTrx({ id: 'trxe_1' });
+  const e2 = emailTrx({ id: 'trxe_2' });
+  const pertama = pilihProvisionalTanpaPemilik([a, b], 'trxe_1', [e1, e2]);
+  assert.equal(pertama, a);
+  // Sesudah diadopsi, baris a dipegang trxe_1 -- trxe_2 harus mendapat b.
+  const sesudah = [{ ...a, emailTrxId: 'trxe_1' }, b];
+  assert.equal(pilihProvisionalTanpaPemilik(sesudah, 'trxe_2', [{ ...e1, provisionalTrxId: 'trx_a' }, e2]), b);
+});
+
+test('rencanakanBersihProvisionalDobel: satu email, dua baris -> baris yang tidak dipegang dihapus', () => {
+  const dipegang = provisional({ id: 'trx_lokal', hash: 'bh1#etrxe_lokal', emailTrxId: 'trxe_lokal' });
+  const asing = provisional({ id: 'trx_asing', hash: 'bh1#etrxe_asing', diubahPada: '2026-10-06T02:19:19.566Z' });
+  const { hapus, tautkan } = rencanakanBersihProvisionalDobel(
+    [dipegang, asing], [{ ...emailKabita, provisionalTrxId: 'trx_lokal' }], akunMap,
+  );
+  assert.deepEqual(hapus.map((t) => t.id), ['trx_asing']);
+  assert.equal(tautkan.length, 0);
+});
+
+test('rencanakanBersihProvisionalDobel: tak ada yang dipegang -> sisakan yang terakhir diubah dan tautkan ke email', () => {
+  const lama = provisional({ id: 'trx_lama', hash: 'bh1#etrxe_x' });
+  const baru = provisional({ id: 'trx_baru', hash: 'bh1#etrxe_y', diubahPada: '2026-10-06T02:19:19.566Z' });
+  const { hapus, tautkan } = rencanakanBersihProvisionalDobel([lama, baru], [emailKabita], akunMap);
+  assert.deepEqual(hapus.map((t) => t.id), ['trx_lama']);
+  assert.equal(tautkan.length, 1);
+  assert.equal(tautkan[0].trx.id, 'trx_baru');
+  assert.equal(tautkan[0].email.id, 'trxe_lokal');
+});
+
+test('rencanakanBersihProvisionalDobel: dua email kembar yang sah -> dua baris dipertahankan', () => {
+  const e2 = { ...emailKabita, id: 'trxe_kedua', gmailMessageId: 'msg_2' };
+  const a = provisional({ id: 'trx_a', hash: 'bh1#etrxe_a' });
+  const b = provisional({ id: 'trx_b', hash: 'bh1#etrxe_b' });
+  const { hapus } = rencanakanBersihProvisionalDobel([a, b], [emailKabita, e2], akunMap);
+  assert.equal(hapus.length, 0);
+});
+
+test('rencanakanBersihProvisionalDobel: kelompok tanpa email pasangan tidak disentuh', () => {
+  const a = provisional({ id: 'trx_a', hash: 'bh1#etrxe_a' });
+  const b = provisional({ id: 'trx_b', hash: 'bh1#etrxe_b' });
+  const { hapus } = rencanakanBersihProvisionalDobel([a, b], [], akunMap);
+  assert.equal(hapus.length, 0);
+});
+
+test('rencanakanBersihProvisionalDobel: baseHash kosong (tarik Sheets lama) dipulihkan dari hash', () => {
+  const a = provisional({ id: 'trx_a', baseHash: '', hash: 'bh1#etrxe_a' });
+  const b = provisional({ id: 'trx_b', baseHash: '', hash: 'bh1#etrxe_b', diubahPada: '2026-10-07T00:00:00.000Z' });
+  const { hapus } = rencanakanBersihProvisionalDobel([a, b], [emailKabita], akunMap);
+  assert.deepEqual(hapus.map((t) => t.id), ['trx_a']);
 });
