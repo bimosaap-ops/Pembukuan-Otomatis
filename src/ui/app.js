@@ -18,7 +18,7 @@ import { pantauKoneksiSheets } from '../services/sheets-sync.js';
 import { jalankanAutoPull } from '../services/auto-pull.js';
 import {
   jalankanMigrasi, migrasiKataKunciBawaan, migrasiKategoriInvestasi, migrasiKategoriFinalEmail,
-  hapusProvisionalYatimDuplikat, hapusProvisionalDobelEmail,
+  hapusProvisionalYatimDuplikat, hapusProvisionalDobelEmail, migrasiTanggalProvisionalWib,
 } from '../data/migrasi.js';
 
 /**
@@ -153,6 +153,17 @@ async function mulai() {
     if (migrasiHapusDobel?.dijalankan && migrasiHapusDobel.jumlah) {
       toastSukses(`${migrasiHapusDobel.jumlah} baris transaksi email dobel dibersihkan `
         + `(${rupiah(migrasiHapusDobel.nominal)}).`);
+    }
+
+    // Sesudah pembersihan dobel di atas (yang masih mengelompokkan per
+    // baseHash bertanggal UTC): transaksi email dini hari WIB yang tercatat
+    // sehari lebih awal dikoreksi tanggalnya.
+    const migrasiTanggal = await migrasiTanggalProvisionalWib().catch((e) => {
+      console.error('Migrasi tanggal provisional WIB gagal:', e);
+      return null;
+    });
+    if (migrasiTanggal?.dijalankan && migrasiTanggal.jumlah) {
+      toastSukses(`Tanggal ${migrasiTanggal.jumlah} transaksi email dini hari dikoreksi ke WIB.`);
     }
 
     // Antrean retry Sheets (kalau ada, dari sesi sebelumnya yang gagal

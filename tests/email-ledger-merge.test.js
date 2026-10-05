@@ -11,9 +11,11 @@ import assert from 'node:assert/strict';
 import {
   kunciSettingAkunBca, rencanakanRekonsiliasi, putuskanAksiBackfill,
   pilihProvisionalTanpaPemilik, rencanakanBersihProvisionalDobel, bentukBarisEmail,
+  rencanakanKoreksiTanggalProvisional,
 } from '../src/services/email-ledger-merge.js';
 import { KUNCI } from '../src/data/repo/settings.js';
 import { STATUS_COCOK_EMAIL, buatTransaksiEmail } from '../src/domain/entities.js';
+import { tanggalWib } from '../src/core/dates.js';
 
 /* ==========================================================================
    kunciSettingAkunBca
@@ -227,7 +229,9 @@ test('buatTransaksiEmail: id diturunkan dari gmailMessageId supaya sama di semua
 });
 
 test('bentukBarisEmail: debit jadi nominal negatif, tanggal dari waktuTransaksi', () => {
-  assert.deepEqual(bentukBarisEmail(emailKabita), { tanggal: '2026-09-28', deskripsi: 'Warung kabita', nominal: -15000 });
+  assert.deepEqual(bentukBarisEmail(emailKabita), {
+    tanggal: '2026-09-28', tanggalLama: '2026-09-28', deskripsi: 'Warung kabita', nominal: -15000,
+  });
 });
 
 test('pilihProvisionalTanpaPemilik: baris dari id email asing (hasil tarik Sheets) diadopsi', () => {
@@ -293,4 +297,50 @@ test('rencanakanBersihProvisionalDobel: baseHash kosong (tarik Sheets lama) dipu
   const b = provisional({ id: 'trx_b', baseHash: '', hash: 'bh1#etrxe_b', diubahPada: '2026-10-07T00:00:00.000Z' });
   const { hapus } = rencanakanBersihProvisionalDobel([a, b], [emailKabita], akunMap);
   assert.deepEqual(hapus.map((t) => t.id), ['trx_a']);
+});
+
+/* ==========================================================================
+   Tanggal transaksi email: WIB, bukan potongan ISO UTC
+   ========================================================================== */
+
+// DIVA QUINTA MAHMUDA, 20 Sep 2026 01:02 WIB = 19 Sep 18:02 UTC.
+const emailDiniHari = emailTrx({
+  id: 'trxe_diva', bank: 'BCA', waktuTransaksi: '2026-09-19T18:02:47.000Z', nominal: 700000, merchantMentah: 'DIVA QUINTA MAHMUDA',
+});
+
+test('tanggalWib: dini hari WIB tetap di tanggal WIB, bukan tanggal UTC', () => {
+  assert.equal(tanggalWib('2026-09-19T18:02:47.000Z'), '2026-09-20');
+  assert.equal(tanggalWib('2026-09-19T16:59:59.000Z'), '2026-09-19');
+  assert.equal(tanggalWib('2026-09-30T17:00:00.000Z'), '2026-10-01', 'pergantian bulan ikut WIB');
+  assert.equal(tanggalWib(''), '');
+  assert.equal(tanggalWib('bukan-tanggal'), 'bukan-tang');
+});
+
+test('bentukBarisEmail: transaksi dini hari memakai tanggal WIB', () => {
+  const b = bentukBarisEmail(emailDiniHari);
+  assert.equal(b.tanggal, '2026-09-20');
+  assert.equal(b.tanggalLama, '2026-09-19');
+});
+
+test('rencanakanBersihProvisionalDobel: baris dobel lama bertanggal UTC tetap dikenali', () => {
+  const a = provisional({ id: 'trx_a', tanggal: '2026-09-19', deskripsi: 'DIVA QUINTA MAHMUDA', nominal: -700000, hash: 'bhD#etrxe_a', baseHash: 'bhD' });
+  const b = provisional({ id: 'trx_b', tanggal: '2026-09-19', deskripsi: 'DIVA QUINTA MAHMUDA', nominal: -700000, hash: 'bhD#etrxe_b', baseHash: 'bhD', diubahPada: '2026-10-07T00:00:00.000Z' });
+  const { hapus } = rencanakanBersihProvisionalDobel([a, b], [emailDiniHari], akunMap);
+  assert.deepEqual(hapus.map((t) => t.id), ['trx_a']);
+});
+
+test('rencanakanKoreksiTanggalProvisional: baris bertanggal UTC milik email lokal dikoreksi ke WIB', () => {
+  const baris = provisional({ id: 'trx_d', tanggal: '2026-09-19', hash: 'bhD#etrxe_diva' });
+  const rencana = rencanakanKoreksiTanggalProvisional([baris], [emailDiniHari]);
+  assert.equal(rencana.length, 1);
+  assert.equal(rencana[0].trx.id, 'trx_d');
+  assert.equal(rencana[0].tanggal, '2026-09-20');
+});
+
+test('rencanakanKoreksiTanggalProvisional: baris yang tanggalnya sudah benar atau diubah pengguna tidak disentuh', () => {
+  const sudahBenar = provisional({ id: 'trx_1', tanggal: '2026-09-20', hash: 'x#etrxe_diva' });
+  const diubahPengguna = provisional({ id: 'trx_2', tanggal: '2026-09-22', emailTrxId: 'trxe_diva' });
+  const siang = provisional({ id: 'trx_3', tanggal: '2026-09-28', hash: 'y#etrxe_lokal' });
+  const tanpaEmail = provisional({ id: 'trx_4', tanggal: '2026-09-19', hash: 'z#etrxe_asing' });
+  assert.equal(rencanakanKoreksiTanggalProvisional([sudahBenar, diubahPengguna, siang, tanpaEmail], [emailDiniHari, emailKabita]).length, 0);
 });
