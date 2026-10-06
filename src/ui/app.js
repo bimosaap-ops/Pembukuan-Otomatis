@@ -17,8 +17,7 @@ import { rupiah } from '../core/format.js';
 import { pantauKoneksiSheets } from '../services/sheets-sync.js';
 import { jalankanAutoPull } from '../services/auto-pull.js';
 import {
-  jalankanMigrasi, migrasiKataKunciBawaan, migrasiKategoriInvestasi, migrasiKategoriFinalEmail,
-  hapusProvisionalYatimDuplikat, hapusProvisionalDobelEmail, migrasiTanggalProvisionalWib,
+  migrasiKataKunciBawaan, hapusProvisionalDobelEmail, migrasiTanggalProvisionalWib,
   hapusProvisionalYatimDiSheet, bersihkanProvisionalTertaut, perbaikiTautanManualSalah,
   hapusProvisionalTakTerjangkau, pulihkanProvisionalHilang,
 } from '../data/migrasi.js';
@@ -87,17 +86,6 @@ async function mulai() {
     await kategoriRepo.semaiBawaan();
     await muatTema();
 
-    // Migrasi dijalankan SEBELUM sinkron. Kalau antrean lama terkirim duluan,
-    // Sheet menerima baris berhash lama yang beberapa detik kemudian jadi yatim.
-    const migrasi = await jalankanMigrasi().catch((e) => {
-      console.error('Migrasi hash gagal:', e);
-      return null;
-    });
-    if (migrasi?.dijalankan) {
-      toastSukses(`${migrasi.jumlah} transaksi diperiksa ulang terhadap duplikat. `
-        + 'Tekan "Kirim semua sekarang" di Pengaturan agar Google Sheet ikut menyesuaikan.');
-    }
-
     // Menambah kata kunci baru ke kategori bawaan (mis. "BAKSO", "SATE",
     // "WARTEG" ke Makan & Minum) di kode tidak sampai ke pengguna lama —
     // semaiBawaan() cuma menyalin sekali saat pertama pakai. Migrasi ini
@@ -112,38 +100,6 @@ async function mulai() {
       toastSukses(`${migrasiKataKunci.jumlahKataKunci} kata kunci baru ditambahkan ke `
         + `${migrasiKataKunci.jumlahKategori} kategori bawaan. Buka halaman Kategori dan tekan `
         + '"Kelompokkan ulang semua transaksi" agar transaksi lama ikut terkoreksi.');
-    }
-
-    // Kategori "Investasi" baru ditambahkan ke KATEGORI_BAWAAN setelah
-    // pengguna lama menjalankan semaiBawaan() — migrasi terpisah ini
-    // menyisipkannya bila belum ada (lihat migrasiKategoriInvestasi).
-    const migrasiInvestasi = await migrasiKategoriInvestasi().catch((e) => {
-      console.error('Migrasi kategori Investasi gagal:', e);
-      return null;
-    });
-    if (migrasiInvestasi?.dijalankan && migrasiInvestasi.jumlahKategori) {
-      toastSukses('Kategori "Investasi" ditambahkan. Buka halaman Kategori dan tekan '
-        + '"Kelompokkan ulang semua transaksi" agar transaksi reksa dana lama ikut terkoreksi.');
-    }
-
-    // "Fase B": transaksi email lama (ditarik sebelum kategoriFinal otomatis
-    // ada) disusulkan sekali di sini -- kode barunya cuma jalan untuk baris
-    // yang baru ditarik (lihat email-feed-sync.js).
-    await migrasiKategoriFinalEmail().catch((e) => {
-      console.error('Migrasi kategoriFinal email gagal:', e);
-      return null;
-    });
-
-    // Pembersihan insiden 2026-09-17: 13 baris ledger provisional yatim
-    // (lihat migrasi.js ID_PROVISIONAL_YATIM) dihapus lokal + Sheets sekali
-    // di sini -- read-only-nya Transaksi ("Fase A") berarti tidak ada tombol
-    // UI yang bisa menjangkaunya sendiri.
-    const migrasiHapusYatim = await hapusProvisionalYatimDuplikat().catch((e) => {
-      console.error('Migrasi hapus provisional yatim gagal:', e);
-      return null;
-    });
-    if (migrasiHapusYatim?.dijalankan && migrasiHapusYatim.jumlah) {
-      toastSukses(`${migrasiHapusYatim.jumlah} baris provisional dobel (insiden lama) dibersihkan.`);
     }
 
     // Pembersihan insiden 2026-10-06: transaksi email yang tercatat dua kali

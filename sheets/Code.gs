@@ -2,86 +2,30 @@
  * Code.gs — tempel di Extensions > Apps Script pada Google Sheet tujuan.
  * Deploy: Deploy > New deployment > Web App > Anyone with the link > Copy URL -> tempel di Pengaturan app.
  *
- * Sheet data (nama baku "Transaksi") header baris 1 wajib, berurutan A..P:
- * Hash | Tanggal | Deskripsi | Nominal | Debit | Kredit | ID Kategori | Bank |
- * No. Rekening | Nama Pemilik | Sumber | ID Upload | Dikirim Pada | Kategori |
- * Transfer Internal | Saldo
+ * Tab data "Transaksi": header baris 1 wajib, urutan kolom lihat HEADER.
+ * Upsert berdasarkan Hash (kolom A): hash yang sudah ada DITIMPA di baris yang
+ * sama, supaya koreksi kategori dari aplikasi ikut sampai ke Sheet.
  *
- * Upsert berdasarkan hash (kolom A): hash yang sudah ada di Sheet DITIMPA di
- * baris yang sama, bukan dilewati. Ini penting karena kategori sebuah transaksi
- * bisa dikoreksi belakangan (lewat halaman Transaksi, atau "Kelompokkan ulang"
- * di halaman Kategori) — kalau cuma dedupe-skip, koreksi itu tidak akan pernah
- * sampai ke Sheet walau tombol "Kirim semua sekarang" dipakai.
+ * Tab yang dikelola skrip:
+ *   - Dibangun ulang dari nol bila versi/bentuk data berubah atau rusak (tidak
+ *     boleh ada input manual): Dashboard, Dashboard Full, Kontrol Saldo.
+ *   - Dibuat sekali, tidak pernah dibangun ulang (menyimpan input pengguna):
+ *     Anggaran, Cari Transaksi, Statement, Konfigurasi Email.
+ *   - Dibuat lazy saat doPost pertama: Akun, Kategori (upsert per ID).
+ *   - Hanya ditambah baris: _EmailMasuk, Transaksi Email, Log Email, _Arsip.
  *
- * EMPAT tab dibuat otomatis oleh pastikanSemuaTab(), dua model berbeda:
+ * Angka GABUNGAN mengecualikan transfer internal (kolom O); angka PER REKENING
+ * tetap menghitungnya.
  *
- *   - "Dashboard" (bangunDashboard) & "Dashboard Full" (bangunDashboardFull):
- *     laporan, DIBANGUN ULANG DARI NOL setiap kali bentuk data berubah atau
- *     rusak. "Dashboard" bergaya laporan keuangan per rekening: kartu
- *     gabungan (termasuk Saldo Terkini & Runway), perbandingan antar
- *     rekening, arus bulanan (per rekening DAN gabungan tanpa transfer
- *     internal), pengeluaran per kategori, lalu satu blok rinci (termasuk
- *     Savings Rate) untuk tiap rekening. "Dashboard Full" bergaya analisis
- *     kategori: ranking & ambang "tak wajar" per kategori, tren kategori
- *     per bulan (heatmap), daftar transaksi tak wajar, dan anggaran vs
- *     realisasi (membaca tab Anggaran). Semuanya rumus Sheets yang merujuk
- *     balik ke tab data, jadi ikut ter-update sendiri tiap ada transaksi
- *     baru — dan karena dibangun ulang dari nol, TIDAK ADA input pengguna
- *     yang boleh diketik langsung di kedua tab ini.
- *   - "Anggaran" (pastikanAnggaran) & "Cari Transaksi" (pastikanCariTransaksi):
- *     dibuat SEKALI, lalu TIDAK PERNAH dibangun ulang/dihapus otomatis —
- *     keduanya menyimpan sesuatu milik pengguna (target anggaran bulanan;
- *     kata kunci pencarian yang sedang diketik) yang harus selamat dari
- *     siklus bangun-ulang di atas. "Anggaran" hanya ditambah baris kategori
- *     baru yang belum ada, tidak pernah menimpa/menghapus baris lama.
- *
- * Dua tab KONTROL, sejak versi 10:
- *
- *   - "Statement" (pastikanStatement): create-once seperti Anggaran. Satu
- *     baris per e-statement, berisi angka yang TERCETAK DI BANK (SALDO AWAL,
- *     SALDO AKHIR, MUTASI DB/CR). Dikirim aplikasi lewat
- *     doPost{entity:'statement'}, tapi boleh juga diketik tangan — itulah
- *     satu-satunya cara memasukkan statement lama yang ringkasannya tidak
- *     pernah terekam.
- *   - "Kontrol Saldo" (bangunKontrol): dibangun ulang dari nol seperti
- *     Dashboard. Menghadapkan angka bank di tab Statement dengan angka hasil
- *     penjumlahan pembukuan sendiri, per rekening per bulan, plus daftar bulan
- *     yang punya transaksi tapi belum punya e-statement sama sekali.
- *
- * Dua tab TAMBAHAN, "Akun" dan "Kategori", dibuat LAZY oleh tanganiEntitas()
- * saat doPost{entity:'akun'|'kategori'} pertama kali dipanggil — sama seperti
- * tab data utama dibuat lazy oleh getSheet(). Cadangan rekening/kas dan
- * kategori, upsert per ID (bukan hash: baris di sini genuinely dibuat
- * pengguna, bukan diturunkan dari isi statement).
- *
- * Angka GABUNGAN mengecualikan transfer internal (kolom O) supaya pindah dana
- * antar rekening sendiri tidak terhitung dua kali; angka PER REKENING tetap
- * menghitungnya, karena uangnya memang keluar/masuk di rekening itu.
- *
- * Dashboard & Dashboard Full dibangun ulang bersama (satu VERSI_DASHBOARD)
- * bila versinya berubah, bila bentuk data berubah (rekening baru, kategori
- * anggaran baru, data memanjang — lihat sidikData), atau bila salah satu
- * rusak. Menu "Pembukuan" berisi "Bangun ulang Dashboard" untuk memaksanya
- * sekarang juga, dan "Diagnosa" yang melaporkan lokal, pemisah argumen
- * terdeteksi, status tiap tab, dan isi sel rumus kunci.
- *
- * Tiga hal yang pernah bikin kacau dan sengaja dijaga di sini:
- *
- *   1. Dashboard disisipkan di posisi TERAKHIR, bukan pertama. Kode versi lama
- *      (yang mungkin masih terpasang di deployment lain) mencari sheet data
- *      dengan "sheet pertama" — kalau Dashboard ada di posisi pertama, data
- *      transaksi ikut tertulis ke sana dan tab Dashboard jadi berantakan.
+ * Tiga aturan yang dijaga di seluruh berkas:
+ *   1. Tab laporan disisipkan di posisi TERAKHIR; sheet data dicari lewat nama.
  *   2. Pemisah argumen rumus mengikuti lokal spreadsheet (lihat pisahArgumen).
- *      Di lokal Indonesia pemisahnya ";" dan pemisah kolom array literal "\",
- *      bukan ",". Rumus bertanda koma di sheet berlokal Indonesia gagal parse
- *      jadi #ERROR! — dan #ERROR! tidak bisa ditangkap IFERROR.
- *   3. Grid dilebarkan/ditinggikan SEBELUM sel mana pun disentuh. Mengakses sel
- *      di luar grid melempar "Kolom tersebut melampaui batas" dan membatalkan
- *      seluruh pembangunan. Label rekening juga tidak pernah disisipkan ke dalam
- *      string QUERY — nama ber-apostrof akan memecah rumusnya; penyaringan
- *      memakai kolom bendera yang membandingkan dengan sel judul blok.
+ *      Di lokal Indonesia pemisahnya ";" dan pemisah kolom array "\". Rumus
+ *      yang salah pemisah jadi #ERROR!, yang tidak bisa ditangkap IFERROR.
+ *   3. Grid dilebarkan/ditinggikan SEBELUM sel mana pun disentuh; sel di luar
+ *      grid melempar dan membatalkan seluruh pembangunan. Label rekening tidak
+ *      pernah disisipkan ke string QUERY (apostrof memecah rumus).
  */
-const SHEET_NAME = ''; // kosong = deteksi/migrasi otomatis (lihat sheetData)
 const DATA_SHEET_NAME = 'Transaksi';
 const DASHBOARD_SHEET_NAME = 'Dashboard';
 /** Tab ranking kategori & anggaran, dibangun kode sejak versi 9 — lihat bangunDashboardFull(). */
@@ -90,9 +34,7 @@ const DASHBOARD_FULL_SHEET_NAME = 'Dashboard Full';
 const ARSIP_SHEET_NAME = '_Arsip';
 /**
  * Tab input pengguna (target anggaran bulanan per kategori). Dibuat sekali,
- * lalu TIDAK PERNAH dibangun ulang/dihapus otomatis seperti Dashboard —
- * lihat pastikanAnggaran(). Angka yang diketik pengguna harus selamat dari
- * setiap pembangunan ulang Dashboard/Dashboard Full.
+ * tidak pernah dibangun ulang — lihat pastikanAnggaran().
  */
 const ANGGARAN_SHEET_NAME = 'Anggaran';
 /**
@@ -101,17 +43,9 @@ const ANGGARAN_SHEET_NAME = 'Anggaran';
  */
 const CARI_TRANSAKSI_SHEET_NAME = 'Cari Transaksi';
 /**
- * Tab "Statement": satu baris per e-statement yang pernah di-upload, berisi
- * angka yang TERCETAK DI BANK — SALDO AWAL, SALDO AKHIR, MUTASI DB/CR, dan
- * berapa baris yang masuk pembukuan dari berkas itu.
- *
- * Dikirim aplikasi (doPost{entity:'statement'}), tapi dibuat dengan pola
- * create-once seperti Anggaran, bukan dibangun ulang: kolom saldonya boleh
- * diketik tangan. Itu bukan kelonggaran yang tidak sengaja — e-statement yang
- * masuk sebelum fitur kontrol ini ada tidak menyimpan ringkasan cetakannya,
- * dan satu-satunya cara memeriksanya adalah mengetik ulang dua angka dari PDF
- * aslinya. Baris yang diketik tangan (tanpa ID Upload) tetap ikut terhitung di
- * tab Kontrol Saldo.
+ * Tab "Statement": satu baris per e-statement, berisi angka yang TERCETAK DI
+ * BANK. Dikirim aplikasi, tapi create-once supaya saldo statement lama boleh
+ * diketik tangan; baris tanpa ID Upload tetap ikut dihitung di Kontrol Saldo.
  */
 const STATEMENT_SHEET_NAME = 'Statement';
 const HEADER_STATEMENT = ['ID Upload', 'Bank', 'No. Rekening', 'Bulan', 'Periode Awal',
@@ -122,50 +56,34 @@ const KOLOM_STATEMENT = ['id', 'bank', 'nomorRekening', 'bulan', 'periodeAwal',
   'mutasiKreditStatement', 'jumlahTransaksi', 'namaFile', 'tanggalUpload'];
 
 /**
- * Tab "Kontrol Saldo": menghadapkan angka bank dengan angka pembukuan, per
- * rekening per bulan. Dibangun kode dari nol seperti Dashboard (tidak ada
- * input pengguna di sini — yang perlu diketik tangan tempatnya di tab
- * Statement).
- *
- * Saldo pembukuan sengaja DIHITUNG MAJU dari Saldo Awal rekening (tab Akun)
- * ditambah seluruh mutasi sebelum bulan itu — bukan diambil dari kolom Saldo
- * di tab data. Kolom Saldo itu saldo berjalan cetakan bank; memakainya berarti
- * membandingkan angka bank dengan angka bank, dan pemeriksaannya selalu lolos
- * walau ada baris yang hilang. Satu-satunya pembanding yang berarti adalah
- * penjumlahan pembukuan itu sendiri.
+ * Tab "Kontrol Saldo": angka bank vs angka pembukuan, per rekening per bulan.
+ * Saldo pembukuan DIHITUNG MAJU dari Saldo Awal (tab Akun) + mutasi, bukan
+ * dari kolom Saldo tab data — kolom itu saldo cetakan bank, jadi
+ * membandingkannya dengan bank selalu lolos walau ada baris hilang.
  */
 const KONTROL_SHEET_NAME = 'Kontrol Saldo';
 /**
- * Selisih sebesar ini atau kurang dianggap cocok. Satu rupiah, bukan nol:
- * pembulatan pada statement yang mencantumkan sen (dan rekening mata uang
- * asing yang dikonversi) menyisakan beda satuan terkecil yang bukan tanda
- * ada baris hilang. Lebih dari itu selalu dilaporkan.
+ * Selisih sebesar ini atau kurang dianggap cocok: pembulatan sen dan konversi
+ * valas menyisakan beda satuan terkecil yang bukan tanda baris hilang.
  */
 const TOLERANSI_KONTROL = 1;
 /** Cadangan baris tabel kontrol, menahan statement baru yang datang setelah dibangun. */
 const CADANGAN_KONTROL = 12;
 
 /**
- * Tab input pengguna: pola pengirim/subjek email transaksi bank yang mau
- * dipantau. Dibuat sekali, tidak pernah dibangun ulang — lihat
- * pastikanKonfigurasiEmail(). Kosong secara sengaja saat pertama dibuat:
- * pola pengirim asli tidak boleh ditebak, harus diisi pengguna dari email
- * transaksi sungguhan yang mereka terima.
+ * Tab input pengguna: pola pengirim/subjek email transaksi bank. Create-once
+ * dan sengaja kosong — pola pengirim asli tidak boleh ditebak kode.
  */
 const KONFIGURASI_EMAIL_SHEET_NAME = 'Konfigurasi Email';
 /**
- * Tab tersembunyi berisi email transaksi mentah yang berhasil diklasifikasi
- * — lihat pastikanEmailMasuk()/pollEmailTransaksi(). Kunci idempotensi:
- * kolom A (Gmail Message ID) diperiksa dulu sebelum baris ditambahkan.
+ * Tab tersembunyi: email transaksi mentah yang lolos klasifikasi. Kolom A
+ * (Gmail Message ID) adalah kunci idempotensi.
  */
 const EMAIL_MASUK_SHEET_NAME = '_EmailMasuk';
 const HEADER_EMAIL_MASUK = ['Gmail Message ID', 'Perkiraan Bank', 'Dari', 'Subjek', 'Diterima Pada', 'Isi Dipotong', 'Berhasil Diparse', 'Pesan Error', 'Dibuat Pada'];
 /**
- * Tab transit hasil parse email transaksi — lihat pastikanTransaksiEmail()/
- * parseEmailBerdasarkanBank(). Ditarik PWA lewat doPost{tarikTransaksiEmail}
- * (fase berikutnya) lalu boleh diarsip/dipangkas berkala seperti _Arsip;
- * rekonsiliasi/kategorisasi berjalan di PWA, BUKAN di sini — lihat rencana
- * implementasi soal kenapa IndexedDB tetap satu-satunya source of truth.
+ * Tab transit hasil parse email, ditarik PWA lewat doPost{tarikTransaksiEmail}.
+ * Rekonsiliasi dan kategorisasi berjalan di PWA, bukan di sini.
  */
 const TRANSAKSI_EMAIL_SHEET_NAME = 'Transaksi Email';
 const HEADER_TRANSAKSI_EMAIL = ['Gmail Message ID', 'Bank', 'Waktu Transaksi', 'Nominal', 'Arah', 'Merchant Mentah', 'Jenis Transaksi', 'Acquirer', 'Lokasi', 'RRN', 'Nomor Referensi', 'Versi Parser', 'Confidence', 'Dibuat Pada'];
@@ -179,20 +97,12 @@ const KATA_KECUALI_EMAIL = ['OTP', 'PROMO', 'PROMOSI', 'NEWSLETTER', 'IKLAN', 'A
 const JENDELA_PENCARIAN_EMAIL_HARI = 3;
 /** Batas jumlah thread diproses per jalan, menjaga kuota eksekusi Apps Script. */
 const MAKS_THREAD_EMAIL_PER_JALAN = 50;
-/**
- * Tab audit ringan: satu baris per jalan pollEmailTransaksi() yang BENAR-
- * BENAR melakukan sesuatu — lihat perluDicatatLogEmail(). Dibuat sekali,
- * hanya ditambah baris, sama seperti Transaksi Email.
- */
+/** Tab audit: satu baris per jalan pollEmailTransaksi() yang melakukan sesuatu. */
 const LOG_EMAIL_SHEET_NAME = 'Log Email';
 const HEADER_LOG_EMAIL = ['Waktu', 'Thread Diperiksa', 'Email Diproses', 'Berhasil Diparse', 'Gagal Diparse', 'Diperbaiki Reparse', 'Catatan'];
 /**
- * Dinaikkan setiap kali tata letak/rumus Dashboard ATAU Dashboard Full
- * berubah — keduanya dibangun ulang bersama dalam satu versi. Sheet yang
- * dibangun versi lama otomatis dibangun ulang saat POST berikutnya — tanpa
- * ini, perbaikan rumus hanya berlaku untuk Sheet baru, sementara Sheet yang
- * sudah ada tetap memakai rumus lama sampai pengguna ingat membuka menu
- * "Pembukuan".
+ * Naikkan setiap kali tata letak/rumus Dashboard, Dashboard Full, atau Kontrol
+ * Saldo berubah; Sheet dengan versi lama dibangun ulang pada POST berikutnya.
  */
 const VERSI_DASHBOARD = '10';   // 10: tab Kontrol Saldo + Dashboard dirapikan
 
@@ -202,11 +112,8 @@ const JEDA_PEMERIKSAAN_MS = 2 * 60 * 1000;
 const JEDA_BANGUN_MS = 10 * 60 * 1000;
 
 /**
- * Sel rumus yang dipantau untuk mendeteksi Dashboard rusak. Tata letaknya kini
- * dinamis (tinggi tiap blok bergantung jumlah rekening, bulan, dan kategori),
- * jadi daftar sebenarnya dicatat saat build ke ScriptProperties. Nilai ini cuma
- * cadangan untuk Dashboard yang dibangun versi lama — Dashboard Full tidak
- * punya cadangan serupa karena baru ada mulai versi 9.
+ * Sel rumus cadangan untuk mendeteksi Dashboard rusak. Daftar sebenarnya
+ * dicatat saat build ke ScriptProperties (tata letak dinamis).
  */
 const SEL_RUMUS = ['A9', 'D10', 'G9', 'A45'];
 /** Baris tetap tabel "Transaksi Tak Wajar" di Dashboard Full (lihat bangunDashboardFull). */
@@ -215,18 +122,10 @@ const TOP_ANOMALI = 25;
 const MAKS_HASIL_CARI = 500;
 
 /**
- * Kolom Q "ID Transaksi" & R "Diubah Pada" ditambah di UJUNG (bukan disisip)
- * supaya seluruh rumus Dashboard/Dashboard Full yang merujuk kolom lewat
- * HURUF TETAP (A..P, lihat kol()/kolomMaya() di bawah) sama sekali tidak
- * bergeser — tidak satu pun formula perlu disentuh untuk perubahan ini.
- * Dipakai tarikTransaksi() untuk pull & resolusi konflik last-updated-wins
- * (lihat services/transaksi-sync.js), TIDAK dipakai upsert (yang masih
- * berbasis Hash seperti sebelumnya) maupun rumus Dashboard mana pun.
- *
- * Baris yang sudah ada sebelum kolom ini ditambahkan akan kosong di Q/R
- * sampai terkirim ulang lewat "Kirim semua sekarang" — pull melewati baris
- * tanpa ID Transaksi (lihat tarikTransaksi) daripada menariknya dengan id
- * kosong yang bisa tertukar dengan baris lain.
+ * Kolom Q "ID Transaksi" & R "Diubah Pada" ditambah di UJUNG supaya rumus
+ * Dashboard yang merujuk huruf kolom A..P tidak bergeser. Dipakai
+ * tarikTransaksi() untuk pull dan resolusi konflik, bukan oleh upsert (tetap
+ * berbasis Hash). Baris tanpa ID Transaksi dilewati saat pull.
  */
 const HEADER = ['Hash','Tanggal','Deskripsi','Nominal','Debit','Kredit','ID Kategori','Bank','No. Rekening','Nama Pemilik','Sumber','ID Upload','Dikirim Pada','Kategori','Transfer Internal','Saldo','ID Transaksi','Diubah Pada'];
 const LEBAR_KOLOM = [110, 95, 300, 120, 120, 120, 130, 90, 130, 150, 80, 110, 140, 150, 130, 130, 130, 140];
@@ -234,10 +133,8 @@ const KOLOM_RP = [4, 5, 6, 16];  // Nominal, Debit, Kredit, Saldo
 const KOLOM_WAKTU = 13;          // Dikirim Pada
 const KOLOM_SEMBUNYI = [1, 7, 12, 17]; // Hash, ID Kategori, ID Upload, ID Transaksi — dipakai mesin, bukan mata
 /**
- * "ID Kategori" (disembunyikan, dipakai tarikTransaksi()/PWA) vs "Kategori"
- * (nama, terlihat manusia, cuma label kosmetik dari kategoriNama saat push —
- * lihat kirimBaris/doPost). Dipisah di sini supaya onEdit() bisa menyelaraskan
- * keduanya saat kolom nama diedit manual (lihat selaraskanIdKategoriDariNama).
+ * "ID Kategori" (tersembunyi, dibaca PWA) vs "Kategori" (nama, label untuk
+ * manusia). onEdit() menyelaraskan ID bila kolom nama diedit manual.
  */
 const KOLOM_KATEGORI_ID = HEADER.indexOf('ID Kategori') + 1;
 const KOLOM_KATEGORI_NAMA = HEADER.indexOf('Kategori') + 1;
@@ -248,25 +145,12 @@ const RP = '"Rp "#,##0;[RED]-"Rp "#,##0';
 const FORMAT_WAKTU = 'dd/mm/yyyy HH:mm';
 
 /**
- * Tab "Akun" & "Kategori" — cadangan rekening/kas dan kategori, ditulis lewat
- * doPost{entity:'akun'|'kategori'} (lihat tanganiEntitas) dan dibaca lewat
- * doPost{tarikEntitas:true} (lihat tarikEntitas) untuk restore/sync ke
- * perangkat lain. Berbeda dari tab Transaksi: baris di sini genuinely dibuat
- * pengguna (halaman Rekening/Kategori), bukan diturunkan dari isi statement
- * — kuncinya kolom ID (A), bukan hash konten seperti Transaksi. Tabelnya
- * kecil (biasanya puluhan baris), jadi ditulis apa adanya tanpa optimasi
- * blok/bongkah yang dipakai tab Transaksi untuk ribuan baris, dan ditarik
- * UTUH setiap kali (tanpa checkpoint `sejak`) — beda dari
- * tarikTransaksiEmail yang perlu checkpoint karena tabnya bisa panjang.
+ * Tab "Akun" & "Kategori": cadangan rekening dan kategori, upsert per ID
+ * (kolom A) lewat doPost{entity}, ditarik utuh lewat doPost{tarikEntitas}.
  *
- * "Diubah Pada" dikirim APA ADANYA oleh klien (waktu edit sungguhan di
- * perangkat itu, dipakai resolusi konflik last-updated-wins di
- * services/entitas-sync.js) — beda dari "Dikirim Pada" tab Transaksi yang
- * distempel SERVER. "Dihapus Pada" sebaliknya SELALU distempel server saat
- * tanganiEntitas memproses penghapusan: baris tidak pernah benar-benar
- * dibuang (lihat AD-008 soal tombstone) supaya perangkat lain yang menarik
- * data ini tahu record itu sudah dihapus, bukan mengiranya belum pernah ada
- * lalu menghidupkannya kembali.
+ * "Diubah Pada" dikirim klien apa adanya (dipakai last-updated-wins di
+ * entitas-sync.js). "Dihapus Pada" distempel server sebagai tombstone (AD-008):
+ * baris tidak pernah dibuang, supaya perangkat lain tidak menghidupkannya lagi.
  */
 const AKUN_SHEET_NAME = 'Akun';
 const HEADER_AKUN = ['ID', 'Bank', 'No. Rekening', 'Nama Pemilik', 'Mata Uang', 'Jenis', 'Saldo Awal', 'Saldo', 'Jumlah Transaksi', 'Warna', 'Catatan', 'Dibuat Pada', 'Diubah Pada', 'Dihapus Pada'];
@@ -289,8 +173,6 @@ function onOpen() {
     .createMenu('Pembukuan')
     .addItem('Bangun ulang Dashboard & rapikan data', 'bangunUlangDashboard')
     .addItem('Diagnosa', 'diagnosaDashboard')
-    .addItem('Diagnosa Dikirim Pada (Fase A)', 'diagnosaWaktuKirim')
-    .addItem('Pasang Proteksi Kolom Kunci (Fase A)', 'pasangProteksiKolomKunci')
     .addItem('Proses Email Transaksi Sekarang', 'prosesEmailSekarang')
     .addItem('Tarik Email Lama (Backfill)', 'backfillEmailTransaksi')
     .addItem('Aktifkan Pemantauan Email Transaksi', 'aktifkanPemantauanEmail')
@@ -299,29 +181,16 @@ function onOpen() {
 }
 
 /**
- * Simple trigger bawaan Spreadsheet — dipanggil otomatis oleh Google Sheets
- * setiap kali MANUSIA mengedit sel lewat UI (tidak pernah terpicu oleh
- * tulisan skrip sendiri lewat SpreadsheetApp, jadi aman dari infinite loop
- * LINTAS invocation; loop DALAM satu invocation tetap dicegah lewat guard
- * kolom di bawah). Rencana implementasi "Fase A": tujuannya semata
- * menstempel "kapan baris ini sungguh berubah" (kolom "Diubah Pada", dan
- * untuk tab Transaksi juga "Dikirim Pada" — lihat catatan KOLOM_WAKTU di
- * kepala berkas soal kenapa kolom itu yang dibaca tarikTransaksi()) supaya
- * auto-pull PWA & checkpoint pull bisa menangkap edit manual, yang sebelum
- * ini SAMA SEKALI tidak terdeteksi sinkronisasi manapun.
+ * Simple trigger: dipanggil setiap kali MANUSIA mengedit sel (tidak terpicu
+ * tulisan skrip). Menstempel "Diubah Pada" (dan "Dikirim Pada" di tab
+ * Transaksi) supaya auto-pull PWA menangkap edit manual.
  *
- * SENGAJA simple trigger, bukan installable: cakupannya sempit (baca/tulis
- * ke spreadsheet aktif sendiri saja, tidak butuh LockService lintas-
- * invocation atau layanan terotorisasi lain), dan menghindari trigger
- * terpasang yang gampang lupa dipasang ulang setelah salin/deploy ulang.
+ * Simple, bukan installable: cakupannya hanya spreadsheet aktif, dan tidak
+ * perlu dipasang ulang setelah salin/deploy ulang.
  *
- * Catatan penting soal Hash: fungsi ini TIDAK menghitung ulang kolom Hash
- * saat Tanggal/Deskripsi/Nominal diedit manual. Ini aman untuk arah PULL
- * (services/transaksi-sync.js mencocokkan baris lewat ID Transaksi, bukan
- * Hash — lihat catatan kolom Q/R di atas), dan tidak berisiko arah PUSH
- * (doPost menulis baris EXISTING lewat pencarian Hash, tapi PWA read-only
- * "Fase A" tidak lagi memiliki jalur yang mem-push ULANG transaksi yang
- * sudah tersinkron — hanya baris genuinely baru yang dikirim).
+ * Hash TIDAK dihitung ulang saat Tanggal/Deskripsi/Nominal diedit. Aman: pull
+ * mencocokkan lewat ID Transaksi, dan PWA tidak mem-push ulang baris yang
+ * sudah tersinkron.
  */
 function onEdit(e) {
   if (!e || !e.range) return;
@@ -349,24 +218,15 @@ function onEdit(e) {
 
   const barisAkhir = e.range.getLastRow();
 
-  // Baris baru di tab Akun/Kategori sengaja tidak bisa diisi "ID" manual
-  // lewat UI (kolom itu diproteksi -- lihat pasangProteksiKolomKunci()), dan
-  // baris tanpa ID dilewati diam-diam saat ditarik ke PWA (entitas-sync.js,
-  // tanpa pesan error apa pun -- baris kelihatan tersimpan tapi menghilang
-  // begitu ditarik). Begitu ada isian LAIN di baris tapi ID masih kosong,
-  // skrip sendiri yang mengisinya -- skrip tidak terikat proteksi, beda dari
-  // edit manusia lewat UI.
+  // Baris Akun/Kategori tanpa ID dilewati diam-diam saat ditarik ke PWA, dan
+  // kolom ID diproteksi dari edit UI. Begitu baris punya isian lain, skrip
+  // yang mengisi ID-nya.
   if (nama === AKUN_SHEET_NAME || nama === KATEGORI_SHEET_NAME) {
     isiIdBaruJikaKosong(sh, nama, baris, barisAkhir, cfg.lebar);
   }
 
-  // Kolom "Kategori" (nama, terlihat manusia) diedit langsung -- selaraskan
-  // "ID Kategori" (kolom mesin tersembunyi yang SESUNGGUHNYA dibaca
-  // tarikTransaksi()/PWA, lihat konstanta di atas) lewat pencarian nama di
-  // tab Kategori. Tanpa ini, mengetik nama kategori baru di kolom yang
-  // terlihat sama sekali tidak berpengaruh ke PWA -- yang dibaca cuma ID-nya,
-  // dan "Diubah Pada"/"Dikirim Pada" tetap ter-stempel seolah perubahan
-  // sudah tersimpan padahal belum.
+  // Kolom "Kategori" (nama) diedit langsung: selaraskan "ID Kategori", karena
+  // hanya ID yang dibaca PWA.
   if (nama === DATA_SHEET_NAME
     && kolom <= KOLOM_KATEGORI_NAMA && KOLOM_KATEGORI_NAMA <= kolomAkhir) {
     selaraskanIdKategoriDariNama(sh, baris, barisAkhir);
@@ -380,11 +240,8 @@ function onEdit(e) {
 }
 
 /**
- * Isi kolom "ID" (kolom 1, sama di Akun maupun Kategori) untuk baris yang
- * sudah punya isian lain tapi ID-nya masih kosong -- kasus paling umum:
- * pengguna menambah baris kategori/akun baru langsung di Sheets, dan tidak
- * bisa mengisi ID sendiri karena kolom itu diproteksi. Baris yang memang
- * masih kosong semuanya (tidak disentuh sama sekali) dibiarkan apa adanya.
+ * Isi kolom ID (kolom 1) untuk baris Akun/Kategori yang sudah punya isian lain
+ * tapi ID-nya kosong. Baris yang seluruhnya kosong dibiarkan.
  */
 function isiIdBaruJikaKosong(sh, nama, baris, barisAkhir, lebarHeader) {
   const prefix = nama === AKUN_SHEET_NAME ? 'acc' : 'kat';
@@ -398,22 +255,14 @@ function isiIdBaruJikaKosong(sh, nama, baris, barisAkhir, lebarHeader) {
   }
 }
 
-/**
- * ID acak ringkas bergaya sama dengan idBaru() sisi PWA (src/core/hash.js:
- * "prefix_16hexchar") -- tidak perlu identik algoritmanya, cukup unik dan
- * stabil (tidak berubah lagi begitu ditulis, lihat guard di pemanggil).
- */
+/** ID acak bergaya idBaru() PWA ("prefix_16hexchar"); cukup unik dan stabil. */
 function buatIdBaru(prefix) {
   return `${prefix}_${Utilities.getUuid().replace(/-/g, '').slice(0, 16)}`;
 }
 
 /**
- * Cocokkan nilai kolom "Kategori" (nama) baris `baris..barisAkhir` terhadap
- * daftar kategori (tab Kategori), lalu tulis ID yang cocok ke "ID Kategori"
- * baris yang sama. Nama yang tidak dikenali (typo, atau kategori yang belum
- * pernah dibuat) DIBIARKAN apa adanya -- ID Kategori lama tidak ditimpa
- * dengan tebakan yang salah -- dan dilaporkan lewat toast supaya pengguna
- * sadar barisnya belum tersambung.
+ * Tulis ID Kategori yang cocok dengan nama di kolom "Kategori". Nama yang tidak
+ * dikenali dibiarkan (ID lama tidak ditimpa tebakan) dan dilaporkan lewat toast.
  */
 function selaraskanIdKategoriDariNama(sh, baris, barisAkhir) {
   const peta = petaKategoriNamaKeId(sh.getParent());
@@ -443,11 +292,7 @@ function selaraskanIdKategoriDariNama(sh, baris, barisAkhir) {
   }
 }
 
-/**
- * Peta nama kategori (huruf kecil, tanpa spasi ujung) -> ID, dari tab
- * Kategori. Kategori yang sudah dihapus ("Dihapus Pada" terisi, tombstone —
- * lihat AD-008) sengaja dilewati supaya tidak bisa dipilih lagi lewat nama.
- */
+/** Peta nama kategori (huruf kecil) -> ID. Kategori ber-tombstone dilewati. */
 function petaKategoriNamaKeId(ss) {
   const sh = ss.getSheetByName(KATEGORI_SHEET_NAME);
   const peta = new Map();
@@ -467,66 +312,14 @@ function petaKategoriNamaKeId(ss) {
   return peta;
 }
 
-/**
- * Pasang proteksi "hanya pemilik skrip yang boleh edit lewat UI" pada kolom
- * kunci yang tidak boleh berubah karena salah pencet -- Hash & ID Transaksi
- * (Transaksi), ID (Akun/Kategori). Idempoten: aman dijalankan berkali-kali
- * dari menu, tidak menumpuk proteksi ganda pada rentang yang sama. Skrip
- * (onEdit di atas) TETAP bisa menulis ke baris yang sama karena proteksi
- * hanya membatasi editor lain lewat UI, bukan skrip yang berjalan sebagai
- * pemilik proyek.
- */
-function pasangProteksiKolomKunci() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const target = [
-    { sh: sheetData(ss), kolomIdx: [1, 17], deskripsi: 'Hash & ID Transaksi (Transaksi)' },
-    { sh: ss.getSheetByName(AKUN_SHEET_NAME), kolomIdx: [1], deskripsi: 'ID (Akun)' },
-    { sh: ss.getSheetByName(KATEGORI_SHEET_NAME), kolomIdx: [1], deskripsi: 'ID (Kategori)' },
-  ];
-
-  target.forEach(({ sh, kolomIdx, deskripsi }) => {
-    if (!sh) return;
-    const existing = sh.getProtections(SpreadsheetApp.ProtectionType.RANGE)
-      .map((p) => p.getRange().getA1Notation());
-    kolomIdx.forEach((k) => {
-      const range = sh.getRange(2, k, Math.max(sh.getMaxRows() - 1, 1), 1);
-      if (existing.indexOf(range.getA1Notation()) !== -1) return; // sudah dipasang
-      const p = range.protect().setDescription(`Kunci mesin -- ${deskripsi}`);
-      p.removeEditors(p.getEditors());
-      if (p.canDomainEdit()) p.setDomainEdit(false);
-    });
-  });
-
-  SpreadsheetApp.getUi().alert('Proteksi kolom kunci', 'Selesai dipasang/diverifikasi.', SpreadsheetApp.getUi().ButtonSet.OK);
-}
-
-/**
- * Sheet data selalu dicari dengan nama, TIDAK PERNAH dengan "sheet pertama" —
- * lihat catatan (1) di kepala berkas. Sheet bernama Dashboard tidak akan pernah
- * dianggap sebagai sheet data.
- */
+/** Sheet data selalu dicari dengan nama, tidak pernah dengan posisi tab. */
 function sheetData(ss) {
-  if (SHEET_NAME) return ss.getSheetByName(SHEET_NAME);
-  const adaNama = ss.getSheetByName(DATA_SHEET_NAME);
-  if (adaNama) return adaNama;
-  // Tab bawaan skrip tidak boleh ikut terpilih sebagai sheet data — Dashboard
-  // maupun arsip berisi hal lain sama sekali, dan menuliskan transaksi ke sana
-  // adalah persis kekacauan yang pernah terjadi.
-  const bawaan = [
-    DASHBOARD_SHEET_NAME, DASHBOARD_FULL_SHEET_NAME,
-    ANGGARAN_SHEET_NAME, CARI_TRANSAKSI_SHEET_NAME, ARSIP_SHEET_NAME,
-    KONFIGURASI_EMAIL_SHEET_NAME, EMAIL_MASUK_SHEET_NAME, TRANSAKSI_EMAIL_SHEET_NAME, LOG_EMAIL_SHEET_NAME,
-    AKUN_SHEET_NAME, KATEGORI_SHEET_NAME,
-  ];
-  const lain = ss.getSheets().filter((s) => bawaan.indexOf(s.getName()) === -1);
-  return lain.length ? lain[0] : ss.insertSheet(DATA_SHEET_NAME, 0);
+  return ss.getSheetByName(DATA_SHEET_NAME) || ss.insertSheet(DATA_SHEET_NAME, 0);
 }
 
 function getSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = sheetData(ss);
-  if (!SHEET_NAME && sh.getName() !== DATA_SHEET_NAME) sh.setName(DATA_SHEET_NAME);
-
   // Grid harus cukup lebar SEBELUM header ditulis: sheet yang lebih sempit dari
   // HEADER membuat getRange melempar "Kolom tersebut melampaui batas".
   if (sh.getMaxColumns() < HEADER.length) {
@@ -541,30 +334,19 @@ function getSheet() {
   if (perluPerbaikanHeader) sh.getRange(1, 1, 1, HEADER.length).setValues([HEADER]);
   if (baru || perluPerbaikanHeader) rapikanTampilan(sh);
 
-  // Dashboard SENGAJA tidak dibangun di sini. Membangunnya berarti membaca
-  // seluruh tab data dan memaksa Sheets menghitung ulang QUERY di atas ribuan
-  // baris — pekerjaan yang tidak ada hubungannya dengan menyimpan transaksi,
-  // tapi ikut ditanggung setiap permintaan sampai akhirnya melewati batas waktu
-  // dan permintaannya terlihat gagal. Sekarang hanya permintaan yang secara
-  // eksplisit meminta `rapikan` yang membayarnya (lihat doPost).
+  // Dashboard sengaja tidak dibangun di sini: biayanya terlalu besar untuk
+  // setiap permintaan. Hanya permintaan dengan `rapikan` yang membayarnya.
   return sh;
 }
 
 /**
  * Pastikan filter tab data mencakup kolom A (Hash).
  *
- * Kolom Hash disembunyikan, jadi filter yang dipasang lewat UI dengan mudah
- * terbentang mulai kolom B. Mengurutkan lewat filter seperti itu memindahkan
- * isi baris (tanggal, nominal, ID Transaksi, ...) tapi MENINGGALKAN Hash di
- * tempatnya -- setiap Hash lalu menempel ke transaksi lain. Upsert dan hapus
- * memakai Hash sebagai kunci, jadi sesudahnya pembaruan menimpa baris yang
- * salah dan penghapusan provisional mengenai baris statement (insiden
- * 06/10/2026: filter B1:T2248, 61 baris PDF Agustus terhapus; kemungkinan
- * besar juga penyebab "81 baris tertukar" yang dicatat di tulisPembaruan()).
- *
- * Filter yang tidak mulai di kolom A dibuat ulang mulai kolom A dengan
- * kriteria kolom yang sama, sehingga pengurutan berikutnya selalu
- * memindahkan baris utuh.
+ * Kolom Hash disembunyikan, jadi filter lewat UI mudah dimulai dari kolom B.
+ * Mengurutkan dengan filter seperti itu memindahkan isi baris tapi
+ * meninggalkan Hash, sehingga upsert dan hapus (berkunci Hash) mengenai baris
+ * yang salah. Filter yang tidak mulai di kolom A dibuat ulang dari kolom A
+ * dengan kriteria yang sama.
  *
  * @returns {boolean} true bila filter diperbaiki
  */
@@ -589,10 +371,8 @@ function pastikanFilterMencakupHash(sh) {
 }
 
 /**
- * Rapikan tab data sekali saat Sheet baru dibuat atau headernya baru diperbaiki
- * — bukan pada tiap doPost, supaya penyesuaian manual pengguna (lebar kolom,
- * dst.) tidak ditimpa ulang tiap ada transaksi masuk. Bisa dipanggil ulang
- * kapan saja lewat menu "Pembukuan".
+ * Rapikan tab data saat Sheet baru dibuat atau headernya diperbaiki, bukan
+ * pada tiap doPost, supaya penyesuaian manual pengguna tidak ditimpa.
  */
 function rapikanTampilan(sh) {
   const kolom = HEADER.length;
@@ -617,7 +397,6 @@ function rapikanTampilan(sh) {
   // lagi cocok dengan nomor aslinya. Baris lama tidak dimigrasi — nol yang sudah
   // hilang tidak bisa dikembalikan, dan penggabungan string tetap sama hasilnya.
   sh.getRange(2, 9, isi, 1).setNumberFormat('@');
-  normalkanWaktu(sh);
 
   // Kolom teknis tetap ditulis dan tetap dipakai upsert, hanya disembunyikan
   // supaya yang terbaca cuma kolom yang berarti buat manusia.
@@ -633,34 +412,9 @@ function rapikanTampilan(sh) {
 }
 
 /**
- * Ubah "Dikirim Pada" yang masih teks ISO menjadi Date sungguhan, sekali jalan.
- * Baris yang ditulis versi lama menyimpannya sebagai teks, sedangkan baris baru
- * sudah berupa Date — tanpa ini satu kolom akan tampil separuh "2026-09-10T18:17:16.925Z"
- * dan separuh "10/09/2026 18:17".
- */
-function normalkanWaktu(sh) {
-  const last = sh.getLastRow();
-  if (last < 2) return;
-  const rng = sh.getRange(2, KOLOM_WAKTU, last - 1, 1);
-  const nilai = rng.getValues();
-  let berubah = false;
-  const hasil = nilai.map(([v]) => {
-    if (typeof v === 'string' && v) {
-      const t = new Date(v);
-      if (!isNaN(t.getTime())) { berubah = true; return [t]; }
-    }
-    return [v];
-  });
-  if (berubah) rng.setValues(hasil);
-}
-
-/**
- * Pemisah argumen rumus mengikuti lokal spreadsheet — lihat catatan (2) di
- * kepala berkas. Dideteksi dengan mencoba rumus dua argumen: di lokal yang
- * memakai koma sebagai pemisah argumen hasilnya 3, di lokal yang memakai koma
- * sebagai pemisah desimal (Indonesia, Jerman, dst.) "1,2" terbaca satu bilangan
- * sehingga hasilnya bukan 3. Dideteksi, bukan didaftar, supaya tidak perlu
- * memelihara daftar lokal.
+ * Pemisah argumen rumus mengikuti lokal spreadsheet. Dideteksi dengan rumus
+ * dua argumen: di lokal berdesimal koma, "1,2" terbaca satu bilangan sehingga
+ * hasilnya bukan 3. Dideteksi, bukan didaftar per lokal.
  */
 function pisahArgumen(ss) {
   // Dicoba di sheet sementara, bukan di sel kosong sheet yang dipakai: sheet
@@ -678,20 +432,10 @@ function pisahArgumen(ss) {
 }
 
 /**
- * Dashboard/Dashboard Full dianggap rusak (dan boleh dibangun ulang otomatis)
- * hanya pada dua keadaan yang tidak mungkin disengaja pengguna:
- *
- *   - salah satu sel rumusnya bernilai galat (#ERROR!, #REF!, dst.) — misalnya
- *     rumus dibuat versi lama dengan pemisah argumen yang salah untuk lokal ini;
- *   - A1 berisi label header tab data, tanda tab ini pernah tertulisi data
- *     transaksi oleh kode versi lama.
- *
- * Sengaja sesempit itu: kalau patokannya "tata letak tidak seperti bawaan",
- * penyesuaian yang pengguna buat sendiri akan ditimpa berulang kali.
- *
- * `jangkar` adalah daftar sel rumus milik TAB INI SAJA — dipanggil
- * sendiri-sendiri untuk `Dashboard` dan `Dashboard Full` supaya kerusakan di
- * satu tab tidak tertutupi oleh tab lain yang sehat.
+ * Tab laporan dianggap rusak (boleh dibangun ulang otomatis) hanya bila salah
+ * satu sel rumusnya galat, atau A1 berisi header tab data. Sengaja sempit
+ * supaya penyesuaian pengguna tidak ditimpa berulang. `jangkar` milik satu tab
+ * saja, supaya kerusakan satu tab tidak tertutupi tab lain yang sehat.
  */
 function dashboardRusak(d, jangkar) {
   const judul = String(d.getRange('A1').getValue()).trim().toLowerCase();
@@ -700,14 +444,10 @@ function dashboardRusak(d, jangkar) {
 }
 
 /**
- * Sel rumus yang dipantau untuk satu tab: daftar yang dicatat saat build ke
- * ScriptProperties dengan `kunci` ('selRumusDashboard' atau
- * 'selRumusDashboardFull'), atau `SEL_RUMUS` bila belum ada dan kuncinya
- * milik Dashboard (Dashboard bawaan versi lama — Dashboard Full tidak punya
- * cadangan serupa karena baru ada mulai versi 9). Daftar dinamis ini yang
- * membuat luapan array — QUERY yang tumbuh melewati cadangan barisnya lalu
- * menghasilkan #REF!, galat yang TIDAK tertangkap IFERROR — bisa
- * tersembuhkan sendiri lewat jalur "rusak" yang sudah ada.
+ * Sel rumus yang dipantau untuk satu tab: dicatat saat build ke
+ * ScriptProperties dengan `kunci`, atau SEL_RUMUS untuk Dashboard lama.
+ * Daftar dinamis ini membuat luapan QUERY (#REF!, tidak tertangkap IFERROR)
+ * tersembuhkan lewat jalur "rusak".
  */
 function jangkarRumus(kunci) {
   try {
@@ -723,17 +463,12 @@ function cadangan(n) {
 }
 
 /**
- * Kolom maya yang dipakai bersama oleh Dashboard dan Dashboard Full, dirakit
- * sekali dan dibagikan ke kedua fungsi pembangun supaya definisinya tidak
- * bisa saling menyimpang antara dua tab.
+ * Kolom maya yang dipakai bersama Dashboard dan Dashboard Full, dirakit sekali
+ * supaya definisinya tidak menyimpang antar tab.
  *
- * Tanggal tersimpan sebagai TIPE TANGGAL, bukan teks: setValues mengubah
- * string ISO jadi tanggal saat menulis. LEFT(tanggal;7) kebetulan masih benar
- * selama format tampilannya "yyyy-mm-dd" — tapi begitu format itu berubah
- * (ganti locale, kolom diformat ulang), hasilnya jadi potongan seperti
- * "01/12/2" dan SELURUH pengelompokan bulan rusak tanpa satu pun pesan galat.
- * TEXT tidak bergantung format tampilan; cabang LEFT dipertahankan untuk baris
- * yang tanggalnya memang masih berupa teks.
+ * Tanggal tersimpan sebagai TIPE TANGGAL. Bulan diambil lewat TEXT, bukan
+ * LEFT(tanggal;7) yang bergantung format tampilan; cabang LEFT hanya untuk
+ * baris yang tanggalnya masih teks.
  */
 function kolomMaya(kol, S) {
   const BULAN = `ARRAYFORMULA(IF(ISNUMBER(${kol('B')})${S}TEXT(${kol('B')}${S}"yyyy-mm")${S}LEFT(${kol('B')}${S}7)))`;
@@ -757,16 +492,9 @@ function buatPasangRumus(d, jangkar) {
 }
 
 /**
- * Orkestrator: memastikan Dashboard, Dashboard Full, Anggaran, dan Cari
- * Transaksi semuanya ada dan sehat. statistikData dipanggil SEKALI di sini
- * dan dibagikan ke seluruh pemeriksaan/pembangunan di bawah — Dashboard dan
- * Dashboard Full menumpuk banyak blok yang ukurannya bergantung angka yang
- * sama, dan tab data bisa berisi ribuan baris.
- *
- * Anggaran dan Cari Transaksi TIDAK ikut throttle/versi Dashboard: keduanya
- * murah untuk diperiksa (create-once, tidak pernah dibangun ulang) dan tidak
- * boleh menunggu jeda yang sama — kategori baru di Transaksi harus segera
- * muncul di Anggaran, bukan menunggu jeda pemeriksaan Dashboard.
+ * Orkestrator semua tab laporan. statistikData dipanggil SEKALI di sini lalu
+ * dibagikan. Anggaran dan Cari Transaksi tidak ikut throttle/versi Dashboard:
+ * murah diperiksa, dan kategori baru harus segera muncul di Anggaran.
  */
 function pastikanSemuaTab(ss, namaSheetData) {
   const prop = PropertiesService.getScriptProperties();
@@ -786,11 +514,8 @@ function pastikanSemuaTab(ss, namaSheetData) {
 
   const anggaranSh = ss.getSheetByName(ANGGARAN_SHEET_NAME);
   const anggaranBaris = anggaranSh ? Math.max(anggaranSh.getLastRow() - 1, 0) : 0;
-  // Statement ikut jadi bahan sidik: tinggi tabel Kontrol Saldo disizekan dari
-  // jumlah pasangan rekening+bulan yang ada di tab Statement, jadi statement
-  // baru harus memicu pembangunan ulang persis seperti rekening baru. Diukur
-  // SEKALI di sini lalu dibagikan ke pembangunan di bawah — alasan yang sama
-  // seperti statistikData.
+  // Statement ikut jadi bahan sidik: tinggi tabel Kontrol Saldo bergantung
+  // jumlah pasangan rekening+bulan di tab Statement.
   const statStatement = statistikStatement(ss);
   const sidik = sidikData(stat, anggaranBaris, statStatement);
 
@@ -799,14 +524,9 @@ function pastikanSemuaTab(ss, namaSheetData) {
   const adaKontrol = ss.getSheetByName(KONTROL_SHEET_NAME);
   const versiBeda = prop.getProperty('versiDashboard') !== VERSI_DASHBOARD;
 
-  // MEMERIKSA saja sudah mahal: statistikData membaca seluruh tab data, dan
-  // dashboardRusak memaksa Sheets menghitung ulang QUERY/ARRAYFORMULA di atas
-  // ribuan baris — dua kali lipat sekarang karena ada dua tab. Backfill
-  // mengirim datanya dalam banyak bongkah berturut-turut; tanpa jeda ini,
-  // ongkos pemeriksaan itu dibayar berulang-ulang dalam hitungan detik untuk
-  // data yang bentuknya jelas belum berubah. Bila salah satu tab belum ada
-  // (migrasi dari versi lama yang cuma punya Dashboard), throttle ini
-  // dilewati — itu sekali jalan dan memang harus segera membangun keduanya.
+  // Pemeriksaan pun mahal (baca seluruh tab data + hitung ulang QUERY), dan
+  // backfill mengirim banyak bongkah berturut-turut. Jeda ini mencegah ongkos
+  // itu dibayar berulang. Dilewati bila salah satu tab belum ada.
   if (adaDash && adaFull && adaKontrol && !versiBeda) {
     const diperiksa = Number(prop.getProperty('pemeriksaanTerakhir') || 0);
     if (Date.now() - diperiksa < JEDA_PEMERIKSAAN_MS) return;
@@ -840,16 +560,9 @@ function pastikanSemuaTab(ss, namaSheetData) {
   const maya = kolomMaya(kol, S);
 
   // Kontrol Saldo dibangun PALING DULU: kartu "STATUS KONTROL" di Dashboard
-  // merujuk sel ringkasan tab ini, jadi alamatnya harus sudah pasti.
-  //
-  // Dan dibungkus try/catch, karena urutan itu punya harga yang sudah pernah
-  // dibayar sungguhan: ketiga tab SUDAH DIHAPUS di atas untuk dibangun ulang,
-  // jadi satu exception di sini dulu berarti Dashboard dan Dashboard Full
-  // ikut hilang — pengguna kehilangan dua laporan yang tidak ada
-  // hubungannya dengan kesalahannya. Tab separuh jadi juga lebih buruk
-  // daripada tidak ada tabnya: angkanya terbaca seperti laporan sungguhan
-  // padahal rumus per barisnya belum sempat terpasang. Jadi yang setengah
-  // jadi dibuang, kegagalannya dicatat, dan sisa laporan tetap dibangun.
+  // merujuk sel ringkasannya. Dibungkus try/catch karena ketiga tab sudah
+  // dihapus di atas; tanpa itu satu exception di sini ikut menghilangkan
+  // Dashboard. Tab separuh jadi dibuang, sisa laporan tetap dibangun.
   let hasilKontrol = null;
   try {
     hasilKontrol = bangunKontrol(ss, namaSheetData, stat, statStatement, S, AS, kol, maya);
@@ -880,14 +593,9 @@ function pastikanSemuaTab(ss, namaSheetData) {
 }
 
 /**
- * Bangun tab "Dashboard": kartu ringkasan (termasuk Saldo Terkini & Runway
- * gabungan), perbandingan antar rekening, arus bulanan per rekening DAN
- * gabungan, breakdown kategori, lalu satu blok rinci per rekening (kini juga
- * memuat Savings Rate, Saldo Terkini, dan Runway), plus grafik donat &
- * kolom. Semuanya rumus (SUM/COUNTA/QUERY/ARRAYFORMULA) yang merujuk balik
- * ke tab data, sehingga ikut ter-update tiap ada transaksi baru.
- *
- * Posisi TERAKHIR, bukan pertama — lihat catatan (1) di kepala berkas.
+ * Bangun tab "Dashboard": kartu ringkasan, perbandingan rekening, arus bulanan
+ * per rekening dan gabungan, breakdown kategori, blok rinci per rekening, dan
+ * grafik. Semuanya rumus yang merujuk balik ke tab data.
  */
 function bangunDashboard(ss, namaSheetData, stat, S, AS, kol, maya) {
   const d = ss.insertSheet(DASHBOARD_SHEET_NAME, ss.getNumSheets());
@@ -897,14 +605,9 @@ function bangunDashboard(ss, namaSheetData, stat, S, AS, kol, maya) {
   const nKat = Math.max(stat.katKeluar, 1);
 
   /* ---------- Anggaran kolom dan baris ---------- */
-  // Grid harus cukup besar SEBELUM sel mana pun disentuh. Menyetel lebar kolom
-  // atau mengakses sel di luar grid membuat Apps Script melempar "Kolom
-  // tersebut melampaui batas" dan membatalkan seluruh pembangunan — dan blok
-  // per rekening membuat tata letak ini bisa memanjang jauh ke bawah.
-  // Lantai 12 (bukan 7): baris kartu KPI sekarang enam kartu (A..L), dan
-  // baris kartu mini per rekening sekarang mencapai kolom J (Saldo Terkini,
-  // Runway) — keduanya harus muat sebelum lebar dipakai menghitung posisi
-  // grafik (kolomGrafik) supaya grafik tidak menimpa kartu.
+  // Grid harus cukup besar SEBELUM sel mana pun disentuh (aturan 3). Lantai 12
+  // kolom: enam kartu KPI (A..L) dan kartu mini rekening sampai kolom J harus
+  // muat sebelum posisi grafik dihitung.
   const lebarRek = Math.max(1 + stat.rekening.length, 2);
   const lebarMaks = Math.max(12, lebarRek, 1 + nBulan);
   const kolomPerlu = Math.max(lebarMaks + 4, 26);
@@ -983,10 +686,8 @@ function bangunDashboard(ss, namaSheetData, stat, S, AS, kol, maya) {
   d.setRowHeights(5, 2, 30);
 
   /* ---------- Baris kartu kedua: mutu arus kas & status kontrol ---------- */
-  // Label dipasang sekarang, nilainya BELAKANGAN (akhir fungsi) — tiga di
-  // antaranya menghitung rata-rata dari blok arus bulanan gabungan yang
-  // alamatnya baru pasti setelah blok itu dibangun. Pola yang sama dipakai
-  // kartu Saldo Terkini/Runway di baris pertama.
+  // Label dipasang sekarang, nilainya di akhir fungsi: alamat blok arus
+  // bulanan gabungan baru pasti setelah blok itu dibangun.
   const KARTU2 = [
     { kol: 'A', label: 'RATA-RATA PENGELUARAN / BULAN', bg: '#f1f3f4', fg: '#3c4043', format: RP },
     { kol: 'C', label: 'SAVINGS RATE RATA-RATA', bg: '#e8f0fe', fg: BIRU_TUA, format: '0.0%' },
@@ -1008,16 +709,9 @@ function bangunDashboard(ss, namaSheetData, stat, S, AS, kol, maya) {
   });
   d.setRowHeight(8, 26);
 
-  // Dua kartu kontrol bisa dipasang segera: tab Kontrol Saldo dibangun lebih
-  // dulu (lihat pastikanSemuaTab) dan alamat kartu ringkasannya tetap.
-  //
-  // TIDAK lewat pasangRumus, jadi keduanya bukan jangkar kesehatan Dashboard.
-  // Alasannya: kalau tab Kontrol Saldo tidak ada (pembangunannya gagal, atau
-  // pengguna menghapusnya), rujukan ini sah-sah saja menjadi #REF! — dan
-  // jangkar ber-#REF! membuat dashboardRusak menyatakan Dashboard rusak
-  // setiap kali diperiksa, lalu membangunnya ulang tiap sepuluh menit
-  // selamanya tanpa pernah menyembuhkan apa pun. IFERROR di dalam rumusnya
-  // sendiri sudah cukup untuk tampilan.
+  // Dua kartu kontrol tidak lewat pasangRumus (bukan jangkar kesehatan): bila
+  // tab Kontrol Saldo hilang, rujukannya sah menjadi #REF! dan akan membuat
+  // Dashboard dibangun ulang terus tanpa sembuh. IFERROR cukup untuk tampilan.
   d.getRange('G8').setFormula(`=IFERROR(IF('${KONTROL_SHEET_NAME}'!E5=0${S}"✅ Semua cocok"${S}`
     + `"⚠️ "&TEXT('${KONTROL_SHEET_NAME}'!E5${S}"0")&" bulan perlu diperiksa")${S}"—")`);
   d.getRange('I8').setFormula(`=IFERROR('${KONTROL_SHEET_NAME}'!I5${S}0)`);
@@ -1149,15 +843,10 @@ function bangunDashboard(ss, namaSheetData, stat, S, AS, kol, maya) {
     pasangRumus(`E${isiBulan}`,
       `=IFERROR(ARRAYFORMULA(IF(A${isiBulan}:A${akhirBulan}=""${S}""${S}`
       + `IF(B${isiBulan}:B${akhirBulan}-C${isiBulan}:C${akhirBulan}>=0${S}"✅ Surplus"${S}"⚠️ Defisit")))${S}"")`);
-    // Saldo Bank = saldo berjalan pada transaksi TERAKHIR MENURUT TANGGAL di
-    // bulan itu. Bukan "baris terakhir di tab data": urutan baris di sana adalah
-    // urutan kedatangan POST, yang teracak oleh antrean retry, upload yang tidak
-    // urut, dan penyelarasan penuh — mengambil yang terakhir menurut posisi akan
-    // memberi saldo yang salah tanpa tanda apa pun. Baris tanpa saldo (transaksi
-    // manual) disaring keluar supaya tidak menang sebagai "terakhir".
-    // Ditulis per baris, bukan ARRAYFORMULA: SORT/FILTER tidak bisa divektorkan.
-    // Savings Rate (H) ikut ditulis di sini sekalian — satu setFormulas untuk
-    // tiga kolom, bukan tiga panggilan terpisah.
+    // Saldo Bank = saldo pada transaksi TERAKHIR MENURUT TANGGAL di bulan itu,
+    // bukan baris terakhir (urutan baris = urutan kedatangan POST). Baris tanpa
+    // saldo disaring. Ditulis per baris karena SORT/FILTER tidak bisa
+    // divektorkan; Savings Rate (H) ikut dalam satu setFormulas.
     d.getRange(kepalaTabelBulan, 6).setValue('Saldo Bank');
     d.getRange(kepalaTabelBulan, 7).setValue('Selisih');
     d.getRange(kepalaTabelBulan, 8).setValue('Savings Rate');
@@ -1339,14 +1028,9 @@ function bangunDashboard(ss, namaSheetData, stat, S, AS, kol, maya) {
 }
 
 /**
- * Bangun tab "Dashboard Full": ranking kategori pengeluaran (dengan ambang
- * "tak wajar" per kategori), tren kategori per bulan sebagai heatmap,
- * daftar transaksi tak wajar, dan anggaran vs realisasi bulan berjalan
- * (dibaca dari tab Anggaran — lihat pastikanAnggaran). Menggantikan sheet
- * hand-built lama dengan nama yang sama, yang rusak karena rumus
- * koma-nya tidak lolos di lokal Indonesia (lihat catatan (2) di kepala
- * berkas) — di sini rumusnya lewat `pasangRumus`/`S` seperti Dashboard,
- * jadi ikut kebal locale dan ikut disembuhkan otomatis lewat dashboardRusak.
+ * Bangun tab "Dashboard Full": ranking kategori dengan ambang "tak wajar", tren
+ * kategori per bulan (heatmap), daftar transaksi tak wajar, dan anggaran vs
+ * realisasi bulan berjalan.
  */
 function bangunDashboardFull(ss, namaSheetData, stat, S, AS, kol, maya) {
   const nBulan = Math.max(stat.bulan.length, 1);
@@ -1553,13 +1237,8 @@ function bangunDashboardFull(ss, namaSheetData, stat, S, AS, kol, maya) {
 }
 
 /**
- * Tab input pengguna untuk target anggaran bulanan per kategori. Dibuat
- * sekali, lalu HANYA ditambah baris kategori baru yang belum ada — kolom
- * Target Bulanan/Catatan yang diketik pengguna tidak pernah disentuh, dan
- * baris yang sudah ada tidak pernah diurutkan ulang atau dihapus. Mengikuti
- * pola penjaga yang sama seperti arsipkan()/ARSIP_SHEET_NAME: tab yang
- * menyimpan sesuatu milik pengguna tidak boleh ikut siklus bangun-ulang
- * Dashboard/Dashboard Full.
+ * Tab target anggaran per kategori. Dibuat sekali, lalu HANYA ditambah baris
+ * kategori baru; input pengguna dan urutan baris lama tidak pernah disentuh.
  */
 function pastikanAnggaran(ss, stat) {
   let a = ss.getSheetByName(ANGGARAN_SHEET_NAME);
@@ -1593,13 +1272,9 @@ function pastikanAnggaran(ss, stat) {
 }
 
 /**
- * Tab pencarian transaksi, dibuat sekali dan TIDAK PERNAH dibangun ulang
- * otomatis — mengulang pembangunan akan menghapus kata kunci yang sedang
- * diketik pengguna di sel input. Hasilnya lewat FILTER, bukan QUERY: kata
- * kunci pengguna dibandingkan lewat rujukan SEL ($B$2, dst.), bukan
- * disisipkan ke dalam teks rumus — menghindari kelas bug yang sama dengan
- * label rekening ber-apostrof (lihat catatan (3) di kepala berkas): kata
- * kunci berisi tanda kutip pun tidak akan memecah rumusnya.
+ * Tab pencarian transaksi, dibuat sekali (pembangunan ulang menghapus kata
+ * kunci yang sedang diketik). Pakai FILTER dengan rujukan sel, bukan QUERY
+ * dengan teks tersisip, supaya tanda kutip di kata kunci tidak memecah rumus.
  */
 function pastikanCariTransaksi(ss) {
   if (ss.getSheetByName(CARI_TRANSAKSI_SHEET_NAME)) return;
@@ -1654,15 +1329,8 @@ function pastikanCariTransaksi(ss) {
 }
 
 /**
- * Tab "Statement": angka cetakan bank per e-statement. Dibuat SEKALI lalu
- * tidak pernah dibangun ulang — kolom saldonya boleh diketik tangan (lihat
- * catatan di STATEMENT_SHEET_NAME), dan tab yang menyimpan sesuatu milik
- * pengguna tidak boleh ikut siklus bangun-ulang Dashboard.
- *
- * Aman dipanggil berkali-kali: header diperbaiki bila lebarnya kurang atau
- * isinya berbeda, sisanya tidak disentuh. Dipanggil dari pastikanSemuaTab()
- * DAN dari tanganiEntitas() — mana pun yang lebih dulu jalan, hasilnya tab
- * dengan format yang sama.
+ * Tab "Statement", create-once. Aman dipanggil berkali-kali (header diperbaiki
+ * bila berbeda). Dipanggil dari pastikanSemuaTab() dan tanganiEntitas().
  */
 function pastikanStatement(ss) {
   let sh = ss.getSheetByName(STATEMENT_SHEET_NAME);
@@ -1691,11 +1359,8 @@ function pastikanStatement(ss) {
   sh.setColumnWidth(13, 150);
 
   const tinggi = Math.max(sh.getMaxRows() - 1, 1);
-  // Bulan dipaksa TEKS. Tanpa ini, "2025-07" yang diketik tangan diubah
-  // Sheets jadi tanggal 1 Juli 2025, dan pencocokan bulan di tab Kontrol
-  // Saldo — yang membandingkan teks "yyyy-mm" — berhenti cocok tanpa satu
-  // pun pesan galat. Rumus di sana tetap menormalkan tanggal-jadi-teks
-  // sebagai jaring kedua, tapi jaring pertamanya di sini.
+  // Bulan dipaksa TEKS: "2025-07" yang diketik tangan diubah Sheets jadi
+  // tanggal, dan pencocokan teks "yyyy-mm" di Kontrol Saldo berhenti cocok.
   sh.getRange(2, 4, tinggi, 1).setNumberFormat('@');
   sh.getRange(2, 5, tinggi, 2).setNumberFormat('yyyy-mm-dd');
   sh.getRange(2, 7, tinggi, 4).setNumberFormat(RP);
@@ -1704,12 +1369,7 @@ function pastikanStatement(ss) {
   return sh;
 }
 
-/**
- * Ukur tab Statement sekali untuk kebutuhan tata letak Kontrol Saldo: berapa
- * pasangan rekening+bulan yang benar-benar ada, dan berapa rekening. Sama
- * alasannya dengan statistikData: tinggi blok bergantung angka ini, dan
- * membacanya ulang per blok berarti membaca tab yang sama beberapa kali.
- */
+/** Ukur tab Statement sekali: jumlah pasangan rekening+bulan dan rekening. */
 function statistikStatement(ss) {
   const sh = ss ? ss.getSheetByName(STATEMENT_SHEET_NAME) : null;
   const last = sh ? sh.getLastRow() : 0;
@@ -1737,30 +1397,15 @@ function statistikStatement(ss) {
 }
 
 /**
- * Bangun tab "Kontrol Saldo" — pemeriksaan silang antara angka bank dan angka
- * pembukuan. Tiga blok:
+ * Bangun tab "Kontrol Saldo". Tiga blok:
+ *   1. Kontrol per rekening per bulan (baris digerakkan tab Statement): saldo,
+ *      mutasi, dan jumlah transaksi menurut bank vs pembukuan, plus selisih.
+ *   2. Bulan pembukuan tanpa e-statement: statement yang lupa di-upload tidak
+ *      akan pernah muncul sebagai selisih.
+ *   3. Rekap per rekening.
  *
- *   1. KONTROL PER REKENING PER BULAN. Baris digerakkan tab Statement (satu
- *      baris per rekening per bulan yang punya e-statement). Untuk tiap baris:
- *      saldo awal/akhir menurut bank, saldo awal/akhir hasil hitungan
- *      pembukuan, mutasi debet/kredit kedua sisi, jumlah transaksi kedua
- *      sisi, dan selisihnya.
- *   2. BULAN PEMBUKUAN TANPA E-STATEMENT. Kebalikannya: bulan yang punya
- *      transaksi tapi tidak punya statement pembanding sama sekali. Blok ini
- *      yang menangkap kelalaian paling mahal — statement yang lupa di-upload
- *      tidak akan pernah muncul sebagai "selisih", karena tidak ada apa pun
- *      yang dibandingkan.
- *   3. REKAP PER REKENING. Berapa bulan diperiksa, berapa cocok, dan posisi
- *      saldo akhir terbaru kedua sisi.
- *
- * Saldo pembukuan dihitung MAJU: Saldo Awal rekening (tab Akun) + seluruh
- * mutasi bulan-bulan sebelumnya. Bukan dari kolom Saldo di tab data — itu
- * saldo cetakan bank, dan membandingkannya dengan angka bank berarti
- * pemeriksaan yang selalu lolos (lihat catatan di KONTROL_SHEET_NAME).
- *
- * Seluruh QUERY di sini memakai `limit` sebesar baris yang dialokasikan, jadi
- * luapan array yang menabrak blok di bawahnya tidak mungkin terjadi — beda
- * dari blok Dashboard yang mengandalkan cadangan baris.
+ * Seluruh hasil array dibatasi sebesar baris yang dialokasikan, jadi luapan
+ * tidak bisa menabrak blok di bawahnya.
  */
 function bangunKontrol(ss, namaSheetData, stat, statStatement, S, AS, kol, maya) {
   const d = ss.insertSheet(KONTROL_SHEET_NAME, ss.getNumSheets());
@@ -1810,20 +1455,9 @@ function bangunKontrol(ss, namaSheetData, stat, statStatement, S, AS, kol, maya)
   const kolomSelisih = [];
 
   /* ---------- Judul ---------- */
-  //
-  // Judul dan keterangan TIDAK digabung melintasi kolom B, dan itu bukan
-  // pilihan tata letak: tab ini membekukan dua kolom pertama (lihat
-  // setFrozenColumns di bawah), dan Sheets MENOLAK pembekuan yang memotong
-  // sel gabungan —
-  //
-  //   "Anda tidak dapat membekukan kolom yang berisi hanya sebagian dari sel
-  //    gabungan"
-  //
-  // Penolakan itu melempar exception yang menjatuhkan SELURUH pembangunan di
-  // tengah jalan: tab Kontrol tinggal separuh, dan Dashboard serta Dashboard
-  // Full (yang sudah dihapus untuk dibangun ulang) tidak pernah kembali
-  // sampai POST berikutnya. Karena itu tiap gabungan di sini berhenti di
-  // kolom B atau mulai dari kolom C — tidak ada yang melintasi batasnya.
+  // Tidak ada sel gabungan yang melintasi batas kolom B/C: tab ini membekukan
+  // dua kolom pertama, dan Sheets melempar exception bila pembekuan memotong
+  // sel gabungan, menjatuhkan seluruh pembangunan.
   const lebarHuruf = hurufKolom(LEBAR);
   const gabung = (a1) => d.getRange(a1).merge();
   gabung('A1:B1')
@@ -1889,21 +1523,10 @@ function bangunKontrol(ss, namaSheetData, stat, statStatement, S, AS, kol, maya)
   const isi1 = kepala1 + 1;
   const akhir1 = kepala1 + nKontrol;
 
-  // Baris digerakkan pasangan rekening+bulan di tab Statement.
-  //
-  // SORT(UNIQUE(FILTER(...))), BUKAN QUERY, dan itu perbaikan atas bug yang
-  // sudah sampai ke pengguna: versi QUERY-nya ("select Col1, Col2 ... group
-  // by Col1, Col2" tanpa satu pun agregat) tidak mengembalikan apa pun di
-  // Sheet sungguhan walau tab Statement berisi 45 baris — seluruh tabel
-  // kontrol tampak kosong dan, karena drivernya dibungkus IFERROR, alasannya
-  // tertutup pesan "belum ada baris" yang menyesatkan. Blok "bulan tanpa
-  // e-statement" di bawah tidak kena karena QUERY-nya memang meng-agregat.
-  //
-  // FILTER/UNIQUE/SORT dipakai justru karena itu primitif yang SUDAH terbukti
-  // jalan di atas data yang sama: SUMPRODUCT dan FILTER per baris di tabel
-  // ini mencocokkan rekening+bulan dengan benar sejak awal. ARRAY_CONSTRAIN
-  // menggantikan `limit` QUERY — memotong hasil PAS sejumlah baris yang
-  // dialokasikan, jadi luapan tidak mungkin menabrak blok di bawahnya.
+  // Baris digerakkan pasangan rekening+bulan di tab Statement. Pakai
+  // SORT(UNIQUE(FILTER())), bukan QUERY "group by" tanpa agregat (yang tidak
+  // mengembalikan apa pun di Sheets sungguhan). ARRAY_CONSTRAIN memotong hasil
+  // pas sejumlah baris yang dialokasikan.
   pasangRumus(`A${isi1}`,
     `=IFERROR(ARRAY_CONSTRAIN(SORT(UNIQUE(FILTER({${S_REK}${AS}${S_BULAN}}${S}`
     + `(${S_REK}<>"")*(${S_BULAN}<>"")))${S}1${S}TRUE${S}2${S}TRUE)${S}${nKontrol}${S}2)${S}`
@@ -1930,12 +1553,9 @@ function bangunKontrol(ss, namaSheetData, stat, statStatement, S, AS, kol, maya)
     const cocokStatement = `(${S_REK}=$A${b})*(${S_BULAN}=$B${b})`;
     const cocokLedger = `(${maya.REK}=$A${b})*(${maya.BULAN}=$B${b})`;
 
-    // Saldo awal bank: statement paling AWAL di bulan itu (diurutkan menurut
-    // Periode Awal), saldo akhir bank: statement paling AKHIR. Nyaris selalu
-    // statement yang sama — kecuali satu bulan ter-upload dua kali (rekening
-    // koran + mutasi), dan justru di situ mengambil yang terluar adalah
-    // jawaban yang benar. Kolom G/H dipakai MENTAH, tidak dibungkus N():
-    // sel kosong harus tetap kosong, bukan jadi nol.
+    // Saldo awal bank dari statement paling AWAL di bulan itu, saldo akhir dari
+    // yang paling AKHIR (relevan bila satu bulan ter-upload dua kali). Kolom G/H
+    // dipakai mentah: sel kosong harus tetap kosong, bukan nol.
     const saldoAwalBank = `IFERROR(INDEX(SORT(FILTER({${kolS('G')}${AS}${kolS('E')}}${S}`
       + `${cocokStatement}*(${kolS('G')}<>""))${S}2${S}TRUE)${S}1${S}1)${S}"")`;
     const saldoAkhirBank = `IFERROR(INDEX(SORT(FILTER({${kolS('H')}${AS}${kolS('F')}}${S}`
@@ -1979,11 +1599,8 @@ function bangunKontrol(ss, namaSheetData, stat, statStatement, S, AS, kol, maya)
     ]);
   }
   d.getRange(isi1, 3, rumus1.length, 15).setFormulas(rumus1);
-  // Rumus per baris tidak lewat pasangRumus (jumlahnya sebanyak baris tabel,
-  // dan mencatat semuanya membuat pemeriksaan kerusakan membaca ulang seluruh
-  // tabel tiap POST). Satu baris pertama dicatat sebagai jangkar — cukup:
-  // rumus di baris lain bentuknya sama, jadi galat locale/luapan akan
-  // terlihat di sana juga.
+  // Rumus per baris tidak lewat pasangRumus (terlalu banyak). Baris pertama
+  // dicatat sebagai jangkar; bentuk rumus baris lain sama.
   jangkar.push(`C${isi1}`, `H${isi1}`, `Q${isi1}`);
 
   d.getRange(`C${isi1}:F${akhir1}`).setNumberFormat(RP);
@@ -2110,13 +1727,7 @@ function bangunKontrol(ss, namaSheetData, stat, statStatement, S, AS, kol, maya)
   return { jangkar, rentang };
 }
 
-/**
- * Tab input pengguna: pola pengirim/subjek email transaksi bank. Dibuat
- * sekali, tidak pernah dibangun ulang/dihapus — sama seperti Anggaran.
- * Sengaja dibuat KOSONG: pola pengirim asli (mis. alamat noreply BCA/
- * Permata) tidak boleh ditebak lewat kode, harus diisi pengguna dari email
- * transaksi sungguhan yang mereka terima sendiri.
- */
+/** Tab Konfigurasi Email, create-once dan sengaja kosong (lihat konstantanya). */
 function pastikanKonfigurasiEmail(ss) {
   if (ss.getSheetByName(KONFIGURASI_EMAIL_SHEET_NAME)) return;
 
@@ -2134,11 +1745,7 @@ function pastikanKonfigurasiEmail(ss) {
   k.setTabColor('#0b8043');
 }
 
-/**
- * Tab tersembunyi berisi email transaksi mentah yang lolos klasifikasi
- * (lihat klasifikasikanEmail/pollEmailTransaksi). Mengikuti pola penjaga
- * arsipkan()/_Arsip: dibuat sekali, disembunyikan, hanya ditambah baris.
- */
+/** Tab tersembunyi _EmailMasuk: dibuat sekali, hanya ditambah baris. */
 function pastikanEmailMasuk(ss) {
   let m = ss.getSheetByName(EMAIL_MASUK_SHEET_NAME);
   if (!m) {
@@ -2150,12 +1757,7 @@ function pastikanEmailMasuk(ss) {
   return m;
 }
 
-/**
- * Tab transit hasil parse email transaksi. Dibuat sekali; ditulis terus
- * lewat pollEmailTransaksi(), tidak ada kolom yang diketik manual pengguna
- * di sini (beda dari Anggaran/Konfigurasi Email) jadi tidak perlu penjaga
- * non-destruktif — cukup create-once seperti _EmailMasuk.
- */
+/** Tab Transaksi Email: dibuat sekali, hanya ditulis skrip. */
 function pastikanTransaksiEmail(ss) {
   let t = ss.getSheetByName(TRANSAKSI_EMAIL_SHEET_NAME);
   if (!t) {
@@ -2167,39 +1769,16 @@ function pastikanTransaksiEmail(ss) {
       .setVerticalAlignment('middle');
     t.setTabColor('#0b8043');
   }
-  // RRN dan Nomor Referensi WAJIB teks, bukan Number: ditemukan lewat data
-  // produksi nyata bahwa Google Sheets diam-diam mengubah nilai digit-murni
-  // (mis. "255515732408") jadi Number begitu ditulis lewat setValues,
-  // sementara yang memuat huruf (mis. "...QRS1141733407") tetap string --
-  // inkonsistensi yang bisa memutus pencocokan referensi di fase
-  // rekonsiliasi nanti. Persis kelas bug yang sama yang sudah diperbaiki
-  // untuk kolom "No. Rekening" tab Transaksi (lihat getSheet()).
-  //
-  // SENGAJA DI LUAR blok "tab belum ada" di atas: tab ini sudah lebih dulu
-  // dibuat pengguna sebelum perbaikan ini ada, dan format yang cuma
-  // dipasang saat pembuatan TIDAK PERNAH sampai ke tab yang sudah telanjur
-  // ada -- persis kesalahan yang sama yang pernah terjadi pada bendera
-  // migrasi kata kunci kategori (lihat migrasiKataKunciBawaanV2 di
-  // src/data/migrasi.js).
-  //
-  // Rentangnya dibatasi ke BARIS TERISI SEKARANG (getLastRow), BUKAN
-  // getMaxRows() -- percobaan pertama memakai getMaxRows() dan langsung
-  // memformat ~1000 baris kosong tiap kali fungsi ini dipanggil, yang
-  // artinya tab ini tampak berisi ~1000 baris begitu dibuka padahal
-  // datanya cuma segelintir. Baris yang baru ditambahkan SETELAH
-  // pemanggilan ini (dalam siklus poll yang sama) baru ikut diformat pada
-  // pemanggilan berikutnya -- jeda kosmetik satu putaran, bukan soal
-  // kebenaran data (terbukti dari data produksi: nilai yang sempat jadi
-  // Number kembali jadi teks begitu putaran berikutnya berjalan).
+  // RRN dan Nomor Referensi WAJIB teks: setValues mengubah nilai digit-murni
+  // jadi Number, sementara yang berhuruf tetap string, dan pencocokan
+  // referensi jadi tidak konsisten. Dipasang di luar blok "tab belum ada"
+  // supaya tab lama ikut terformat, dan hanya sampai getLastRow() (bukan
+  // getMaxRows()) supaya tidak memformat ribuan baris kosong.
   t.getRange(2, 10, Math.max(t.getLastRow() - 1, 1), 2).setNumberFormat('@');
   return t;
 }
 
-/**
- * Tab audit ringan untuk pollEmailTransaksi() -- lihat catatLogEmail()/
- * perluDicatatLogEmail(). Dibuat sekali, hanya ditambah baris, tidak ada
- * kolom yang diketik manual pengguna -- sama seperti Transaksi Email.
- */
+/** Tab Log Email: dibuat sekali, hanya ditambah baris. */
 function pastikanLogEmail(ss) {
   let t = ss.getSheetByName(LOG_EMAIL_SHEET_NAME);
   if (!t) {
@@ -2214,12 +1793,7 @@ function pastikanLogEmail(ss) {
   return t;
 }
 
-/**
- * Buat tab entitas (Akun/Kategori) bila belum ada, dan perbaiki headernya bila
- * berubah — sama seperti guard header di getSheet(), disederhanakan karena
- * tab ini tidak punya rumus maupun urusan lokal (pemisah argumen, dst.) yang
- * perlu dijaga.
- */
+/** Buat tab Akun/Kategori bila belum ada, dan perbaiki headernya bila berubah. */
 function pastikanTabEntitas(ss, nama, header) {
   let sh = ss.getSheetByName(nama);
   if (!sh) {
@@ -2241,16 +1815,10 @@ function pastikanTabEntitas(ss, nama, header) {
 }
 
 /**
- * Upsert/hapus baris AKUN atau KATEGORI berdasarkan ID (kolom A) — dipanggil
- * dari doPost saat payload membawa `entity`. Sengaja terpisah dari alur
- * TRANSAKSI (rows/hapus/selaras di doPost utama): tabelnya kecil, jadi
- * seluruh baris yang berubah ditulis langsung tanpa optimasi blok/bongkah.
- *
- * Penghapusan TIDAK membuang barisnya seperti dulu — kolom "Dihapus Pada"
- * distempel sebagai tombstone (lihat AD-008). Baris yang benar-benar dibuang
- * dari Sheet berarti perangkat lain yang menariknya lewat tarikEntitas() sama
- * sekali tidak tahu record itu pernah ada, dan bisa menghidupkannya kembali
- * kalau device itu sendiri belum sempat menghapusnya secara lokal.
+ * Upsert/hapus baris Akun, Kategori, atau Statement berdasarkan ID (kolom A).
+ * Tabelnya kecil, jadi ditulis langsung tanpa optimasi blok. Penghapusan
+ * Akun/Kategori menstempel "Dihapus Pada" (tombstone, AD-008), bukan membuang
+ * baris.
  */
 function tanganiEntitas(data, header, kolom, namaTab) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -2314,14 +1882,9 @@ function tanganiEntitas(data, header, kolom, namaTab) {
   if (kolomDihapusPada > 0) {
     nomorTombstone.forEach((n) => sh.getRange(n, kolomDihapusPada).setValue(sekarang));
   } else {
-    // Tabel tanpa kolom "Dihapus Pada" (Statement): barisnya benar-benar
-    // dibuang. Tombstone ada di AKUN/KATEGORI karena keduanya ditarik balik
-    // ke perangkat lain (AD-008) — baris yang hilang tanpa jejak akan
-    // dihidupkan kembali oleh pull berikutnya. Statement tidak pernah
-    // ditarik balik, jadi tidak ada yang bisa menghidupkannya, sementara
-    // baris yang tertinggal justru merusak: kontrol saldo terus
-    // membandingkan bulan itu dengan statement yang sudah dibatalkan.
-    // Dihapus dari bawah ke atas supaya nomor baris sisanya tidak bergeser.
+    // Statement tidak punya tombstone: tidak pernah ditarik balik ke perangkat,
+    // dan baris yang tertinggal membuat Kontrol Saldo membandingkan dengan
+    // statement yang sudah dibatalkan. Dihapus dari bawah ke atas.
     nomorTombstone.sort((a, b) => b - a).forEach((n) => sh.deleteRow(n));
   }
 
@@ -2336,13 +1899,9 @@ function tanganiEntitas(data, header, kolom, namaTab) {
 }
 
 /**
- * Baca seluruh tab entitas (Akun/Kategori) untuk ditarik ke perangkat lain —
- * dipanggil dari doPost{tarikEntitas:true}. Beda dari tarikTransaksiEmail:
- * TIDAK memakai checkpoint `sejak` — tabelnya kecil, jadi seluruh baris
- * (termasuk yang sudah ber-tombstone "Dihapus Pada") dikirim utuh setiap
- * kali. Ini juga menghindari ketergantungan pada jam klien vs jam server
- * yang justru jadi alasan tarikTransaksiEmail memakai checkpoint waktu
- * SERVER — dengan full pull, pertanyaan itu tidak perlu dijawab sama sekali.
+ * Baca seluruh tab Akun/Kategori (termasuk tombstone) untuk doPost{tarikEntitas}.
+ * Tanpa checkpoint `sejak`: tabelnya kecil, dan full pull menghindari soal
+ * selisih jam klien vs server.
  */
 function tarikEntitas(header, kolom, namaTab) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -2368,11 +1927,8 @@ function tarikEntitas(header, kolom, namaTab) {
 }
 
 /**
- * Peta nama bulan ke indeks 0-11 — memuat SINGKATAN INDONESIA dan INGGRIS
- * sekaligus (mis. "Agu"/"Aug", "Okt"/"Oct", "Des"/"Dec") karena sample email
- * BCA dan Permata yang jadi acuan parser ini masing-masing memakai singkatan
- * yang berbeda ("11 Sep 2026" vs "24 Aug 2026") — tidak bisa diasumsikan
- * satu bank selalu satu bahasa.
+ * Nama bulan ke indeks 0-11, singkatan Indonesia DAN Inggris: BCA dan Permata
+ * memakai bahasa berbeda ("11 Sep 2026" vs "24 Aug 2026").
  */
 const BULAN_MAP = {
   JAN: 0, FEB: 1, MAR: 2, APR: 3, MEI: 4, MAY: 4, JUN: 5, JUL: 6,
@@ -2380,15 +1936,10 @@ const BULAN_MAP = {
 };
 
 /**
- * Ambil nilai satu field "Label : Nilai" dari isi email. Dicari lewat
- * regex per-label (bukan pemisahan baris generik) supaya tahan terhadap
- * spasi/perataan yang mungkin berubah saat HTML email dikonversi jadi teks
- * polos oleh getPlainBody() — hal yang tidak bisa dipastikan persis dari
- * tangkapan layar saja. `\s*` sengaja dipakai di kedua sisi ":" (bukan satu
- * spasi tetap), dan value cuma berhenti di batas baris supaya "Jam : 10:13:35"
- * (nilai yang sendiri memuat ":") tidak ikut terpotong di titik dua pertama.
- *
- * FUNGSI MURNI — string masuk, string keluar, tidak menyentuh GmailApp.
+ * Ambil nilai satu field "Label : Nilai" dari isi email. Regex per label,
+ * dengan `\s*` di kedua sisi ":" supaya tahan perubahan spasi dari
+ * getPlainBody(); nilai berhenti di akhir baris supaya "Jam : 10:13:35" utuh.
+ * Fungsi murni.
  */
 function ekstrakField(body, label) {
   const labelAman = String(label).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -2432,19 +1983,11 @@ const PARSER_VERSION_BCA = 'bca-v1';
 const PARSER_VERSION_PERMATA = 'permata-v1';
 
 /**
- * Parser email BCA ("Internet Transaction Journal"). Dibangun dari SAMPLE
- * ASLI pengguna, bukan tebakan format — dua template sejauh ini, dibedakan
- * lewat field pembeda yang ada di masing-masing:
- *   - "Jenis Transaksi" -> notifikasi pembayaran (QRIS/kartu, uang keluar).
- *   - "Jenis Transfer" -> transfer ke sesama rekening BCA (ditemukan lewat
- *     verifikasi produksi pengguna, bukan sample yang diminta duluan --
- *     teks aslinya tertangkap apa adanya di _EmailMasuk sebelum parser ini
- *     ada, jadi dipakai langsung, bukan ditebak).
- * Template BCA lain (transfer masuk, dsb.) belum tentu berbagi field yang
- * sama dan akan gagal parse sampai sample/teks aslinya tersedia
- * (parsedOk:false, bukan hasil yang salah tebak).
- *
- * FUNGSI MURNI.
+ * Parser email BCA ("Internet Transaction Journal"), dari sampel asli. Dua
+ * template, dibedakan field-nya:
+ *   - "Jenis Transaksi" -> pembayaran (QRIS/kartu/VA, uang keluar).
+ *   - "Jenis Transfer"  -> transfer ke sesama BCA.
+ * Template lain menghasilkan parsedOk:false, bukan hasil tebakan. Fungsi murni.
  */
 function parseEmailBCA(bodyText) {
   const body = String(bodyText || '');
@@ -2457,11 +2000,8 @@ function parseEmailBCA(bodyText) {
 function parseEmailBCAPembayaran(body) {
   const tanggalTransaksi = ekstrakField(body, 'Tanggal Transaksi');
   const jenisTransaksi = ekstrakField(body, 'Jenis Transaksi');
-  // "Pembayaran Ke" dipakai template QRIS/kartu; template Transfer ke BCA
-  // Virtual Account (mis. top-up GoPay) tidak punya field itu sama sekali,
-  // tapi punya "Nama Perusahaan/Produk" yang secara konsep sama -- siapa
-  // yang menerima dana. Ditemukan lewat verifikasi produksi (email VA
-  // GoPay Topup gagal parse karena "Pembayaran Ke" memang tidak ada).
+  // Template QRIS/kartu memakai "Pembayaran Ke"; template Virtual Account
+  // (mis. top-up GoPay) memakai "Nama Perusahaan/Produk" untuk hal yang sama.
   const pembayaranKe = ekstrakField(body, 'Pembayaran Ke') || ekstrakField(body, 'Nama Perusahaan/Produk');
   const lokasiMerchant = ekstrakField(body, 'Lokasi Merchant');
   const pengakuisisi = ekstrakField(body, 'Pengakuisisi');
@@ -2529,12 +2069,8 @@ function parseEmailBCATransferSesamaBCA(body) {
 }
 
 /**
- * Parser email "Transfer - Other Bank BI-FAST" Permata ME. Dibangun dari
- * SAMPLE ASLI pengguna. Cakupan MVP: template transfer KELUAR antar bank
- * lewat BI-FAST sesuai contoh -- template Permata lain (transfer sesama
- * bank, notifikasi masuk, dsb.) belum tentu berbagi field yang sama.
- *
- * FUNGSI MURNI.
+ * Parser email Permata ME "Transfer - Other Bank BI-FAST" (transfer keluar),
+ * dari sampel asli. Template Permata lain belum didukung. Fungsi murni.
  */
 function parseEmailPermata(bodyText) {
   const body = String(bodyText || '');
@@ -2577,15 +2113,9 @@ function parseEmailBerdasarkanBank(bank, bodyText) {
 }
 
 /**
- * Klasifikasi satu email: transaction_email (cocok pola aktif di
- * Konfigurasi Email), non_transaction (subjek memuat kata kecuali — PRD
- * §10.2), atau unknown (tidak cocok pola mana pun, mungkin format bank yang
- * belum dikenal — sengaja TIDAK dianggap non_transaction, lihat
- * pollEmailTransaksi soal kenapa ini penting untuk idempotensi).
- *
- * FUNGSI MURNI — tidak menyentuh GmailApp/Sheets sama sekali, supaya bisa
- * diuji tanpa email sungguhan (mengikuti disiplin pure/impure split yang
- * sudah dipakai di seluruh berkas ini, mis. tujuan()/statistikData()).
+ * Klasifikasi satu email: transaction_email (cocok pola aktif), non_transaction
+ * (subjek memuat kata kecuali), atau unknown. Unknown sengaja tidak dianggap
+ * non_transaction (lihat pollEmailTransaksi). Fungsi murni.
  *
  * @param {string} dari header "From" email
  * @param {string} subjek header "Subject" email
@@ -2614,12 +2144,7 @@ function klasifikasikanEmail(dari, subjek, konfigurasi) {
   return { outcome: 'unknown', bank: null };
 }
 
-/**
- * Ambil pola aktif dari tab Konfigurasi Email sebagai array biasa, siap
- * dipakai klasifikasikanEmail(). Terpisah dari pollEmailTransaksi() supaya
- * pemanggilan Sheets (impure) tidak bercampur dengan logika klasifikasi
- * (murni) di satu fungsi yang sama.
- */
+/** Pola aktif dari tab Konfigurasi Email, siap dipakai klasifikasikanEmail(). */
 function bacaKonfigurasiEmail(ss) {
   const sh = ss.getSheetByName(KONFIGURASI_EMAIL_SHEET_NAME);
   if (!sh) return [];
@@ -2631,27 +2156,14 @@ function bacaKonfigurasiEmail(ss) {
 }
 
 /**
- * Fragmen query Gmail "(from:a OR from:b OR ...)" dari pola pengirim aktif
- * di Konfigurasi Email -- BUKAN sekadar optimisasi, ini root fix untuk
- * pollEmailTransaksi()/jalankanBackfillEmail() yang bisa mandek total.
+ * Fragmen query Gmail "(from:a OR from:b ...)" dari pola pengirim aktif.
  *
- * Tanpa pembatasan ini, GmailApp.search menyisir SELURUH kotak masuk
- * pengguna, dan email non-bank apa pun (pribadi, notifikasi lain, dst.)
- * diklasifikasi 'unknown' oleh klasifikasikanEmail() -- thread 'unknown'
- * SENGAJA tidak pernah diberi label (lihat prosesThreadEmailTransaksi,
- * `semuaTuntas = false`) supaya bisa sembuh sendiri kalau pola dilengkapi.
- * Konsekuensi yang tidak disadari: thread itu terus muncul lagi di setiap
- * pencarian berikutnya dan memakan kuota MAKS_THREAD_.../PER_JALAN tanpa
- * membuat kemajuan sama sekali -- persis penyebab backfill yang mentok di
- * tengah jalan (ditemukan lewat verifikasi produksi: 300 thread diperiksa
- * tapi cuma segelintir email baru, tiga jalan berturut-turut, karena
- * hampir seluruh kuota terpakai memeriksa ulang email pribadi pengguna
- * yang sama yang tidak pernah bisa berlabel).
+ * Wajib, bukan optimisasi: tanpa pembatasan ini, email non-bank terklasifikasi
+ * 'unknown', tidak pernah dilabeli, dan muncul lagi di setiap pencarian
+ * sampai menghabiskan kuota thread per jalan tanpa kemajuan.
  *
- * Kalau ADA baris aktif dengan polaPengirim KOSONG (aturan yang sengaja
- * mencocokkan pengirim apa pun berdasar pola subjek saja), fungsi ini
- * mengembalikan '' (tanpa pembatasan sama sekali) -- membatasi pengirim di
- * sisi Gmail akan diam-diam mematahkan jangkauan aturan semacam itu.
+ * Mengembalikan '' bila ada baris aktif dengan polaPengirim kosong (aturan
+ * berbasis subjek saja), supaya jangkauan aturan itu tidak terpotong.
  */
 function bangunQueryPengirimGmail(konfigurasi) {
   const aktif = (konfigurasi || []).filter((k) => k.aktif !== false);
@@ -2662,35 +2174,17 @@ function bangunQueryPengirimGmail(konfigurasi) {
 }
 
 /**
- * Poll Gmail untuk email transaksi baru. Dipanggil manual lewat menu
- * "Proses Email Transaksi Sekarang" (verifikasi sebelum trigger otomatis
- * dipasang — lihat rencana implementasi) atau lewat time-driven trigger
- * setelah tahap itu lulus.
+ * Poll Gmail untuk email transaksi baru (menu manual atau time-driven trigger).
  *
- * Idempotensi lewat label Gmail LABEL_EMAIL_DIPROSES, BUKAN history_id/
- * cursor — Apps Script time-driven trigger tidak punya "watch expiration"
- * ala Pub/Sub, jadi seluruh mekanisme renewal di PRD §9.4 tidak relevan di
- * sini. Thread HANYA dilabeli kalau SEMUA pesan di dalamnya tuntas
- * diklasifikasi (transaction_email tersimpan, atau non_transaction
- * dipastikan bukan transaksi) — pesan berstatus "unknown" (format belum
- * dikenal) sengaja TIDAK menahan label, supaya begitu pengguna menambah
- * pola baru di Konfigurasi Email, email lama yang sebelumnya tak dikenal
- * ikut terjaring run berikutnya (dibatasi JENDELA_PENCARIAN_EMAIL_HARI,
- * bukan retensi tanpa batas).
+ * Idempotensi lewat label LABEL_EMAIL_DIPROSES. Thread dilabeli hanya bila
+ * semua pesannya tuntas (transaksi tersimpan atau pasti bukan transaksi).
+ * Pesan "unknown" tidak dilabeli, supaya ikut terjaring setelah pola baru
+ * ditambahkan (dalam JENDELA_PENCARIAN_EMAIL_HARI).
  *
- * Sejak Fase 2, email yang lolos klasifikasi juga langsung diparse
- * (parseEmailBerdasarkanBank) dan hasilnya ditulis ke dua tempat: baris
- * mentah + status parse di "_EmailMasuk" (audit trail, PRD §11.6 — email
- * TETAP tersimpan walau parsing gagal), dan baris terstruktur di
- * "Transaksi Email" HANYA kalau parsing berhasil.
- *
- * Dipanggil di awal fungsi ini: reparseEmailGagal() — begitu parser
- * diperbaiki (mis. sub-template BCA baru), email lama yang sempat gagal
- * langsung "sembuh" tanpa perlu Gmail dijamah lagi. Baris yang GAGAL
- * diparse SENGAJA tidak menahan label thread di Gmail (beda dari versi
- * awal fungsi ini) supaya jelas: perbaikannya lewat reparseEmailGagal()
- * yang membaca ulang teks yang sudah tersimpan, bukan lewat unlabel/
- * refetch dari Gmail yang jauh lebih rumit untuk manfaat yang sama.
+ * Email yang lolos diparse lalu ditulis ke _EmailMasuk (selalu, untuk audit)
+ * dan Transaksi Email (hanya bila parse berhasil). reparseEmailGagal()
+ * dipanggil di awal, jadi perbaikan parser menyembuhkan email lama tanpa
+ * menyentuh Gmail lagi.
  *
  * @returns {{diproses:number, ditemukan:number, diparsing:number, diperbaiki:number, alasan:?string}}
  */
@@ -2733,16 +2227,9 @@ function pollEmailTransaksi() {
 }
 
 /**
- * Inti klasifikasi+parsing satu kumpulan thread Gmail -- diekstrak dari
- * pollEmailTransaksi() supaya dipakai ulang APA ADANYA oleh
- * jalankanBackfillEmail() (menu "Tarik Email Lama"), bukan disalin. Kedua
- * pemanggil beda cuma pada QUERY pencarian Gmail-nya (jendela mundur
- * beberapa hari vs "sejak tanggal X"), bukan pada cara mengklasifikasi/
- * memparsing/melabeli -- jadi logikanya sendiri sengaja satu tempat.
- *
- * `idSudahAda` diubah DI TEMPAT (menambah id yang baru diproses) --
- * pemanggil sudah tahu ini karena harus membangunnya lebih dulu dari
- * _EmailMasuk yang ada.
+ * Klasifikasi + parsing + label satu kumpulan thread. Dipakai bersama
+ * pollEmailTransaksi() dan jalankanBackfillEmail(), yang hanya beda query.
+ * `idSudahAda` diubah di tempat.
  *
  * @returns {{barisEmailMasuk:Array, barisTransaksiEmail:Array, diproses:number, diparsing:number}}
  */
@@ -2804,24 +2291,14 @@ function tulisHasilEmailTransaksi(emailMasuk, transaksiEmail, barisEmailMasuk, b
 }
 
 /**
- * Batas thread per jalan BACKFILL -- jauh lebih besar dari
- * MAKS_THREAD_EMAIL_PER_JALAN karena ini dipanggil manual sesekali (bukan
- * tiap 5 menit oleh trigger), tapi tetap dibatasi supaya satu klik menu
- * tidak melebihi batas eksekusi Apps Script (~6 menit di akun pribadi).
- * Kalau riwayat Gmail-nya lebih banyak dari ini, pengguna cukup menekan
- * menu yang sama lagi -- thread yang sudah diberi label dilewati otomatis
- * lewat query `-label:...`, jadi aman diulang.
+ * Batas thread per jalan backfill: jauh di atas polling, tapi tetap di bawah
+ * batas eksekusi Apps Script. Aman diulang; thread berlabel dilewati.
  */
 const MAKS_THREAD_BACKFILL_PER_JALAN = 300;
 
 /**
- * Menu "Tarik Email Lama (Backfill)" -- untuk email transaksi yang SUDAH
- * ADA di Gmail sebelum pemantauan otomatis dipasang (mis. transaksi dari
- * awal tahun). Beda dari pollEmailTransaksi() yang sengaja membatasi
- * pencarian ke JENDELA_PENCARIAN_EMAIL_HARI hari terakhir supaya polling
- * tiap 5 menit tetap murah -- riwayat lama butuh sekali jalan yang jauh
- * lebih luas, jadi dipisah jadi fungsi sendiri dan TIDAK pernah dipanggil
- * trigger otomatis.
+ * Menu "Tarik Email Lama (Backfill)": email transaksi yang sudah ada sebelum
+ * pemantauan dipasang. Tidak pernah dipanggil trigger otomatis.
  */
 function backfillEmailTransaksi() {
   const ui = SpreadsheetApp.getUi();
@@ -2858,8 +2335,7 @@ function backfillEmailTransaksi() {
 }
 
 /**
- * Inti backfill, dipisah dari menu-nya (backfillEmailTransaksi) supaya bisa
- * diuji lewat harness Code.gs tanpa SpreadsheetApp.getUi() sungguhan.
+ * Inti backfill, dipisah dari menu supaya bisa diuji tanpa getUi().
  *
  * @param {string} sejakTanggal format 'YYYY-MM-DD'
  * @returns {{diproses:number, ditemukan:number, diparsing:number, masihAda:boolean, alasan:?string}}
@@ -2908,12 +2384,7 @@ function jalankanBackfillEmail(sejakTanggal) {
   return { diproses, ditemukan: threads.length, diparsing, masihAda, alasan: null };
 }
 
-/**
- * Fungsi murni: satu baris log dari hasil pollEmailTransaksi() (lihat bentuk
- * di komentar fungsi itu). Dipisah dari catatLogEmail() supaya bisa diuji
- * tanpa Sheets sungguhan -- termasuk perhitungan "Gagal Diparse" (diproses
- * dikurangi diparsing) yang tidak dihitung eksplisit oleh pollEmailTransaksi.
- */
+/** Fungsi murni: satu baris log dari hasil pollEmailTransaksi(). */
 function bangunBarisLogEmail(hasil) {
   const gagal = Math.max((hasil.diproses || 0) - (hasil.diparsing || 0), 0);
   return [
@@ -2928,14 +2399,9 @@ function bangunBarisLogEmail(hasil) {
 }
 
 /**
- * Fungsi murni: apakah satu jalan pollEmailTransaksi() layak dicatat.
- *
- * Trigger otomatis jalan tiap 5 menit (JEDA_PEMANTAUAN_EMAIL_MENIT) --
- * mencatat SETIAP jalan, termasuk yang tidak menemukan email baru sama
- * sekali, akan membanjiri tab ini dengan puluhan ribu baris kosong per
- * tahun tanpa nilai audit apa pun. Hanya jalan yang benar-benar melakukan
- * sesuatu (email baru diproses, perbaikan reparse, atau gagal dengan
- * alasan jelas seperti Konfigurasi Email kosong) yang layak satu baris.
+ * Fungsi murni: apakah satu jalan pollEmailTransaksi() layak dicatat. Hanya
+ * jalan yang melakukan sesuatu atau gagal dengan alasan jelas, supaya trigger
+ * 5 menit tidak membanjiri tab dengan baris kosong.
  */
 function perluDicatatLogEmail(hasil) {
   return Boolean(hasil.diproses || hasil.diperbaiki || hasil.alasan);
@@ -2948,18 +2414,9 @@ function catatLogEmail(ss, hasil) {
 }
 
 /**
- * Coba parse ulang baris "_EmailMasuk" yang sebelumnya gagal (Berhasil
- * Diparse = FALSE), memakai teks yang SUDAH TERSIMPAN — tidak menyentuh
- * Gmail sama sekali. Ini jalan pulang begitu parseEmailBerdasarkanBank()
- * diperbaiki (mis. sub-template baru ditambahkan): email lama yang sempat
- * gagal ikut "sembuh" pada Proses Email Transaksi Sekarang berikutnya,
- * tanpa perlu mekanisme unlabel/refetch dari Gmail yang jauh lebih rumit
- * untuk manfaat yang sama.
- *
- * Baris yang berhasil di-reparse ditimpa DI TEMPAT (kolom Berhasil
- * Diparse/Pesan Error), bukan digandakan — dan baris "Transaksi Email"
- * baru hanya ditambahkan kalau Gmail Message ID itu belum pernah tercatat
- * di sana (jaga-jaga dipanggil dua kali).
+ * Parse ulang baris _EmailMasuk yang gagal, dari teks yang sudah tersimpan
+ * (tanpa Gmail). Baris yang berhasil ditimpa di tempat; baris Transaksi Email
+ * baru hanya ditambahkan bila Gmail Message ID-nya belum ada.
  *
  * @returns {{diperbaiki:number}}
  */
@@ -3007,12 +2464,8 @@ function reparseEmailGagal() {
 }
 
 /**
- * Susun baris "Transaksi Email" jadi objek datar siap-JSON untuk
- * doPost{tarikTransaksiEmail}, menyaring yang "Dibuat Pada"-nya sesudah
- * `sejakValid` (null berarti tarik semua -- dipakai PWA pada pull pertama).
- *
- * Dipisah dari doPost supaya bisa diuji lewat tiruan Sheets tanpa perlu
- * mensimulasikan payload HTTP/JSON.parse sekaligus.
+ * Baris Transaksi Email sebagai objek datar untuk doPost{tarikTransaksiEmail},
+ * hanya yang "Dibuat Pada"-nya sesudah `sejakValid` (null = semua).
  *
  * @param {Sheet} t hasil pastikanTransaksiEmail(ss)
  * @param {?Date} sejakValid
@@ -3060,11 +2513,9 @@ function hapusTriggerEmail() {
 }
 
 /**
- * Menu "Aktifkan Pemantauan Email Transaksi" — memasang time-driven trigger.
- * Baru aman dipasang SETELAH "Proses Email Transaksi Sekarang" manual
- * terbukti jalan benar (lihat rencana implementasi Fase 1) — otorisasi
- * Gmail pertama kali sebaiknya lewat jalur manual yang bisa diawasi
- * langsung, bukan lewat trigger yang jalan sendiri di latar belakang.
+ * Menu "Aktifkan Pemantauan Email Transaksi": pasang time-driven trigger.
+ * Jalankan "Proses Email Transaksi Sekarang" dulu supaya otorisasi Gmail
+ * pertama diberikan lewat jalur yang diawasi.
  */
 function aktifkanPemantauanEmail() {
   hapusTriggerEmail();
@@ -3095,14 +2546,8 @@ function prosesEmailSekarang() {
 }
 
 /**
- * Ukur tab data satu kali untuk seluruh kebutuhan tata letak Dashboard: daftar
- * rekening, jumlah bulan, dan jumlah kategori. Dibaca sekali dalam satu range
- * — Dashboard menumpuk banyak blok yang tingginya bergantung angka-angka ini,
- * dan membacanya berulang kali per blok jauh lebih mahal.
- *
- * Label rekening dirangkai dari Bank + No. Rekening, sama seperti label yang
- * dipakai aplikasi. Itu wakil terbaik yang tersedia: accountId tidak ikut
- * dikirim ke Sheet.
+ * Ukur tab data sekali untuk tata letak Dashboard: rekening, bulan, kategori.
+ * Label rekening = Bank + No. Rekening (accountId tidak dikirim ke Sheet).
  */
 function statistikData(sh) {
   const kosong = {
@@ -3154,14 +2599,9 @@ function statistikData(sh) {
 }
 
 /**
- * Sidik bentuk data — bukan isinya. Dashboard/Dashboard Full membangun blok
- * per rekening/kategori saat build, jadi jadi basi kalau ada rekening baru,
- * kategori anggaran baru, atau data memanjang melewati cadangan baris. Jumlah
- * kategori sengaja dibulatkan per 5 supaya pertumbuhan kecil yang masih muat
- * di cadangan tidak memicu pembangunan ulang terus-menerus. `anggaranBaris`
- * TIDAK dibulatkan — blok Anggaran vs Realisasi di Dashboard Full disizekan
- * PAS sejumlah baris Anggaran (tanpa cadangan), jadi satu kategori anggaran
- * baru pun harus segera memicu pembangunan ulang.
+ * Sidik BENTUK data. Jumlah kategori dibulatkan per 5 supaya pertumbuhan kecil
+ * yang masih muat cadangan tidak memicu pembangunan ulang. `anggaranBaris`
+ * tidak dibulatkan: blok Anggaran vs Realisasi disizekan pas tanpa cadangan.
  */
 function sidikData(stat, anggaranBaris, statStatement) {
   return [
@@ -3197,14 +2637,8 @@ function kepalaTabel(d, a1) {
 }
 
 /**
- * Baris berselang pada badan tabel. Bukan hiasan: tabel selebar 17 kolom
- * (Kontrol Saldo) hampir tidak bisa dibaca menyilang tanpa penanda baris —
- * mata gampang berpindah baris di tengah jalan dan membandingkan angka bank
- * bulan ini dengan angka pembukuan bulan lain.
- *
- * Kegagalan diserap: rentang yang sudah punya banding (pembangunan ulang yang
- * putus di tengah lalu diulang) melempar, dan itu bukan alasan membatalkan
- * seluruh laporan gara-gara garis selang.
+ * Baris berselang pada badan tabel lebar (Kontrol Saldo 17 kolom) supaya mata
+ * tidak pindah baris. Kegagalan (banding sudah ada) diserap.
  */
 function bandingTabel(sh, a1) {
   try {
@@ -3223,20 +2657,12 @@ function pitaSeksi(d, a1, teks, warna) {
 }
 
 /**
- * Hapus tab Dashboard lalu bangun ulang dari nol, sekaligus merapikan ulang tab
- * data. Dipakai lewat menu "Pembukuan" — perlu ketika Dashboard sudah terlanjur
- * kacau (misalnya pernah tertulisi data transaksi oleh deployment versi lama)
- * atau ketika tata letaknya diperbarui di versi Code.gs yang baru.
- *
- * Baris transaksi yang terlanjur nyasar ke tab Dashboard ikut terhapus. Itu
- * aman: sumber kebenarannya ada di aplikasi, tinggal tekan "Kirim semua
- * sekarang" di Pengaturan untuk mengisi ulang — upsert-nya berbasis hash, jadi
- * tidak akan menggandakan baris yang sudah ada.
+ * Menu: hapus lalu bangun ulang tab laporan dari nol, sekaligus merapikan tab
+ * data. Aman: sumber kebenaran ada di aplikasi, dan upsert berbasis hash.
  */
 function bangunUlangDashboard() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = sheetData(ss);
-  if (!SHEET_NAME && sh.getName() !== DATA_SHEET_NAME) sh.setName(DATA_SHEET_NAME);
 
   const lama = ss.getSheetByName(DASHBOARD_SHEET_NAME);
   if (lama) ss.deleteSheet(lama);
@@ -3256,11 +2682,7 @@ function bangunUlangDashboard() {
   ss.toast('Selesai. Kalau ada baris yang hilang, tekan "Kirim semua sekarang" di Pengaturan aplikasi.', 'Dashboard dibangun ulang', 10);
 }
 
-/**
- * Laporkan apa yang sebenarnya terbaca oleh skrip: lokal, pemisah argumen yang
- * terdeteksi, sheet mana yang dianggap data, dan isi sel rumus kunci. Satu klik
- * ini menggantikan satu putaran tebak-tebakan ketika Dashboard masih salah.
- */
+/** Laporkan lokal, pemisah argumen, sheet data, dan isi sel rumus kunci. */
 function diagnosaDashboard() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = SpreadsheetApp.getUi();
@@ -3311,61 +2733,6 @@ function diagnosaDashboard() {
   ui.alert('Diagnosa Pembukuan', baris.join('\n'), ui.ButtonSet.OK);
 }
 
-/**
- * Diagnostik read-only ("Fase A.0" di rencana implementasi) — jalankan
- * sebelum mempercayai kolom "Dikirim Pada" sebagai penanda "kapan baris ini
- * terakhir berubah" untuk onEdit()/checkpoint tarikTransaksi(). Analisis
- * data produksi menemukan nilai TAMPILAN kolom ini identik di semua baris;
- * fungsi ini membaca nilai RAW (bukan display) untuk membedakan 3
- * kemungkinan dengan implikasi berbeda:
- *   1. Residu SATU backfill ("Kirim semua sekarang" dijalankan sekali untuk
- *      histori lama) -- nilai raw memang identik sampai ke detik, tapi
- *      bukan bug tulis berkelanjutan. Aman lanjut Fase A apa adanya.
- *   2. Cuma pembulatan TAMPILAN (format "dd/mm/yyyy HH:mm" membulatkan ke
- *      menit) -- nilai raw sebenarnya bervariasi wajar. Tidak ada anomali.
- *   3. ADA proses yang menimpa kolom ini untuk banyak baris setiap kali
- *      jalan (mis. rebuild dashboard) -- bug aktif, harus diperbaiki DULU
- *      sebelum checkpoint pull manapun bisa dipercaya sebagai incremental.
- * Tidak menulis apa pun ke sheet.
- */
-function diagnosaWaktuKirim() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ui = SpreadsheetApp.getUi();
-  const sh = sheetData(ss);
-  if (!sh) { ui.alert('Diagnosa Dikirim Pada', 'Sheet data tidak ditemukan.', ui.ButtonSet.OK); return; }
-
-  const last = sh.getLastRow();
-  if (last <= 1) { ui.alert('Diagnosa Dikirim Pada', 'Tidak ada baris data.', ui.ButtonSet.OK); return; }
-
-  const nilai = sh.getRange(2, KOLOM_WAKTU, last - 1, 1).getValues().map((r) => r[0]);
-  const waktuMs = nilai.map((v) => (v instanceof Date ? v.getTime() : null)).filter((t) => t !== null);
-
-  const unikDetik = new Set(waktuMs.map((t) => Math.floor(t / 1000)));
-  const unikMenit = new Set(waktuMs.map((t) => Math.floor(t / 60000)));
-  const min = waktuMs.length ? new Date(Math.min.apply(null, waktuMs)) : null;
-  const max = waktuMs.length ? new Date(Math.max.apply(null, waktuMs)) : null;
-
-  let kesimpulan;
-  if (unikDetik.size <= 1) {
-    kesimpulan = 'SEMUA baris punya timestamp identik sampai ke DETIK -- kemungkinan besar kasus 1 (residu satu backfill). Aman lanjut Fase A apa adanya, tapi cek dulu tanggal min/max di atas masuk akal sebagai "sekali jalan backfill" (rentang pendek, bukan tersebar berbulan-bulan).';
-  } else if (unikDetik.size < waktuMs.length / 10) {
-    kesimpulan = 'Nilai unik JAUH lebih sedikit dari jumlah baris (kasus 3) -- indikasi ada proses yang menimpa kolom ini untuk banyak baris sekaligus. INVESTIGASI DULU (cari pemanggil sh.getRange(...).setValue di jalur rebuild/rapikan) sebelum lanjut ke onEdit/checkpoint Fase A.1-A.3.';
-  } else {
-    kesimpulan = 'Nilai bervariasi wajar antar baris (kasus 2, cuma pembulatan tampilan menit) -- tidak ada anomali aktif, lanjutkan Fase A apa adanya.';
-  }
-
-  const baris = [
-    `Total baris dibaca          : ${nilai.length}`,
-    `Baris ber-Date valid        : ${waktuMs.length}`,
-    `Nilai unik (resolusi detik) : ${unikDetik.size}`,
-    `Nilai unik (resolusi menit) : ${unikMenit.size}`,
-    `Rentang raw                 : ${min ? min.toISOString() : '-'}  s.d.  ${max ? max.toISOString() : '-'}`,
-    '',
-    kesimpulan,
-  ];
-  ui.alert('Diagnosa Dikirim Pada', baris.join('\n'), ui.ButtonSet.OK);
-}
-
 function doPost(e) {
   const body = e.postData ? e.postData.contents : '';
   let data;
@@ -3375,12 +2742,8 @@ function doPost(e) {
     return json({ok:false, error:'Payload bukan JSON yang sah'});
   }
 
-  // Ping dijawab SEBELUM kunci diambil, dan itu bukan kebetulan: aplikasi
-  // memakainya untuk menjawab "sebenarnya berapa yang sudah mendarat?" tepat
-  // setelah pengiriman putus — saat kemungkinan besar masih ada permintaan
-  // panjang yang memegang kunci. Menunggu kunci di sini berarti satu-satunya
-  // saat pertanyaan itu ditanyakan adalah saat ia paling mungkin tak terjawab.
-  // Aman: ping hanya membaca.
+  // Ping dijawab SEBELUM kunci diambil: aplikasi memakainya tepat setelah
+  // pengiriman putus, saat kunci kemungkinan masih dipegang. Ping hanya membaca.
   if (data.ping) {
     try {
       const ssPing = SpreadsheetApp.getActiveSpreadsheet();
@@ -3390,12 +2753,9 @@ function doPost(e) {
     }
   }
 
-  // Tarik transaksi email juga dijawab SEBELUM kunci diambil -- sama seperti
-  // ping, ini murni baca. PWA memanggilnya dengan `sejak` (checkpoint waktu
-  // dari respons SEBELUMNYA, bukan jam lokal PWA sendiri, supaya tidak
-  // meleset kalau jam perangkat dan jam server Apps Script berbeda) dan
-  // mendapat balik baris "Transaksi Email" yang lebih baru dari itu, plus
-  // `sekarang` untuk dipakai sebagai checkpoint pemanggilan berikutnya.
+  // Murni baca, dijawab sebelum kunci. `sejak` adalah checkpoint dari respons
+  // SEBELUMNYA (jam server), bukan jam perangkat; `sekarang` jadi checkpoint
+  // berikutnya.
   if (data.tarikTransaksiEmail === true) {
     try {
       const ssTarik = SpreadsheetApp.getActiveSpreadsheet();
@@ -3480,20 +2840,15 @@ function doPost(e) {
     const rows = Array.isArray(data.rows) ? data.rows : [];
     const hapus = Array.isArray(data.hapus) ? data.hapus.map(String).filter(Boolean) : [];
     const mintaRapikan = data.rapikan === true;
-    // Payload identitas: hanya hash + label rekening, dipakai untuk menghitung
-    // baris yatim tanpa perlu mengirim ulang seluruh isi pembukuan. Barisnya
-    // TIDAK punya tanggal/nominal, jadi menuliskannya berarti mengosongkan data
-    // asli — karena itu jalur tulis di bawah dijaga eksplisit oleh bendera ini,
-    // bukan disimpulkan dari bentuk payload.
+    // Payload identitas (hash + label rekening saja) untuk menghitung baris
+    // yatim. Barisnya tanpa tanggal/nominal, jadi jalur tulis dijaga eksplisit
+    // oleh bendera ini.
     const hanyaSelaras = data.hanyaSelaras === true;
 
-    // Penyelarasan hanya berlaku bila SEMUA pengaman lolos. Ini operasi yang
-    // menghapus data pengguna, jadi kecurigaan sekecil apa pun -> jangan hapus.
-    //   - `selaras` harus disebut eksplisit; payload biasa tidak pernah menghapus.
-    //   - payload kosong tidak pernah berarti "kosongkan Sheet".
-    //   - `jumlah` dari pengirim harus cocok dengan rows.length: JSON yang
-    //     terpotong di tengah jalan akan tampak seperti daftar yang sah tapi
-    //     pendek, dan itu berarti menghapus baris yang sebenarnya masih ada.
+    // Penyelarasan (menghapus data) hanya bila SEMUA pengaman lolos:
+    //   - `selaras` disebut eksplisit;
+    //   - payload tidak kosong;
+    //   - `jumlah` cocok dengan rows.length (JSON terpotong tampak sah tapi pendek).
     const mintaSelaras = data.selaras === true
       && rows.length > 0
       && Number(data.jumlah) === rows.length;
@@ -3652,16 +3007,9 @@ function doPost(e) {
 }
 
 /**
- * Lepas kunci SESUDAH seluruh perubahan Sheet benar-benar diterapkan.
- *
- * Apps Script menahan penulisan (setValues, deleteRows) di buffer dan baru
- * menerapkannya saat eksekusi berakhir — yang terjadi SESUDAH blok finally
- * ini. Tanpa flush, permintaan berikutnya bisa mendapat kunci lalu membaca
- * kolom Hash yang belum memuat penghapusan permintaan sebelumnya: nomor baris
- * hasil bacaannya meleset sebanyak baris yang baru dihapus, dan penghapusan/
- * pembaruan berikutnya mengenai baris lain. Ini cocok dengan kerusakan
- * 06/10/2026 17:51 (baris Agustus terarsip & tertimpa kembaran, sementara
- * baris provisional September yang diminta dihapus masih ada).
+ * Lepas kunci SESUDAH seluruh perubahan Sheet diterapkan. Apps Script menahan
+ * penulisan di buffer sampai eksekusi berakhir; tanpa flush, permintaan
+ * berikutnya membaca kolom Hash yang basi dan menghapus/menimpa baris lain.
  */
 function lepasKunci(kunci) {
   try {
@@ -3672,13 +3020,9 @@ function lepasKunci(kunci) {
 }
 
 /**
- * Bangun/segarkan Dashboard tanpa pernah menggagalkan permintaannya.
- *
- * Dashboard adalah hiasan; menyimpan transaksi adalah tugas utamanya. Galat di
- * sini pernah membatalkan seluruh doPost sehingga transaksinya pun tidak
- * tersimpan — itu tidak boleh terulang, jadi kegagalannya dicatat lalu
- * dilupakan. Versinya baru dicatat setelah pembangunan berhasil, sehingga
- * permintaan `rapikan` berikutnya akan mencoba lagi sendiri.
+ * Bangun/segarkan Dashboard tanpa pernah menggagalkan permintaan: galat
+ * dicatat lalu dilupakan. Versi baru dicatat setelah build berhasil, jadi
+ * permintaan `rapikan` berikutnya mencoba lagi.
  */
 function rapikanDashboard(ss, sh) {
   try {
@@ -3714,20 +3058,13 @@ function tandaiBarisDibuang(hashKolom, hashDibuang, buangKembar) {
 }
 
 /**
- * Buang baris-baris yang hash-nya ada di `hashDibuang` (dan, bila diminta,
- * kembaran hash). Mengembalikan jumlah baris yang benar-benar dibuang.
+ * Buang baris yang hash-nya ada di `hashDibuang` (dan kembarannya bila
+ * diminta). Mengembalikan jumlah baris yang dibuang.
  *
- * Nomor barisnya ditentukan dari bacaan kolom Hash yang dilakukan DI SINI,
- * sesaat sebelum menghapus — bukan dari bacaan di awal doPost. Penghapusan
- * berdasarkan nomor baris yang sudah basi pernah mengarsipkan dan membuang
- * baris yang salah; dengan hash, baris yang bergeser tetap dikenali sebagai
- * dirinya sendiri.
- *
- * Untuk jumlah kecil, operasi per baris paling murah — tapi penyelarasan bisa
- * membuang ratusan baris sekaligus, dan `deleteRow` satu per satu jauh lebih
- * mahal daripada penulisan biasa. Di atas ambang, seluruh blok dibaca sekali,
- * baris yang dibuang dipilih ulang dari kolom Hash BLOK ITU SENDIRI, sisanya
- * ditulis balik, lalu ekornya dipangkas dalam satu operasi.
+ * Nomor baris ditentukan dari bacaan kolom Hash DI SINI, sesaat sebelum
+ * menghapus, bukan dari bacaan awal doPost yang bisa basi. Di atas ambang,
+ * seluruh blok dibaca sekali, disaring, ditulis balik, lalu ekornya dipangkas
+ * dalam satu operasi.
  */
 function hapusBaris(sh, hashDibuang, buangKembar) {
   const last = sh.getLastRow();
@@ -3761,65 +3098,25 @@ function hapusBaris(sh, hashDibuang, buangKembar) {
 }
 
 /**
- * Tuliskan baris hasil upsert, SATU BARIS SATU PERMINTAAN -- sengaja tidak
- * dioptimalkan jadi baca-ubah-tulis satu jendela besar (versi sebelumnya
- * melakukan ini di atas 20 baris).
- *
- * Perubahan ini dipicu oleh temuan produksi: puluhan baris (81, seluruhnya
- * transaksi PDF lama) ditemukan isinya (Tanggal/Deskripsi/Nominal/Kategori/
- * Sumber) tertukar dengan baris lain, sementara Hash, ID Transaksi,
- * uploadedFileId, dan deskripsiRaw-nya tetap benar. Versi jendela-besar
- * sebelumnya (baca-ubah-tulis satu `getRange` lebar, offset `p.baris - awal`
- * per baris) sempat DICURIGAI sebagai penyebabnya -- tapi itu SUDAH
- * DIPERIKSA DAN DISINGKIRKAN: fungsi itu menulis `p.nilai` (array LENGKAP
- * senilai HEADER.length, termasuk kolom Hash & ID Transaksi) ke setiap baris
- * yang disentuhnya. Kalau versi itu penyebabnya, Hash & ID baris korban juga
- * akan ikut tertimpa jadi milik baris lain -- padahal keduanya terbukti
- * TIDAK berubah. Jalur pull (tarikTransaksi() di sini, terapkanBarisTransaksi()
- * di transaksi-sync.js) dan jalur push (barisUntukSheet() di sheets-sync.js,
- * blok pembentukan `perbarui` di doPost di atas) juga sudah ditelusuri satu
- * per satu dan konsisten secara internal (setiap baris/objek dibentuk dari
- * satu sumber tunggal, tidak ada percampuran field antar baris). Akar
- * penyebab yang sebenarnya BELUM ditemukan pada saat komentar ini ditulis.
- *
- * Fungsi ini TETAP diubah begini karena baca-ubah-tulis satu jendela lebar
- * adalah SATU-SATUNYA kode di alur ini yang secara struktural mampu menyentuh
- * banyak baris tak terkait dalam satu operasi (jendela [baris terkecil, baris
- * terbesar] dari satu bongkah 250 baris bisa membentang ke seluruh tab, sebab
- * urutan transaksi di IndexedDB klien tidak berkorelasi dengan urutan baris
- * fisik di Sheet) -- jadi menghapusnya tetap pengerasan yang masuk akal untuk
- * kelas risiko itu SECARA UMUM, walau BUKAN pengganti investigasi akar
- * penyebab kerusakan yang sudah terjadi. JANGAN menganggap perubahan ini
- * "memperbaiki" insiden 81 baris di atas sampai penyebabnya benar-benar
- * dikonfirmasi.
- *
- * Konsekuensi: lebih lambat untuk pembaruan besar (mis. "Kirim semua
- * sekarang" pada ribuan baris) -- tapi ini operasi latar belakang dengan
- * pelaporan progres, bukan sesuatu yang perlu instan.
+ * Tulis baris hasil upsert satu per satu. Sengaja tidak baca-ubah-tulis satu
+ * jendela lebar: jendela [baris terkecil, terbesar] bisa membentang ke seluruh
+ * tab dan secara struktural mampu menyentuh baris yang tidak terkait. Lebih
+ * lambat untuk pembaruan besar, tapi itu operasi latar belakang.
  */
 function tulisPembaruan(sh, perbarui) {
   perbarui.forEach((p) => sh.getRange(p.baris, 1, 1, HEADER.length).setValues([p.nilai]));
 }
 
 /**
- * Salin baris yang akan dihapus ke tab arsip sebelum dibuang.
- *
- * Penghapusan di sini dipicu dari jarak jauh oleh aplikasi, dan riwayat versi
- * Google Sheet bukan jaring pengaman yang nyaman untuk memulihkan seratusan
- * baris tertentu. Satu penulisan blok ke tab arsip hampir tidak menambah biaya
- * dibanding penghapusannya sendiri, dan membuat operasi yang merusak selalu
- * punya jalan pulang. Tab-nya disembunyikan supaya tidak mengganggu.
+ * Salin baris yang akan dihapus ke tab arsip (tersembunyi) sebelum dibuang,
+ * supaya penghapusan jarak jauh selalu punya jalan pulang.
  */
 function arsipkan(sh, nomor) {
   try {
     const lebar = HEADER.length;
     if (!nomor.length) return;
 
-    // Satu pembacaan untuk jendela baris terkecil..terbesar, bukan satu
-    // pembacaan per baris. Penyelarasan bisa membuang ratusan baris sekaligus,
-    // dan `getRange` per baris berarti ratusan perjalanan bolak-balik ke Sheets
-    // di dalam permintaan yang waktunya terbatas — persis pola yang membuat
-    // pengiriman dulu tidak pernah selesai.
+    // Satu pembacaan untuk jendela baris terkecil..terbesar, bukan per baris.
     const awal = nomor[0];
     const akhir = nomor[nomor.length - 1];
     const jendela = sh.getRange(awal, 1, akhir - awal + 1, lebar).getValues();
@@ -3846,12 +3143,8 @@ function arsipkanIsi(sh, isi) {
       arsip.setFrozenRows(1);
       arsip.hideSheet();
     } else if (arsip.getLastColumn() < headerArsip.length) {
-      // _Arsip dibuat sebelum kolom ID Transaksi/Diubah Pada ada di HEADER.
-      // Baris BARU yang ditulis di bawah selalu selebar HEADER sekarang (lihat
-      // `lebar`), jadi headernya wajib dilebarkan dulu — kalau tidak, dua
-      // kolom terakhir jadi data tanpa label, dan tarikTransaksi() (yang
-      // mencari kolom ID Transaksi/Dihapus Pada lewat NAMA header, bukan
-      // posisi tetap) tidak akan menemukannya sama sekali.
+      // Header _Arsip lama dilebarkan dulu ke lebar HEADER sekarang;
+      // tarikTransaksi() mencari kolom lewat nama header.
       arsip.insertColumnsAfter(arsip.getLastColumn(), headerArsip.length - arsip.getLastColumn());
       arsip.getRange(1, 1, 1, headerArsip.length).setValues([headerArsip]);
     }
@@ -3871,23 +3164,10 @@ function keIso(v) {
 }
 
 /**
- * Baca transaksi yang berubah (baru/diperbarui) DAN yang sudah dihapus sejak
- * checkpoint — dipanggil dari doPost{tarikTransaksi:true}. Dipakai
- * services/transaksi-sync.js untuk sync & restore lintas perangkat.
- *
- * Sengaja TIDAK menyentuh alur hapus TRANSAKSI yang sudah ada (hapusBaris
- * tetap memindahkan baris ke _Arsip lalu membuangnya dari tab utama, persis
- * seperti sebelum pull ada) — _Arsip SUDAH berfungsi sebagai catatan
- * tombstone lengkap dengan waktu ("Dihapus Pada"), jadi tidak perlu
- * membangun mekanisme tombstone baru khusus untuk TRANSAKSI. Ini juga berarti
- * TIDAK SATU PUN rumus Dashboard/Dashboard Full perlu diubah: keduanya tetap
- * membaca tab "Transaksi" yang isinya sudah bersih dari baris terhapus,
- * persis seperti sebelumnya.
- *
- * Kolom dicari lewat NAMA header (bukan posisi tetap) supaya tetap benar
- * walau _Arsip masih berisi baris lama dari sebelum migrasi kolom ID
- * Transaksi/Diubah Pada (lihat arsipkan()) — baris semacam itu otomatis
- * terlewati karena idnya kosong, bukan salah baca kolom lain.
+ * Baca transaksi yang berubah dan yang dihapus sejak checkpoint, untuk
+ * doPost{tarikTransaksi}. _Arsip berfungsi sebagai tombstone transaksi
+ * (lengkap dengan "Dihapus Pada"). Kolom dicari lewat NAMA header; baris
+ * arsip lama tanpa ID otomatis terlewati.
  */
 function tarikTransaksi(sejak) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -3924,11 +3204,9 @@ function tarikTransaksi(sejak) {
   }
 
   const dihapus = [];
-  // Hash yang terarsip ikut dikirim, sejajar dengan `dihapus`: aplikasi hanya
-  // menghapus transaksi lokal bila hash-nya sama. Baris yang Hash-nya sempat
-  // tergeser (lihat pastikanFilterMencakupHash) terarsip dengan ID transaksi
-  // LAIN -- tanpa pemeriksaan ini, penghapusan yang salah di Sheet ikut
-  // menghapus transaksi yang benar di aplikasi.
+  // Hash terarsip ikut dikirim: aplikasi hanya menghapus transaksi lokal bila
+  // hash-nya sama, jadi baris yang Hash-nya sempat tergeser tidak ikut
+  // menghapus transaksi yang benar.
   const dihapusHash = [];
   const arsip = ss.getSheetByName(ARSIP_SHEET_NAME);
   const lastArsip = arsip ? arsip.getLastRow() : 0;
@@ -3954,13 +3232,9 @@ function tarikTransaksi(sejak) {
 }
 
 /**
- * Identitas tujuan penulisan, disertakan di setiap balasan.
- *
- * Tanpa ini, aplikasi tidak punya cara membuktikan datanya mendarat di mana —
- * dan URL webhook yang menunjuk deployment lama (yang bisa saja terikat ke
- * salinan spreadsheet yang berbeda) tampak persis seperti pengiriman yang
- * berhasil. `total` adalah jumlah baris data SETELAH operasi, jadi aplikasi
- * bisa membandingkannya dengan yang baru saja dikirim.
+ * Identitas tujuan penulisan, disertakan di setiap balasan, supaya aplikasi
+ * bisa membuktikan datanya mendarat di spreadsheet yang benar. `total` adalah
+ * jumlah baris data SETELAH operasi.
  */
 function tujuan(ss, sh) {
   const last = sh.getLastRow();
