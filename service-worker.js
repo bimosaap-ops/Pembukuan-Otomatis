@@ -20,7 +20,7 @@
  * Naikkan CACHE_NAME setiap kali aset berubah agar versi lama dibersihkan.
  */
 
-const CACHE_NAME = 'pembukuan-v32';
+const CACHE_NAME = 'pembukuan-v33';
 
 /** Berapa lama menunggu jaringan sebelum memakai salinan cache. */
 const BATAS_JARINGAN_MS = 2500;
@@ -87,7 +87,6 @@ const ASET = [
   './src/domain/kategoriEmail.js',
   './src/domain/merchantNormalisasi.js',
   './src/domain/rekonsiliasiEmail.js',
-  './src/domain/tinjauanOtomatis.js',
 
   './src/parsers/layout.js',
   './src/parsers/pdf-loader.js',
