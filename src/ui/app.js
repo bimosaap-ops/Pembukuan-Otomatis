@@ -157,15 +157,22 @@ async function mulai() {
     }
 
     // Kembaran yang hanya ada di Sheet -- tidak terlihat oleh pembersih lokal
-    // di atas karena tidak pernah tertarik ke perangkat ini.
-    const migrasiYatimSheet = await hapusProvisionalYatimDiSheet().catch((e) => {
-      console.error('Migrasi hapus provisional yatim di Sheet gagal:', e);
-      return null;
-    });
-    if (migrasiYatimSheet?.dijalankan && migrasiYatimSheet.jumlah) {
-      toastSukses(`${migrasiYatimSheet.jumlah} baris transaksi email dobel di Google Sheet dihapus `
-        + `(${rupiah(migrasiYatimSheet.nominal)}).`);
-    }
+    // di atas karena tidak pernah tertarik ke perangkat ini. SENGAJA tidak
+    // di-await: migrasi ini menarik seluruh tab Transaksi lewat webhook (bisa
+    // puluhan detik, dan lebih lama lagi saat Sheets lambat atau tak
+    // terjangkau -- benderanya baru ditulis kalau berhasil, jadi ia dicoba
+    // lagi tiap aplikasi dibuka). Menunggunya di sini menahan mulaiRouter()
+    // di bawah dan layar tetap kosong selama itu. Urutannya terhadap
+    // migrasiTanggalProvisionalWib() tidak penting: pencocokannya lewat
+    // awalan hash, yang tidak diubah koreksi tanggal.
+    hapusProvisionalYatimDiSheet()
+      .then((hasil) => {
+        if (hasil?.dijalankan && hasil.jumlah) {
+          toastSukses(`${hasil.jumlah} baris transaksi email dobel di Google Sheet dihapus `
+            + `(${rupiah(hasil.nominal)}).`);
+        }
+      })
+      .catch((e) => console.error('Migrasi hapus provisional yatim di Sheet gagal:', e));
 
     // Sesudah pembersihan dobel di atas (yang masih mengelompokkan per
     // baseHash bertanggal UTC): transaksi email dini hari WIB yang tercatat
