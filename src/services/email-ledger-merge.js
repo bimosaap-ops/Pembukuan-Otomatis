@@ -1,30 +1,14 @@
 /**
  * Gabung ledger Transaksi (e-statement bulanan) + Transaksi Email (realtime)
- * jadi SATU tanpa dobel ("Fase C" dari rencana implementasi 3 fase).
+ * jadi satu tanpa dobel. Dua arah masuk:
+ *   1. Email baru tanpa padanan e-statement (MISSING) -> buatProvisionalDariEmail()
+ *      mencatatnya sebagai baris PROVISIONAL (dari email-feed-sync.js).
+ *   2. E-statement baru diupload -> rekonsiliasiSetelahUpload() mengganti
+ *      baris provisional yang kini punya padanan (dari ingest.js).
  *
- * Dipanggil dari DUA arah berbeda, makanya modul terpisah dari
- * email-feed-sync.js/ingest.js (bukan salah satu dari asalnya):
- *   1. Transaksi email BARU masuk, tidak ada padanan e-statement (MISSING)
- *      -> `buatProvisionalDariEmail()` mencatatnya sebagai baris ledger
- *      PROVISIONAL supaya langsung tampil di Dashboard, dipanggil dari
- *      services/email-feed-sync.js `prosesSatuTransaksiBaru()`.
- *   2. E-statement BARU diupload -> `rekonsiliasiSetelahUpload()` mencari
- *      transaksi email yang sebelumnya MISSING dan mungkin sekarang cocok,
- *      menggantikan baris provisional-nya (bukan membiarkan dobel), dipanggil
- *      dari services/ingest.js `simpanDraft()`.
- *
- * Flag dry-run WAJIB selama masa uji: `pengaturanRepo.KUNCI.EMAIL_LEDGER_MERGE_AKTIF`
- * (default MATI). Selama mati, rekonsiliasi & saran kategori transaksi email
- * (Fase A/B) tetap jalan penuh seperti biasa -- yang tidak terjadi HANYA
- * pembuatan baris ledger provisional.
- *
- * Kebijakan MISMATCH/AMBIGUOUS setelah e-statement datang: baris provisional
- * TIDAK dihapus otomatis, cuma ditandai `statusProvisional: 'disengketakan'`
- * (saldo tidak berubah oleh langkah ini) -- mempertahankan status quo yang
- * sudah ditampilkan ke pengguna lebih aman daripada diam-diam menghilangkan
- * uang dari Dashboard karena kandidat yang salah. Resolusi akhir (hapus
- * manual, atau biarkan) ada di tangan pengguna lewat halaman "Transaksi
- * Email" (lihat ui/views/email-transaksi.js).
+ * Pembuatan baris provisional dijaga flag EMAIL_LEDGER_MERGE_AKTIF (default
+ * mati). MISMATCH/AMBIGUOUS tidak menghapus provisional, hanya menandainya
+ * disengketakan; keputusan akhir di halaman Transaksi Email.
  */
 
 import * as pengaturanRepo from '../data/repo/settings.js';
@@ -58,12 +42,9 @@ export async function ledgerMergeAktif() {
 }
 
 /**
- * Kunci setting Akun BCA (utama/RDN) yang relevan untuk satu transaksi email
- * — murni, tidak menyentuh database, diekspor supaya bisa diuji langsung.
- * Kata kunci RDN/Stockbit dicari di SELURUH teks yang tersedia dari parser
- * email (merchant, jenis transaksi, acquirer, lokasi), bukan cuma merchant,
- * karena penyebutan "RDN"/"Stockbit" bisa muncul di field mana saja
- * tergantung format notifikasi bank.
+ * Kunci setting akun BCA (utama/RDN) untuk satu transaksi email. Kata kunci
+ * RDN/Stockbit dicari di semua field teks email, karena bisa muncul di mana
+ * saja. Murni.
  * @returns {string} salah satu dari pengaturanRepo.KUNCI.EMAIL_AKUN_*_BCA
  */
 export function kunciSettingAkunBca(trxEmail) {
@@ -75,15 +56,10 @@ export function kunciSettingAkunBca(trxEmail) {
 }
 
 /**
- * Tentukan rekening tujuan baris provisional dari data transaksi email.
- *
- * Bank selain BCA tidak ambigu di data produksi (1 rekening per bank) --
- * `cariAtauBuat()` yang sama dipakai upload e-statement. BCA ambigu (2
- * rekening): default ke setting "emailAkunUtamaBCA", kecuali teks email
- * menyebut RDN/Stockbit -> "emailAkunRdnBCA" (lihat kunciSettingAkunBca()).
- * Setting kosong/akun sudah terhapus -> fallback ke akun BCA pertama yang
- * ditemukan, supaya transaksinya tetap tercatat (lebih aman terlihat di
- * rekening yang mungkin salah daripada hilang tak tercatat sama sekali).
+ * Rekening tujuan baris provisional. Bank selain BCA: satu rekening, lewat
+ * cariAtauBuat(). BCA punya dua (utama/RDN), dipilih lewat setting (lihat
+ * kunciSettingAkunBca()); bila setting kosong, jatuh ke akun BCA pertama --
+ * lebih baik tercatat di rekening yang mungkin salah daripada hilang.
  */
 export async function resolusiAkunEmail(trxEmail) {
   if (trxEmail.bank === 'BCA') {
@@ -139,13 +115,9 @@ function idEmailPemilik(t) {
 }
 
 /**
- * Dari baris provisional yang ber-baseHash sama dengan transaksi email
- * `idEmail`, pilih satu yang boleh diadopsi -- murni, diekspor untuk tes.
- *
- * Boleh diadopsi = milik email ini sendiri, ATAU tidak dimiliki email LAIN
- * yang ada di perangkat ini (pemiliknya id asing). Baris yang sudah dipegang
- * email lokal lain TIDAK disentuh: itu transaksi kembar yang sah (dua kali
- * beli di toko sama, nominal sama, hari sama -- dua email berbeda).
+ * Dari baris provisional ber-baseHash sama dengan email `idEmail`, pilih yang
+ * boleh diadopsi: milik email ini, atau tidak dimiliki email lokal lain.
+ * Baris milik email lokal lain adalah transaksi kembar yang sah. Murni.
  *
  * @param {Array} kandidat baris provisional dengan baseHash yang sama
  * @param {string} idEmail id transaksi email yang sedang diproses
@@ -179,22 +151,10 @@ export async function buatProvisionalDariEmail(trxEmail, daftarKategori, kamusMa
     accountId: akun.id, tanggal, deskripsi, nominal: nominalBertanda,
   });
 
-  // Pengaman duplikat: kalau baris ledger untuk trxEmail.id ini SUDAH ada
-  // (hash penuh = baseHash + ordinal `e<trxEmail.id>`, lihat `hash` di bawah),
-  // JANGAN buat baris baru -- tautkan ulang saja. Ditemukan langsung di
-  // produksi: dua proses (mis. "Tarik email" dan backfill) yang kebetulan
-  // berjalan nyaris bersamaan bisa memicu buatProvisionalDariEmail() dua kali
-  // untuk transaksi email YANG SAMA sebelum keduanya sempat saling melihat
-  // hasil satu sama lain -- dobel.
-  //
-  // SENGAJA dibandingkan lewat hash PENUH (bukan baseHash saja): baseHash
-  // cuma akun+tanggal+deskripsi+nominal, dan itu SAH bertabrakan untuk dua
-  // transaksi BERBEDA yang kebetulan mirip (mis. dua kali beli kopi di toko
-  // sama, nominal sama, tanggal sama, tapi trxEmail.id beda -- data produksi
-  // sendiri punya kasus ini, "PT Tokopedia" muncul 3x di 07 Sep dengan
-  // emailTrxId berbeda-beda, ketiganya transaksi asli). Ordinal `e<trxEmail.id>`
-  // pada hash penuh memisahkan kasus itu dari kasus SATU trxEmail.id yang
-  // diproses dua kali -- cuma yang kedua yang harus dicegah.
+  // Pengaman duplikat: baris untuk trxEmail.id ini sudah ada -> tautkan ulang,
+  // jangan buat baru (dua proses bisa memanggil fungsi ini nyaris bersamaan).
+  // Dibandingkan lewat hash PENUH, bukan baseHash: baseHash sah bertabrakan
+  // untuk dua transaksi berbeda yang mirip (toko, nominal, dan tanggal sama).
   const hashCalon = hashFinal(baseHash, `e${trxEmail.id}`);
   const barisSama = await trxRepo.satuLewatHash(hashCalon);
   if (barisSama) {
@@ -202,16 +162,10 @@ export async function buatProvisionalDariEmail(trxEmail, daftarKategori, kamusMa
     return barisSama;
   }
 
-  // Pengaman kedua: baris provisional untuk email yang SAMA tapi dibuat
-  // dengan id email LAIN -- id dari perangkat lain (tiba lewat tarik Sheets,
-  // `emailTrxId`-nya tidak ikut terbawa) atau dari data lokal yang pernah
-  // dibersihkan. Hash penuhnya berbeda, jadi pengaman di atas tidak
-  // melihatnya; inilah yang membuat 53 transaksi email 18-29 Sep tercatat
-  // dua kali (insiden 2026-10-06). Baris seperti itu diadopsi, bukan
-  // diduplikasi. Hash-nya sengaja TIDAK diganti: hash adalah kunci upsert
-  // Sheets, mengubahnya berarti hapus + tulis ulang di sana.
-  // baseHash bertanggal UTC ikut dicari: baris lama yang belum dikoreksi ke
-  // WIB masih memakainya.
+  // Pengaman kedua: baris untuk email yang sama tapi dibuat dengan id email
+  // lain (dari perangkat lain lewat tarik Sheets). Hash penuhnya berbeda, jadi
+  // diadopsi alih-alih diduplikasi; hash tidak diganti karena itu kunci upsert
+  // Sheets. baseHash bertanggal UTC ikut dicari untuk baris lama.
   const baseHashLama = tanggalLama === tanggal ? baseHash : await hitungBaseHash({
     accountId: akun.id, tanggal: tanggalLama, deskripsi, nominal: nominalBertanda,
   });
@@ -242,13 +196,8 @@ export async function buatProvisionalDariEmail(trxEmail, daftarKategori, kamusMa
     sumber: SUMBER.EMAIL_PROVISIONAL,
     emailTrxId: trxEmail.id,
     statusProvisional: STATUS_PROVISIONAL.AKTIF,
-    // WAJIB dari waktu transaksi asli, BUKAN "sekarang" (bawaan buatTransaksi()
-    // kalau tidak diisi) -- provisionalKedaluwarsa() (watchdog 45 hari) memakai
-    // field ini untuk mengukur usia baris. Untuk transaksi yang baru saja
-    // ditarik, keduanya nyaris sama; tapi untuk backfill transaksi email LAMA
-    // (lihat backfillProvisionalEmailLama()), memakai "sekarang" akan membuat
-    // baris yang sudah berbulan-bulan menunggu terlihat baru dibuat sedetik
-    // lalu -- watchdog tidak akan pernah menandainya.
+    // Dari waktu transaksi asli, bukan "sekarang": provisionalKedaluwarsa()
+    // mengukur usia baris dari field ini, termasuk baris hasil backfill.
     dibuatPada: trxEmail.waktuTransaksi,
     baseHash,
     // WAJIB ordinal dari id unik trxEmail (bukan skema ordinal dedupe.js
@@ -265,44 +214,20 @@ export async function buatProvisionalDariEmail(trxEmail, daftarKategori, kamusMa
   const disimpan = await trxRepo.simpanSatu(data);
   await emailTrxRepo.simpanSatu({ ...trxEmail, provisionalTrxId: disimpan.id });
 
-  // hitungUlangSaldo TIDAK dipanggil di sini -- sengaja diserahkan ke
-  // pemanggil (yang memproses banyak baris dalam satu loop, lihat
-  // prosesSatuTransaksiBaru()/tarikTransaksiEmail() dan
-  // backfillProvisionalEmailLama() di bawah): kalau fungsi ini menghitung
-  // ulang saldo per baris, 64 baris untuk rekening yang sama berarti 64 kali
-  // pemindaian penuh transaksi rekening itu, padahal cuma hasil PANGGILAN
-  // TERAKHIR yang berarti -- pemanggil cukup menghitung ulang SEKALI per
-  // rekening yang tersentuh, di akhir loop (pola sama seperti ingest.js).
-  //
-  // Sheets TIDAK disentuh di sini -- sengaja diserahkan ke pemanggil
-  // (lihat email-feed-sync.js prosesSatuTransaksiBaru()/tarikTransaksiEmail(),
-  // dan backfillProvisionalEmailLama() di bawah). Kedua pemanggil itu
-  // memproses BANYAK transaksi dalam satu loop; kalau fungsi ini menembak
-  // syncAtauAntri()-nya sendiri per baris, N baris = N POST request hampir
-  // bersamaan ke webhook YANG SAMA, saling menimpa antrean retry lokal
-  // (bacaAntrean/tulisAntrean tidak dikunci) -- yang tersisa di Sheets cuma
-  // baris yang kebetulan menang race itu, sisanya hilang tanpa error (dilihat
-  // langsung di produksi: dari 64 baris BCA, 0 yang sampai ke Sheets). Satu
-  // panggilan syncAtauAntri() per BATCH (bukan per baris) menghindari ini.
+  // hitungUlangSaldo dan sinkron Sheets sengaja diserahkan ke pemanggil, yang
+  // memproses banyak baris dalam satu loop: saldo cukup dihitung sekali per
+  // rekening, dan satu syncAtauAntri() per batch menghindari race antrean
+  // retry yang terjadi bila tiap baris mengirim POST sendiri.
   return disimpan;
 }
 
 /**
- * Ganti baris provisional milik `trxEmail` dengan baris statement asli
- * (`trxStatement`) yang baru dikonfirmasi cocok -- hapus provisional-nya
- * (lokal + Sheets), tandai email trx sebagai benar-benar MATCHED. TIDAK
- * memanggil hitungUlangSaldo di sini: pemanggil (rekonsiliasiSetelahUpload)
- * yang mengumpulkan seluruh akun tersentuh lalu menghitung ulang SEKALI di
- * akhir, supaya tidak ada window saldo dihitung dari state yang belum tuntas.
- * TIDAK memanggil hapusDariSheets di sini -- pemanggil (rekonsiliasiSetelahUpload)
- * bisa memproses BANYAK baris dalam satu batch upload; kalau tiap baris
- * menghapus dari Sheets sendiri-sendiri, itu race yang sama persis dengan
- * yang diperbaiki di buatProvisionalDariEmail() (lihat catatan di sana), cuma
- * lewat antrean hapus (bacaAntreanHapus/tulisAntreanHapus) alih-alih antrean
- * kirim. Pemanggil mengumpulkan seluruh hash yang perlu dihapus lalu memanggil
- * hapusDariSheets() SEKALI di akhir.
- * @returns {{accountId: string, hash: string}|null} data baris provisional yang
- *   barusan dihapus lokal, atau null kalau tidak ada baris provisional untuk email ini.
+ * Ganti baris provisional milik `trxEmail` dengan baris statement yang cocok:
+ * hapus provisional lokal, tandai email MATCHED. hitungUlangSaldo dan
+ * hapusDariSheets sengaja diserahkan ke pemanggil (rekonsiliasiSetelahUpload),
+ * supaya dijalankan sekali per batch.
+ * @returns {{accountId: string, hash: string}|null} baris provisional yang
+ *   dihapus, atau null bila email ini tidak punya provisional.
  */
 async function gantikanProvisional(trxEmail, trxStatement) {
   const provisional = trxEmail.provisionalTrxId ? await trxRepo.satu(trxEmail.provisionalTrxId) : null;
@@ -339,13 +264,7 @@ async function tandaiSengketa(trxEmail, trxStatement, cocok) {
   await emailTrxRepo.simpanSatu({
     ...trxEmail,
     statusCocok: cocok.status,
-    // `trxStatement` bisa null (AMBIGUOUS "multiple_candidates_similar_score"
-    // -- cocokkanTransaksiEmail sengaja tidak menunjuk kandidat mana pun
-    // karena skornya nyaris sama). Sama seperti konvensi yang sudah ada di
-    // email-feed-sync.js (`cocok.kandidatId || ''`): JANGAN pernah menebak
-    // satu baris statement sebagai "kandidat"-nya -- itu akan tampil ke
-    // pengguna sebagai tautan ke transaksi yang sebenarnya tidak pernah
-    // benar-benar terpilih.
+    // Null untuk AMBIGUOUS tanpa kandidat tunggal: jangan menebak salah satu.
     transaksiCocokId: trxStatement ? trxStatement.id : '',
     skorCocok: cocok.skor,
     alasanCocok: cocok.alasan,
@@ -353,30 +272,16 @@ async function tandaiSengketa(trxEmail, trxStatement, cocok) {
 }
 
 /**
- * Rencanakan hasil rekonsiliasi TANPA menyentuh database sama sekali --
- * murni, diekspor supaya bisa diuji langsung tanpa IndexedDB. Untuk tiap
- * transaksi email kandidat, kumpulkan SELURUH baris statement baru yang
- * jendela tanggalnya beririsan (reuse rentangTanggalKandidat) lalu jalankan
- * cocokkanTransaksiEmail() SEKALI dengan seluruh kandidat itu sekaligus --
- * pola yang sama dengan pemanggilan aslinya di email-feed-sync.js
- * `prosesSatuTransaksiBaru()`. Ini penting: memanggilnya sekali per pasangan
- * (satu email vs satu statement) akan membuat cocokkanTransaksiEmail
- * kehilangan konteks pembanding (skor kandidat #2 dsb.), sehingga
- * menghasilkan MISMATCH palsu untuk pasangan yang sama sekali tidak
- * berhubungan padahal statement yang benar ada di kandidat lain pada batch
- * yang sama.
- *
- * Constraint one-to-one dalam SATU batch: begitu satu baris statement
- * MATCHED ke satu transaksi email, baris itu tidak lagi jadi kandidat untuk
- * transaksi email lain di batch yang sama (satu baris e-statement tidak
- * mungkin merupakan 2 transaksi bank berbeda).
+ * Rencana rekonsiliasi, murni. Tiap email dicocokkan SEKALI terhadap seluruh
+ * baris statement baru di jendela tanggalnya, supaya cocokkanTransaksiEmail()
+ * punya konteks pembanding (memanggilnya per pasangan menghasilkan MISMATCH
+ * palsu). Satu baris statement hanya untuk satu email dalam satu batch.
  *
  * @param {Array} transaksiBaruDariUpload baris e-statement yang baru disimpan
  * @param {Array} kandidatEmail transaksi email yang masih memegang baris provisional
  *   (lihat rekonsiliasiSetelahUpload())
  * @returns {Array<{trxEmail:object, trxStatement:object|null, cocok:object}>} `trxStatement`
- *   null berarti AMBIGUOUS tanpa kandidat tunggal (skor dua kandidat nyaris
- *   sama) -- lihat cocokkanTransaksiEmail(), JANGAN ditebak jadi salah satunya.
+ *   null berarti AMBIGUOUS tanpa kandidat tunggal; jangan ditebak.
  */
 export function rencanakanRekonsiliasi(transaksiBaruDariUpload, kandidatEmail) {
   const rencana = [];
@@ -409,10 +314,8 @@ export function rencanakanRekonsiliasi(transaksiBaruDariUpload, kandidatEmail) {
 }
 
 /**
- * Dipanggil dari ingest.js `simpanDraft()` SETELAH baris e-statement baru
- * tersimpan (`trxRepo.simpanBanyakTransaksi`), SEBELUM `hitungUlangSaldo()`
- * final dan SEBELUM `emit(EVENT.DATA_BERUBAH)` -- lihat catatan risiko di
- * gantikanProvisional() soal kenapa hitungUlangSaldo TIDAK dipanggil di sini.
+ * Dipanggil ingest.js simpanDraft() setelah baris e-statement tersimpan dan
+ * sebelum hitungUlangSaldo() final (lihat gantikanProvisional()).
  *
  * @param {Array} transaksiBaruDariUpload baris yang baru disimpan simpanDraft()
  * @returns {{digantikan: number, disengketakan: number, akunTersentuh: Set<string>}}
@@ -457,22 +360,10 @@ export async function rekonsiliasiSetelahUpload(transaksiBaruDariUpload) {
 }
 
 /**
- * Putuskan aksi backfill untuk SATU transaksi email lama terhadap ledger
- * SEKARANG -- murni, diekspor supaya bisa diuji tanpa IndexedDB.
- *
- * Hanya MATCHED yang berarti "sudah ada baris statement ASLI yang benar-benar
- * mewakilinya" -- itu satu-satunya kasus yang TIDAK BOLEH dibuatkan
- * provisional (akan dobel dengan baris asli yang sudah ada). MISSING,
- * MISMATCH, DAN AMBIGUOUS semuanya berarti "belum ada baris statement asli
- * yang mewakilinya" -- ketiganya tetap perlu baris provisional, persis
- * seperti kalau transaksi ini baru saja ditarik hari ini dan kandidat
- * terdekatnya kebetulan tidak cocok (lihat prosesSatuTransaksiBaru() di
- * email-feed-sync.js: cuma MISSING yang memicu provisional di jalur baru,
- * tapi itu karena transaksi baru MEMANG tidak mungkin MISMATCH/AMBIGUOUS
- * terhadap ledgernya sendiri yang belum pernah menyinggungnya -- transaksi
- * LAMA yang dinilai ulang di sini bisa saja sudah kadung MISMATCH/AMBIGUOUS
- * dari rekonsiliasi lama, dan itu TETAP butuh baris ledger, bukan cuma
- * status).
+ * Aksi backfill untuk satu transaksi email lama terhadap ledger sekarang,
+ * murni. Hanya MATCHED (sudah ada baris statement yang mewakili) yang tidak
+ * dibuatkan provisional; MISSING, MISMATCH, dan AMBIGUOUS tetap butuh baris
+ * ledger.
  * @returns {{aksi: 'tautkan'|'provisional', cocok: object}}
  */
 export function putuskanAksiBackfill(trxEmail, kandidatStatement) {
@@ -497,26 +388,11 @@ async function kandidatStatementUntuk(trxEmail, akunMap) {
 }
 
 /**
- * Backfill SATU KALI (tapi aman dipanggil berulang -- idempoten) untuk
- * transaksi email LAMA yang statusnya sudah MISSING dari SEBELUM fitur ini
- * diaktifkan pengguna. `prosesSatuTransaksiBaru()` di email-feed-sync.js
- * cuma memproses transaksi email yang BARU ditarik (lihat `simpanBanyakBaru`
- * yang men-skip `gmailMessageId` yang sudah ada) -- tanpa backfill ini,
- * backlog lama tidak akan PERNAH dapat baris provisional walau flag sudah
- * dinyalakan, karena tidak ada pemicu lain yang mengevaluasinya ulang.
- *
- * PENTING: status MISSING yang tersimpan di baris lama bisa BASI. Transaksi
- * itu mungkin diparse SEBELUM e-statement pasangannya sempat diupload, dan
- * sebelum Fase C ada, tidak ada apa pun yang mengevaluasinya ulang begitu
- * statement itu akhirnya masuk. Karena itu setiap kandidat dinilai ULANG di
- * sini terhadap ledger SEKARANG (lihat putuskanAksiBackfill()) sebelum
- * diputuskan.
- *
- * Dipanggil dari UI Pengaturan (kartuGabungLedgerEmail) setiap kali tombol
- * "Simpan" ditekan dengan flag aktif -- filter `!t.provisionalTrxId` membuat
- * baris yang sudah pernah dibuatkan provisional tidak diproses dua kali,
- * jadi aman dipanggil ulang berkali-kali (mis. pengguna cuma mengganti
- * pilihan rekening BCA lalu Simpan lagi).
+ * Backfill transaksi email MISSING yang belum punya baris provisional.
+ * Idempoten (yang sudah punya provisional dilewati). Status MISSING lama bisa
+ * basi, jadi tiap kandidat dinilai ulang terhadap ledger sekarang (lihat
+ * putuskanAksiBackfill()). Dipanggil dari Pengaturan dan
+ * setelahTransaksiDihapus().
  *
  * @returns {{dibuat: number, diperbarui: number}}
  */
@@ -607,11 +483,8 @@ export async function provisionalKedaluwarsa() {
 }
 
 /**
- * Hapus satu baris provisional secara manual (dipakai tombol "Hapus baris
- * provisional" di halaman Transaksi Email untuk kasus disengketakan yang
- * ternyata memang keliru/dobel) -- hitung ulang saldo akunnya, dan lepaskan
- * rujukan di record email trx supaya tidak menunjuk ke baris yang sudah
- * tidak ada.
+ * Hapus satu baris provisional (tombol "Hapus baris provisional"), hitung
+ * ulang saldo, dan lepaskan rujukannya dari email.
  */
 export async function hapusProvisionalManual(trxEmail) {
   if (!trxEmail.provisionalTrxId) return null;

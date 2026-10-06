@@ -134,11 +134,3 @@ function isiSel(el, kolom, row, bentukKartu = false) {
   if (Array.isArray(isi)) { isi.forEach((x) => el.appendChild(x instanceof Node ? x : document.createTextNode(String(x)))); return; }
   el.textContent = String(isi);
 }
-
-/** Baris ringkasan di bawah daftar (jumlah data, total, tombol tambahan). */
-export function kakiDaftar(kiri, kanan = null) {
-  return h('.dv__kaki', null, [
-    h('div', null, kiri),
-    kanan ? h('div', null, kanan) : null,
-  ]);
-}

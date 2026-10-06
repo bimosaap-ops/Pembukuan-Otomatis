@@ -11,7 +11,7 @@ export const JENIS_AKUN = { BANK: 'bank', KAS: 'kas' };
 export const URUTAN_MANUAL = 1000000;
 export const SUMBER = { PDF: 'pdf', MANUAL: 'manual', EMAIL_PROVISIONAL: 'email_provisional' };
 /**
- * Status baris ledger ber-`sumber: SUMBER.EMAIL_PROVISIONAL` ("Fase C" — lihat
+ * Status baris ledger ber-`sumber: SUMBER.EMAIL_PROVISIONAL` (lihat
  * services/email-ledger-merge.js): kosong untuk transaksi biasa (PDF/manual).
  * "aktif" = belum ada e-statement yang mengonfirmasi/menggantikannya sama
  * sekali. "disengketakan" = e-statement sudah datang tapi nominal/arahnya
@@ -83,12 +83,12 @@ export function buatTransaksi(data = {}) {
        sesudah baris statement pada tanggal yang sama. */
     urutan: Number.isFinite(Number(data.urutan)) ? Number(data.urutan) : URUTAN_MANUAL,
     catatan: data.catatan || '',
-    /* "Fase C": id record email_transactions yang melahirkan baris provisional
+    /* Id record email_transactions yang melahirkan baris provisional
        ini (sumber === SUMBER.EMAIL_PROVISIONAL) -- kosong untuk transaksi
        PDF/manual biasa. Dipakai email-ledger-merge.js untuk menemukan baris
        ledger yang harus digantikan/ditandai sengketa saat e-statement datang. */
     emailTrxId: data.emailTrxId || '',
-    /* "Fase C": lihat STATUS_PROVISIONAL -- kosong untuk transaksi bukan
+    /* Lihat STATUS_PROVISIONAL -- kosong untuk transaksi bukan
        email_provisional. */
     statusProvisional: data.statusProvisional || '',
     dibuatPada: data.dibuatPada || new Date().toISOString(),
@@ -226,7 +226,7 @@ export function buatTransaksiEmail(data = {}) {
     transaksiCocokId: data.transaksiCocokId || '',
     skorCocok: data.skorCocok === null || data.skorCocok === undefined ? null : Number(data.skorCocok),
     alasanCocok: data.alasanCocok || '',
-    /* "Fase C": id baris ledger PROVISIONAL (sumber === SUMBER.EMAIL_PROVISIONAL)
+    /* Id baris ledger PROVISIONAL (sumber === SUMBER.EMAIL_PROVISIONAL)
        yang dibuat untuk transaksi email ini saat statusCocok === MISSING --
        lihat services/email-ledger-merge.js. Kosong berarti belum pernah
        dibuatkan provisional (mis. status bukan MISSING, atau fitur belum

@@ -1,20 +1,11 @@
 /**
  * Sinkron ke Google Sheets lewat Apps Script Web App (webhook).
  *
- * Prinsipnya sama dengan seluruh aplikasi ini: menyimpan ke pembukuan lokal
- * tidak boleh pernah tertunda atau terlihat macet gara-gara Sheets. Karena itu:
- *
- *   - `syncKeSheets` punya batas waktu sendiri (lihat BATAS_MS) sehingga
- *     panggilan `fetch` tidak pernah menggantung tanpa batas — URL webhook yang
- *     salah atau Apps Script yang lambat cold-start tidak boleh membuat layar
- *     Upload terlihat berhenti selamanya.
- *   - Pemanggilnya (`ingest.js`, `transaksi.js`, `kategori.js`) TIDAK menunggu
- *     `syncAtauAntri` selesai sebelum melanjutkan alur simpan; sinkron berjalan
- *     di latar belakang sepenuhnya.
- *   - Transaksi yang gagal terkirim (offline, URL salah, timeout) masuk
- *     antrean tersimpan (`KUNCI_SHEETS.ANTREAN`) dan otomatis dicoba lagi pada
- *     percobaan sinkron berikutnya — baik itu simpan baru, aplikasi dibuka
- *     kembali, atau koneksi pulih (lihat pantauKoneksiSheets di app.js).
+ * Menyimpan ke pembukuan lokal tidak boleh tertunda gara-gara Sheets:
+ *   - setiap POST punya batas waktu (BATAS_MS);
+ *   - pemanggil tidak menunggu syncAtauAntri(); sinkron berjalan di latar;
+ *   - yang gagal terkirim masuk antrean (KUNCI_SHEETS.ANTREAN) dan dicoba lagi
+ *     pada sinkron berikutnya, saat aplikasi dibuka, atau saat koneksi pulih.
  */
 import * as pengaturanRepo from '../data/repo/settings.js';
 import * as trxRepo from '../data/repo/transactions.js';
@@ -33,15 +24,9 @@ export const KUNCI_SHEETS = {
 const BATAS_MS = 8000;
 
 /**
- * Berapa baris per permintaan.
- *
- * Sebelumnya seluruh pembukuan dikirim dalam satu POST, dan pada ribuan baris
- * permintaan itu tidak pernah selesai tepat waktu — yang terlihat oleh pengguna
- * cuma "Sheets tidak merespons dalam 60 detik", tanpa satu pun bagian yang
- * terselamatkan. Dipecah, tiap permintaan jadi pendek, kemajuannya bisa
- * ditunjukkan, dan yang gagal cukup diulang sepotong. Aman diulang karena
- * upsert di sisi Apps Script berbasis hash: mengirim bongkah yang sama dua kali
- * tidak menggandakan apa pun.
+ * Baris per permintaan. Seluruh pembukuan dalam satu POST tidak selesai tepat
+ * waktu; per bongkah, kemajuan terlihat dan yang gagal cukup diulang sepotong.
+ * Aman diulang karena upsert di Apps Script berbasis hash.
  */
 export const UKURAN_BONGKAH = 250;
 
@@ -175,21 +160,10 @@ export function transaksiDariBarisSheet(row) {
   return {
     id: row.id || '',
     hash: row.hash || '',
-    // `baseHash` tidak punya kolom sendiri di Sheet, dan tanpa dipulihkan di
-    // sini baris hasil pull tersimpan dengan baseHash KOSONG. Akibatnya dua
-    // hal yang sama-sama mahal: (1) hitungPerBaseHash() -- yang membaca
-    // indeks `baseHash` -- tidak melihat baris itu sama sekali, sehingga
-    // meng-upload ulang e-statement yang sama di perangkat ini dilaporkan
-    // "seluruhnya baru"; (2) hash penuh baris itu justru IDENTIK dengan hash
-    // yang dihitung ulang saat upload, dan indeks `hash` bersifat unique --
-    // penyimpanannya ditolak dan SELURUH upload batal padahal rekaman
-    // uploadnya sudah tertulis.
-    //
-    // Aman diturunkan dari `hash`: setiap pembuat hash di aplikasi ini
-    // memakai hashFinal(baseHash, ordinal) = `${baseHash}#${ordinal}`
-    // (dedupe.js) -- jalur PDF, manual (`m<waktu>`), maupun provisional
-    // email (`e<id>`) -- dan baseHash sendiri hex SHA-256, tidak pernah
-    // memuat '#'.
+    // baseHash tidak punya kolom di Sheet; tanpa dipulihkan, indeks baseHash
+    // tidak melihat baris hasil pull dan upload ulang statement yang sama
+    // gagal di indeks unik `hash`. Aman diturunkan dari hash: semua pembuat
+    // hash memakai hashFinal(baseHash, ordinal) = `${baseHash}#${ordinal}`.
     baseHash: String(row.hash || '').split('#')[0],
     tanggal: row.tanggal || '',
     deskripsi: row.deskripsi || '',
@@ -233,12 +207,9 @@ export async function post(url, payload, batasMs = BATAS_MS) {
     const teks = await res.text().catch(() => '');
     throw new Error(`Sheets ${res.status} ${teks.slice(0, 200)}`);
   }
-  // Balasan WAJIB berupa JSON {ok:true}. Sebelumnya balasan yang tidak bisa
-  // diurai dibiarkan lolos sebagai sukses — dan justru itu yang menyembunyikan
-  // kegagalan paling membingungkan: aplikasi melaporkan "Terkirim" padahal
-  // tidak ada satu baris pun yang sampai. Web App yang tidak dapat diakses
-  // publik, atau URL yang menunjuk sesuatu selain Apps Script, membalas HTML
-  // dengan status 200 dan akan terbaca sebagai sukses kalau tidak dijaga.
+  // Balasan WAJIB JSON {ok:true}. Web App yang tidak publik atau URL yang
+  // salah membalas HTML berstatus 200, yang tanpa penjagaan ini terbaca
+  // sebagai "Terkirim" padahal tidak ada yang sampai.
   const teks = await res.text().catch(() => '');
   let j = null;
   try { j = JSON.parse(teks); } catch { /* ditangani di bawah */ }
@@ -254,13 +225,9 @@ export async function post(url, payload, batasMs = BATAS_MS) {
 }
 
 /**
- * Ulangi permintaan yang gagal karena keadaan sesaat, bukan karena salah alamat.
- *
- * Membedakan keduanya penting: batas waktu dan kunci Apps Script yang sedang
- * dipegang proses lain memang bisa berbeda hasilnya sedetik kemudian, sedangkan
- * URL yang salah atau deployment yang tidak publik akan gagal dengan cara yang
- * persis sama berapa kali pun dicoba — mengulangnya hanya memperlama kegagalan
- * yang sudah pasti, dan menyembunyikan pesannya di balik penungguan.
+ * Ulangi hanya kegagalan sesaat (batas waktu, kunci Apps Script dipegang
+ * proses lain). URL salah atau deployment tidak publik gagal sama persis
+ * berapa kali pun dicoba; mengulangnya hanya menyembunyikan pesannya.
  */
 function layakDiulang(e) {
   const pesan = String((e && e.message) || '');
@@ -314,14 +281,9 @@ function terputus(sebab, terkirim, total) {
 }
 
 /**
- * Kirim transaksi ke webhook secara langsung, tanpa antrean.
- * Dipakai "Kirim semua sekarang" (backfill penuh) dan oleh `syncAtauAntri`.
- * Melempar error bila gagal — pemanggil yang memutuskan mau diantrekan atau tidak.
- *
- * Dikirim per bongkah (lihat UKURAN_BONGKAH), berurutan. Berurutan, bukan
- * serentak: Apps Script menyerialkan permintaan dengan LockService, jadi
- * mengirim paralel hanya membuat sebagian menunggu kunci sampai batas waktunya
- * habis — lebih lambat, bukan lebih cepat.
+ * Kirim transaksi ke webhook langsung, tanpa antrean ("Kirim semua sekarang"
+ * dan syncAtauAntri). Melempar error bila gagal. Bongkah dikirim berurutan,
+ * bukan paralel: Apps Script menyerialkan permintaan dengan LockService.
  *
  * @param {Array} transaksi daftar buatTransaksi()
  * @param {Map} akunMap peta id->akun
@@ -381,12 +343,8 @@ export async function kirimBaris(url, rows, opsi = {}) {
       throw terputus(e, terkirim, rows.length);
     }
   } else {
-    // Dashboard disegarkan lewat permintaan TERPISAH yang tidak ditunggu.
-    // Memisahkannya adalah intinya: membangun Dashboard berarti membaca seluruh
-    // tab data dan menghitung ulang QUERY di atasnya, dan selama itu menumpang
-    // permintaan yang membawa data, hiasan ikut menentukan apakah transaksinya
-    // terlihat tersimpan. Gagal pun tidak apa-apa — permintaan berikutnya, atau
-    // menu "Pembukuan" di Sheet, akan mengulangnya.
+    // Dashboard disegarkan lewat permintaan terpisah yang tidak ditunggu,
+    // supaya pembangunannya tidak ikut menentukan apakah data tersimpan.
     post(url, { rapikan: true, rows: [], dikirimPada: new Date().toISOString() },
       BATAS_RAPIKAN_MS).catch(() => {});
   }
@@ -395,16 +353,9 @@ export async function kirimBaris(url, rows, opsi = {}) {
 }
 
 /**
- * Payload penyelarasan: hanya identitas baris, bukan seluruh isinya.
- *
- * Server cuma butuh hash (untuk tahu baris mana yang masih ada) dan label
- * rekening (untuk tidak menyentuh rekening milik perangkat lain). Mengirim isi
- * lengkapnya berarti penghapusan baris yatim ikut menunggu ribuan baris
- * terkirim ulang, padahal baris-baris itu barusan saja dikirim.
- *
- * `hanyaSelaras` WAJIB ikut: tanpa penanda itu Apps Script akan memperlakukan
- * baris identitas sebagai data dan menuliskannya — mengosongkan tanggal,
- * nominal, dan kategori yang sudah benar.
+ * Payload penyelarasan: hanya hash dan label rekening, bukan isi baris.
+ * `hanyaSelaras` WAJIB ikut: tanpanya Apps Script menuliskan baris identitas
+ * ini sebagai data dan mengosongkan tanggal, nominal, dan kategori.
  */
 function permintaanSelaras(rows, opsi = {}) {
   const identitas = rows.map((r) => ({
@@ -421,12 +372,9 @@ function permintaanSelaras(rows, opsi = {}) {
 }
 
 /**
- * Tanyakan keadaan Sheet sekarang: namanya, dan berapa baris yang ada di sana.
- *
- * `AbortController` hanya memutus sisi browser — Apps Script terus berjalan
- * sampai selesai. Jadi "tidak merespons dalam 45 detik" sama sekali bukan
- * berarti tidak ada yang mendarat, dan menebaknya adalah hal terakhir yang
- * pantas disuruhkan ke pengguna. Satu ping murah menjawabnya dengan pasti.
+ * Keadaan Sheet sekarang: nama dan jumlah barisnya. AbortController hanya
+ * memutus sisi browser (Apps Script tetap jalan), jadi setelah batas waktu
+ * habis, satu ping murah ini yang memastikan berapa yang sudah mendarat.
  */
 export async function statusSheets() {
   const { url, aktif } = await bacaKonfigSheets();
@@ -491,13 +439,9 @@ export async function hapusDariSheets(hashes) {
 }
 
 /**
- * Kirim daftar hash yang harus hilang dari Sheet, per bongkah.
- *
- * Dipisah dan diekspor karena alasan yang sama dengan `kirimBaris`: bisa diuji
- * tanpa IndexedDB. Dan dipecah karena alasan yang sama pula — menghapus satu
- * rekening berarti mengirim SELURUH hash miliknya, yang di pembukuan ribuan
- * baris tidak mungkin selesai dalam satu permintaan. Ini jalur yang tertinggal
- * waktu jalur kirim dipecah.
+ * Kirim daftar hash yang harus hilang dari Sheet, per bongkah (menghapus
+ * satu rekening bisa berarti ribuan hash). Diekspor supaya bisa diuji tanpa
+ * IndexedDB.
  */
 export async function kirimHapus(url, hashes, opsi = {}) {
   const batasMs = opsi.batasMs || BATAS_BONGKAH_MS;
@@ -521,18 +465,13 @@ export async function kirimHapus(url, hashes, opsi = {}) {
 }
 
 /**
- * Titik masuk yang dipakai alur simpan (upload, transaksi manual, koreksi
- * kategori): kirim transaksi baru SEKALIGUS antrean lama yang masih menunggu
- * (kalau ada), lalu bersihkan antrean bila seluruhnya terkonfirmasi sampai.
- * Gagal sebagian maupun total → antrean utuh disimpan lagi untuk dicoba nanti.
- *
- * Ini fungsi latar belakang: pemanggil TIDAK boleh menunggunya (`await`) di
- * jalur simpan utama. `akunMap` harus mencakup seluruh rekening yang mungkin
- * dipakai transaksi di antrean, bukan cuma rekening transaksi yang baru saja
- * disimpan — pakai `akunRepo.peta()` (seluruh rekening), bukan peta satu rekening.
+ * Titik masuk alur simpan: kirim transaksi baru beserta antrean lama, lalu
+ * kosongkan antrean bila semuanya sampai; gagal sebagian maupun total -> antrean
+ * disimpan lagi. Fungsi latar belakang: jangan di-await di jalur simpan.
  *
  * @param {Array} transaksiBaru transaksi yang baru saja tersimpan (boleh kosong)
- * @param {Map} akunMap peta id->akun, mencakup SELURUH rekening
+ * @param {Map} akunMap peta id->akun, mencakup SELURUH rekening (antrean bisa
+ *   berisi rekening lain)
  * @param {Map} kategoriMap peta id->kategori
  */
 export async function syncAtauAntri(transaksiBaru, akunMap, kategoriMap) {
@@ -659,16 +598,9 @@ export function barisKategoriUntukSheet(k) {
 }
 
 /**
- * Kebalikan dari barisAkunUntukSheet/barisKategoriUntukSheet — ubah baris
- * hasil tarikEntitasDariSheets() balik jadi bentuk yang siap dilempar ke
- * repo/accounts.js simpanAkun() / repo/categories.js simpanKategori().
- * Dipisah dari entitas-sync.js (yang menyentuh IndexedDB) supaya bisa diuji
- * murni tanpa database — sama seperti seluruh fungsi lain di berkas ini.
- *
- * `saldo`/`jumlahTransaksi` SENGAJA tidak ikut dipetakan: keduanya dihitung
- * ulang dari transaksi lokal (lihat entitas-sync.js), nilai dari Sheet cuma
- * informasi tampilan milik perangkat yang mengirimnya dan tidak boleh
- * menimpa angka lokal yang lebih akurat.
+ * Baris tab Akun hasil tarik -> bentuk siap simpanAkun(). Murni.
+ * `saldo`/`jumlahTransaksi` sengaja tidak dipetakan: dihitung ulang dari
+ * transaksi lokal (lihat entitas-sync.js).
  */
 export function akunDariBarisSheet(row) {
   return {
@@ -786,15 +718,9 @@ export async function hapusEntitasDariSheets(entity, ids) {
    ========================================================================== */
 
 /**
- * Diekspor supaya bisa diuji langsung tanpa IndexedDB, sama seperti
- * barisUntukSheet/barisAkunUntukSheet.
- *
- * Angka yang tidak terbaca dari statement dikirim sebagai string kosong,
- * BUKAN nol — nol adalah saldo yang sah, sedangkan kosong berarti "bank
- * tidak menyebutkan". Rumus di tab Kontrol Saldo membedakan keduanya:
- * yang kosong dilewati tanpa dihitung selisih, yang nol diperiksa seperti
- * angka lainnya. Memaksakan nol di sini berarti setiap statement yang
- * ringkasannya tidak terbaca dilaporkan "selisih sebesar seluruh saldo".
+ * Baris tab Statement. Angka yang tidak terbaca dikirim sebagai string
+ * kosong, BUKAN nol: Kontrol Saldo melewati sel kosong, sedangkan nol akan
+ * dilaporkan sebagai selisih sebesar seluruh saldo. Murni.
  */
 export function barisStatementUntukSheet(u) {
   const angka = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? '' : Number(v));

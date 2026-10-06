@@ -226,18 +226,3 @@ export function rentangTanggalKandidat(waktuIso, jendelaHari = 2) {
 
   return { dari: fmt(dari), sampai: fmt(sampai) };
 }
-
-/**
- * Statement BCA hanya mencantumkan tanggal dan bulan. Saat daftar transaksi
- * melewati pergantian tahun (Desember -> Januari), tahunnya harus ikut naik.
- * Fungsi ini menerima daftar {bulanIdx, hari} berurutan dan tahun awal periode.
- */
-export function isiTahunBerurutan(daftar, tahunAwal) {
-  let tahun = tahunAwal;
-  let bulanSebelumnya = null;
-  return daftar.map(({ bulanIdx, hari }) => {
-    if (bulanSebelumnya !== null && bulanIdx < bulanSebelumnya - 6) tahun += 1;
-    bulanSebelumnya = bulanIdx;
-    return rakit(tahun, bulanIdx, hari);
-  });
-}

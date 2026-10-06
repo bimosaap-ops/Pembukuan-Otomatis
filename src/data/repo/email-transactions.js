@@ -19,10 +19,6 @@ export async function perGmailMessageId(gmailMessageId) {
   return rows[0] || null;
 }
 
-export async function perStatus(statusCocok) {
-  return ambilLewatIndex(STORE.EMAIL_TRANSACTIONS, 'statusCocok', statusCocok);
-}
-
 export async function simpanSatu(data) {
   const trx = buatTransaksiEmail(data);
   await simpan(STORE.EMAIL_TRANSACTIONS, trx);

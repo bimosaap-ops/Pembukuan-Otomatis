@@ -248,7 +248,7 @@ export async function mount(wadah) {
             h('button.btn-kecil', { type: 'button', onclick: () => bukaTautkanManual(t) }, 'Tautkan manual'),
             kandidat ? h('button.btn-kecil', { type: 'button', onclick: () => terimaTautan(t, kandidat) }, 'Terima tautan ini') : null,
             h('button.btn-kecil.btn-halus', { type: 'button', onclick: () => abaikan(t) }, 'Abaikan'),
-            // "Fase C": baris ini sudah dicatat sebagai transaksi provisional
+            // Baris ini sudah dicatat sebagai transaksi provisional
             // di ledger (lihat services/email-ledger-merge.js) — beri jalan
             // keluar manual kalau ternyata memang keliru/dobel (mis. sudah
             // ada di e-statement dengan detail berbeda tapi jelas transaksi
@@ -270,10 +270,9 @@ export async function mount(wadah) {
         render: (t) => h('div', null, [
           h('div.putus', { text: t.merchantMentah || '(tanpa nama merchant)' }),
           h('div.redup-2', { style: { fontSize: '.76rem' }, text: `${t.bank || '—'}${t.alasanCocok ? ` · ${t.alasanCocok}` : ''}` }),
-          // "Fase C": penanda baris ini sudah tercatat di ledger sebagai
-          // transaksi provisional (tampil di Dashboard) — lihat konfirmasi
-          // Fase A.5/urutan implementasi Fase C soal kenapa MISMATCH/AMBIGUOUS
-          // tidak menghapusnya otomatis (saldo tidak boleh diam-diam berubah).
+          // Penanda baris ini sudah tercatat di ledger sebagai transaksi
+          // provisional. MISMATCH/AMBIGUOUS tidak menghapusnya otomatis:
+          // saldo tidak boleh berubah diam-diam.
           t.provisionalTrxId ? h('span.lencana.lencana--warning.mt-2', {
             text: (t.statusCocok === STATUS_COCOK_EMAIL.MISMATCH || t.statusCocok === STATUS_COCOK_EMAIL.AMBIGUOUS)
               ? 'Provisional di ledger · disengketakan'
@@ -358,7 +357,7 @@ export async function mount(wadah) {
   }
 
   /**
-   * Resolusi manual "Fase C": baris provisional di ledger ternyata keliru
+   * Resolusi manual Baris provisional di ledger ternyata keliru
    * (mis. dobel dengan baris e-statement yang tidak terdeteksi otomatis
    * karena detailnya cukup berbeda). Berbeda dari "Abaikan" — itu cuma
    * menyembunyikan kartu ini dari tinjauan tanpa menyentuh ledger sama

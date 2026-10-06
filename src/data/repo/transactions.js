@@ -60,7 +60,7 @@ export async function perAkun(accountId) {
   return rows;
 }
 
-/** "Fase C": semua baris dengan `sumber` tertentu (dipakai mencari baris
+/** Semua baris dengan `sumber` tertentu (dipakai mencari baris
  *  ber-sumber `email_provisional`, lihat services/email-ledger-merge.js). */
 export async function perSumber(sumber) {
   const rows = await ambilLewatIndex(STORE.TRANSACTIONS, 'sumber', sumber);

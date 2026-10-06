@@ -183,13 +183,3 @@ export function arahDariWarna(rgb) {
   if (r > g + 30) return -1;
   return 0;
 }
-
-/** Jalan pintas: buka berkas lalu langsung ambil potongan teksnya. */
-export async function bacaPdf(data, { password = '', onProgress = null } = {}) {
-  const dokumen = await bukaDokumen(data, password);
-  try {
-    return await ekstrakPotongan(dokumen, { onProgress });
-  } finally {
-    dokumen.destroy?.();
-  }
-}

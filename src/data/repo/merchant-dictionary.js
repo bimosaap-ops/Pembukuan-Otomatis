@@ -7,7 +7,7 @@
  * Feed §C soal alasannya.
  */
 
-import { STORE, ambil, ambilSemua, simpan, hapus } from '../db.js';
+import { STORE, ambil, ambilSemua, simpan } from '../db.js';
 
 export async function cari(merchantKey) {
   const kunci = String(merchantKey || '').trim();
@@ -33,10 +33,4 @@ export async function tetapkan(merchantKey, kategoriId) {
   };
   await simpan(STORE.MERCHANT_DICTIONARY, entri);
   return entri;
-}
-
-export async function hapusEntri(merchantKey) {
-  const kunci = String(merchantKey || '').trim();
-  if (!kunci) return;
-  return hapus(STORE.MERCHANT_DICTIONARY, kunci);
 }

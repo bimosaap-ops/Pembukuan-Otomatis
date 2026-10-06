@@ -55,7 +55,7 @@ async function tulisCheckpoint(iso) {
  * Gabungkan hasil rekonsiliasi + saran kategori ke dalam satu transaksi
  * email siap simpan. Murni — diekspor supaya bisa diuji tanpa IndexedDB.
  *
- * "Fase B": kategoriFinal diisi OTOMATIS dari saran, sama seperti transaksi
+ * `kategoriFinal` diisi OTOMATIS dari saran, sama seperti transaksi
  * PDF-upload yang sudah auto-kategori tanpa gate (categorize.js dipanggil
  * langsung di ingest.js) — tidak menunggu klik manual "Simpan kategori" di
  * halaman Transaksi Email. `trx.overrideUser` (entities.js) jadi guard:
@@ -83,7 +83,7 @@ export function bangunPembaruanEmailTrx(trx, merchantKey, cocok, saran) {
  * hasilnya. Terpisah dari `tarikTransaksiEmail` supaya orkestrasi utama tetap
  * pendek dan mudah dibaca.
  *
- * "Fase C": kalau tidak ada padanan e-statement sama sekali (MISSING) DAN
+ * Kalau tidak ada padanan e-statement sama sekali (MISSING) DAN
  * fitur gabung-ledger aktif (lihat pengaturanRepo.KUNCI.EMAIL_LEDGER_MERGE_AKTIF,
  * default MATI), transaksi ini langsung dicatat sebagai baris ledger
  * PROVISIONAL (email-ledger-merge.js) supaya tampil di Dashboard sebelum

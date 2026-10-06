@@ -576,7 +576,7 @@ async function kartuEmailFeed() {
 }
 
 /* ==========================================================================
-   Gabung Transaksi Email ke ledger ("Fase C") — lihat services/email-ledger-merge.js
+   Gabung Transaksi Email ke ledger — lihat services/email-ledger-merge.js
    ========================================================================== */
 
 async function kartuGabungLedgerEmail(akun, render) {

@@ -119,12 +119,6 @@ export function normalisasiDeskripsi(teks) {
     .toUpperCase();
 }
 
-export function escapeHtml(s) {
-  return String(s ?? '').replace(/[&<>"']/g, (m) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[m]));
-}
-
 /** Sembunyikan sebagian nomor rekening: "1234567890" -> "•••• 7890" */
 export function maskRekening(nomor) {
   const s = String(nomor ?? '').replace(/\s/g, '');

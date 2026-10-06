@@ -83,7 +83,7 @@ function bukaDb() {
       }
 
       if (versiLama < 3) {
-        // "Fase C" (gabung ledger email+e-statement, lihat email-ledger-merge.js):
+        // Gabung ledger email + e-statement (lihat email-ledger-merge.js):
         // `emailTrxId` mencari baris ledger provisional milik satu transaksi
         // email tertentu (upsert/hapus saat e-statement datang); `sumber`
         // dipakai memfilter baris email_provisional keluar dari kandidat
@@ -192,10 +192,6 @@ export async function hapusBanyak(nama, keys) {
     keys.forEach((k) => store.delete(k));
     return keys.length;
   });
-}
-
-export async function kosongkanStore(nama) {
-  return jalankan(nama, 'readwrite', (store) => bungkus(store.clear()));
 }
 
 export async function hitung(nama) {
