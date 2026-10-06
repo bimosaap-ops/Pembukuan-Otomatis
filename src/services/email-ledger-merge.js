@@ -891,3 +891,52 @@ export function rencanakanPerbaikiTautanManual(emailLokal, transaksiPerId, akunM
     return !tautanSah(e, statement, statement ? akunMap.get(statement.accountId) : null);
   });
 }
+
+/**
+ * Baris provisional yang tidak bisa dijangkau dari halaman Transaksi Email
+ * -- tidak dirujuk email mana pun, atau dirujuk email yang tidak tampil di
+ * daftar tinjauan (sudah MATCHED/diselesaikan/diabaikan) -- padahal baris
+ * e-statement kembarannya (rekening sama, nominal sama, tanggal selisih
+ * paling banyak 1 hari karena pembukuan bank bisa H+1) sudah ada. Baris
+ * seperti ini terhitung dua kali dan pengguna tidak punya tombol untuk
+ * membersihkannya (Transaksi read-only, "Fase A"). Kasus nyata 2026-10-06:
+ * DIVA QUINTA MAHMUDA Rp 700.000 tanggal 20/9.
+ *
+ * Satu baris statement hanya dipakai untuk satu provisional. Murni,
+ * diekspor untuk tes; dijalankan oleh hapusProvisionalTakTerjangkau().
+ *
+ * @returns {Array<{provisional: object, statement: object, email: object|null}>}
+ */
+export function rencanakanHapusProvisionalTakTerjangkau(transaksi, emailLokal) {
+  const tampil = new Set([STATUS_COCOK_EMAIL.MISSING, STATUS_COCOK_EMAIL.MISMATCH, STATUS_COCOK_EMAIL.AMBIGUOUS]);
+  const terlihat = (e) => e && e.statusResolusi === STATUS_RESOLUSI_EMAIL.TERBUKA && tampil.has(e.statusCocok);
+  const perujuk = new Map();
+  const perId = new Map();
+  for (const e of (emailLokal || [])) {
+    perId.set(e.id, e);
+    if (e.provisionalTrxId) perujuk.set(e.provisionalTrxId, e);
+  }
+  const hari = (t) => Date.parse(`${String(t).slice(0, 10)}T00:00:00Z`) / 86400000;
+
+  const statement = (transaksi || []).filter((t) => t.sumber !== SUMBER.EMAIL_PROVISIONAL);
+  const provisional = (transaksi || []).filter((t) => t.sumber === SUMBER.EMAIL_PROVISIONAL)
+    .sort((a, b) => String(a.tanggal).localeCompare(String(b.tanggal)) || String(a.id).localeCompare(String(b.id)));
+  const terpakai = new Set();
+  const hasil = [];
+  for (const p of provisional) {
+    const rujuk = perujuk.get(p.id);
+    if (terlihat(rujuk)) continue;
+    // Pemilik lewat emailTrxId yang masih tampil di tinjauan (dan tidak sedang
+    // memegang provisional lain) -- biarkan pengguna yang memutuskan.
+    const pemilik = rujuk || perId.get(p.emailTrxId) || null;
+    if (!rujuk && terlihat(pemilik) && !pemilik.provisionalTrxId) continue;
+    const kembar = statement.find((s) => !terpakai.has(s.id)
+      && s.accountId === p.accountId
+      && Math.abs((Number(s.nominal) || 0) - (Number(p.nominal) || 0)) < 0.005
+      && Math.abs(hari(s.tanggal) - hari(p.tanggal)) <= 1);
+    if (!kembar) continue;
+    terpakai.add(kembar.id);
+    hasil.push({ provisional: p, statement: kembar, email: rujuk || null });
+  }
+  return hasil;
+}

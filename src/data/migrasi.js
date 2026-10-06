@@ -24,7 +24,7 @@ import {
 import {
   rencanakanBersihProvisionalDobel, rencanakanKoreksiTanggalProvisional, rencanakanHapusYatimSheet,
   rencanakanBersihProvisionalTertaut, hapusProvisionalManual,
-  rencanakanPerbaikiTautanManual, backfillProvisionalEmailLama,
+  rencanakanPerbaikiTautanManual, backfillProvisionalEmailLama, rencanakanHapusProvisionalTakTerjangkau,
 } from '../services/email-ledger-merge.js';
 import { SUMBER, STATUS_COCOK_EMAIL } from '../domain/entities.js';
 
@@ -537,4 +537,38 @@ export async function perbaikiTautanManualSalah() {
   }
   const backfill = sasaran.length ? await backfillProvisionalEmailLama() : { dibuat: 0 };
   return { jumlah: sasaran.length, dibuatUlang: backfill.dibuat || 0 };
+}
+
+/**
+ * Hapus baris provisional yang tidak terjangkau dari UI tetapi sudah punya
+ * kembaran di e-statement (lihat rencanakanHapusProvisionalTakTerjangkau).
+ * Email perujuknya (bila ada) ditautkan ke baris statement kembarannya.
+ */
+export async function hapusProvisionalTakTerjangkau() {
+  const [transaksi, emailLokal] = await Promise.all([trxRepo.semua(), emailTrxRepo.semua()]);
+  const rencana = rencanakanHapusProvisionalTakTerjangkau(transaksi, emailLokal);
+  if (!rencana.length) return { jumlah: 0, nominal: 0 };
+
+  const akunTersentuh = new Set();
+  for (const { provisional, statement, email } of rencana) {
+    await trxRepo.hapusTransaksi(provisional.id);
+    akunTersentuh.add(provisional.accountId);
+    if (email) {
+      await emailTrxRepo.simpanSatu({
+        ...email,
+        provisionalTrxId: '',
+        statusCocok: STATUS_COCOK_EMAIL.MATCHED,
+        transaksiCocokId: statement.id,
+      });
+    }
+  }
+  for (const accountId of akunTersentuh) {
+    if (accountId) await akunRepo.hitungUlangSaldo(accountId);
+  }
+  const hash = rencana.map((r) => r.provisional.hash).filter(Boolean);
+  if (hash.length) hapusDariSheets(hash).catch((e) => console.warn('Hapus provisional tak terjangkau di Sheets gagal:', e));
+  return {
+    jumlah: rencana.length,
+    nominal: rencana.reduce((n, r) => n + Math.abs(Number(r.provisional.nominal) || 0), 0),
+  };
 }
