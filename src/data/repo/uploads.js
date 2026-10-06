@@ -34,10 +34,10 @@ export async function cariHashFile(fileHash) {
  */
 export async function hapusUpload(id) {
   const rec = await satu(id);
-  const { jumlah, hash } = await trxRepo.hapusPerFileUpload(id);
+  const { jumlah, ids, hash } = await trxRepo.hapusPerFileUpload(id);
   await hapus(STORE.UPLOADED_FILES, id);
   if (rec?.accountId) await akunRepo.hitungUlangSaldo(rec.accountId);
-  return { transaksiTerhapus: jumlah, hash };
+  return { transaksiTerhapus: jumlah, ids, hash };
 }
 
 export async function terakhir(n = 5) {

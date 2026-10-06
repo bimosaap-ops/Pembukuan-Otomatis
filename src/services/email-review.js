@@ -26,6 +26,7 @@ import * as emailTrxRepo from '../data/repo/email-transactions.js';
 import * as trxRepo from '../data/repo/transactions.js';
 import { STATUS_COCOK_EMAIL, STATUS_RESOLUSI_EMAIL } from '../domain/entities.js';
 import { rentangTanggalKandidat } from './email-feed-sync.js';
+import { tautkanManual } from './email-ledger-merge.js';
 
 /** Sama dengan HARI_CARI_MANUAL di email-transaksi.js -- disalin, bukan
  *  diimpor, supaya service ini tidak bergantung ke lapisan UI. */
@@ -108,25 +109,23 @@ export function validasiKeputusan(keputusan) {
 }
 
 /**
- * Terapkan satu keputusan (SUDAH tervalidasi) ke transaksi email yang
- * sudah ada, kembalikan objek yang sudah diperbarui (belum disimpan).
- * Murni -- persis logika yang sudah ada di email-transaksi.js:
- *   'tautkan' == pilih() di modal "Tautkan manual"
- *   'selesai' == terimaTautan()
- *   'abaikan' == abaikan() (tanpa modal konfirmasi -- keputusannya sudah
- *                ditinjau lewat proses ekspor-analisis-impor, bukan klik
- *                spontan yang butuh dikonfirmasi ulang)
+ * Baris statement yang harus ditautkan oleh satu keputusan, atau null.
+ * 'tautkan' memakai transaksiCocokId dari berkas; 'selesai' sama dengan
+ * "Terima tautan ini", jadi menautkan ke kandidat yang sudah tercatat bila
+ * ada. Murni. Penautannya sendiri SELALU lewat tautkanManual(), supaya
+ * validasi tautanSah() dan penghapusan baris provisional tidak terlewat.
+ */
+export function targetTautan(trx, keputusan) {
+  if (keputusan.aksi === 'tautkan') return keputusan.transaksiCocokId;
+  if (keputusan.aksi === 'selesai') return trx.transaksiCocokId || null;
+  return null;
+}
+
+/**
+ * Keputusan tanpa tautan: 'selesai' tanpa kandidat, atau 'abaikan'. Hanya
+ * statusResolusi yang berubah. Murni; hasilnya belum disimpan.
  */
 export function terapkanSatuKeputusan(trx, keputusan) {
-  if (keputusan.aksi === 'tautkan') {
-    return {
-      ...trx,
-      statusCocok: STATUS_COCOK_EMAIL.MATCHED,
-      transaksiCocokId: keputusan.transaksiCocokId,
-      alasanCocok: keputusan.alasan || 'tinjauan_manual',
-      skorCocok: null,
-    };
-  }
   if (keputusan.aksi === 'selesai') {
     return { ...trx, statusResolusi: STATUS_RESOLUSI_EMAIL.DISELESAIKAN };
   }
@@ -156,20 +155,28 @@ export async function terapkanHasilTinjauan(daftarKeputusan) {
       continue;
     }
 
-    if (keputusan.aksi === 'tautkan') {
-      const kandidat = await trxRepo.satu(keputusan.transaksiCocokId);
+    const idTarget = targetTautan(trx, keputusan);
+    if (idTarget) {
+      const kandidat = await trxRepo.satu(idTarget);
       if (!kandidat) {
         hasil.dilewati.push({
           gmailMessageId: keputusan.gmailMessageId,
-          sebab: `Transaksi e-statement ${keputusan.transaksiCocokId} tidak ditemukan.`,
+          sebab: `Transaksi e-statement ${idTarget} tidak ditemukan.`,
         });
         continue;
       }
+      try {
+        await tautkanManual(trx, kandidat);
+      } catch (e) {
+        hasil.dilewati.push({ gmailMessageId: keputusan.gmailMessageId, sebab: e.message });
+        continue;
+      }
+      hasil.ditautkan += 1;
+      continue;
     }
 
     await emailTrxRepo.simpanSatu(terapkanSatuKeputusan(trx, keputusan));
-    if (keputusan.aksi === 'tautkan') hasil.ditautkan += 1;
-    else if (keputusan.aksi === 'selesai') hasil.diselesaikan += 1;
+    if (keputusan.aksi === 'selesai') hasil.diselesaikan += 1;
     else hasil.diabaikan += 1;
   }
 

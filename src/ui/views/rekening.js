@@ -9,6 +9,7 @@ import { MODE_BACA_SAJA_SHEETS } from '../../core/mode.js';
 import { on, emit, EVENT } from '../../core/events.js';
 import * as akunRepo from '../../data/repo/accounts.js';
 import { hapusDariSheets, syncEntitasKeSheets, hapusEntitasDariSheets } from '../../services/sheets-sync.js';
+import { setelahTransaksiDihapus } from '../../services/email-ledger-merge.js';
 import { BANK_DIKENAL, JENIS_AKUN } from '../../domain/entities.js';
 import { totalSaldo } from '../../domain/analytics.js';
 import { dataView } from '../components/data-view.js';
@@ -183,6 +184,8 @@ async function hapus(akun, selesai) {
   if (!ya) return;
 
   const hasil = await akunRepo.hapusAkun(akun.id);
+  // Tanpa penilaian ulang: rekeningnya sendiri sudah tidak ada.
+  await setelahTransaksiDihapus(hasil.ids, { evaluasiUlang: false }).catch((e) => console.warn('Penyesuaian transaksi email gagal:', e));
   hapusDariSheets(hasil.hash).catch((e) => console.warn('Hapus di Sheets gagal:', e));
   hapusEntitasDariSheets('akun', [akun.id]).catch((e) => console.warn('Hapus rekening di Sheets gagal:', e));
   toastSukses(`Rekening dihapus beserta ${hasil.transaksiTerhapus} transaksi.`);

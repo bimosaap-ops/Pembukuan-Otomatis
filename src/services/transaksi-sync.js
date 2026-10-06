@@ -28,6 +28,7 @@ import { remoteLebihBaru } from './entitas-sync.js';
 import * as pengaturanRepo from '../data/repo/settings.js';
 import * as trxRepo from '../data/repo/transactions.js';
 import * as akunRepo from '../data/repo/accounts.js';
+import { setelahTransaksiDihapus } from './email-ledger-merge.js';
 
 export const KUNCI_TARIK_TRANSAKSI = {
   TERAKHIR_DITARIK: 'transaksiTerakhirDitarik',
@@ -129,12 +130,14 @@ export async function tarikDanGabungTransaksi() {
 
   const tersentuh = new Set();
   const ringkasan = { baru: 0, diperbarui: 0, dihapus: 0, dilewati: 0 };
+  const idDihapus = [];
 
   for (const [i, id] of hasil.dihapus.entries()) {
     const lokal = await trxRepo.satu(id);
     if (!lokal) continue;
     if (!bolehHapusDariArsip(lokal, hasil.dihapusHash?.[i])) { ringkasan.dilewati += 1; continue; }
     await trxRepo.hapusTransaksi(id);
+    idDihapus.push(id);
     tersentuh.add(lokal.accountId);
     ringkasan.dihapus += 1;
   }
@@ -150,6 +153,9 @@ export async function tarikDanGabungTransaksi() {
   for (const accountId of tersentuh) {
     if (accountId) await akunRepo.hitungUlangSaldo(accountId);
   }
+  // Sesudah baris baru diterapkan: email yang kehilangan barisnya mungkin
+  // bisa ditautkan ke baris statement yang ikut tertarik di putaran ini.
+  await setelahTransaksiDihapus(idDihapus).catch((e) => console.warn('Penyesuaian transaksi email gagal:', e));
 
   await tulisCheckpointTransaksi(hasil.sekarang);
   return { ok: true, ditarik: hasil.baris.length, ...ringkasan };

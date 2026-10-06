@@ -14,6 +14,7 @@ import { on, emit, EVENT } from '../../core/events.js';
 import * as uploadRepo from '../../data/repo/uploads.js';
 import * as trxRepo from '../../data/repo/transactions.js';
 import { hapusDariSheets, hapusStatementDariSheets } from '../../services/sheets-sync.js';
+import { setelahTransaksiDihapus } from '../../services/email-ledger-merge.js';
 import { uploadTumpangTindih, transaksiKembarAntarUpload } from '../../domain/validate.js';
 import { STATUS_UPLOAD } from '../../domain/entities.js';
 import { dataView } from '../components/data-view.js';
@@ -181,6 +182,8 @@ async function batalkan(upload, selesai) {
   if (!ya) return;
 
   const hasil = await uploadRepo.hapusUpload(upload.id);
+  // Email yang tertaut ke baris statement ini kembali butuh baris provisional.
+  await setelahTransaksiDihapus(hasil.ids).catch((e) => console.warn('Penyesuaian transaksi email gagal:', e));
   // Membatalkan upload adalah penyebab paling sering Sheet jadi melenceng:
   // e-statement yang dibaca ulang meninggalkan baris lamanya di sana.
   hapusDariSheets(hasil.hash).catch((e) => console.warn('Hapus di Sheets gagal:', e));

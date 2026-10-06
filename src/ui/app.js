@@ -13,13 +13,9 @@ import {
 import { cegahDropDiLuar } from './components/dropzone.js';
 import { toastGagal, toastSukses } from './components/toast.js';
 import { on, EVENT } from '../core/events.js';
-import { rupiah } from '../core/format.js';
 import { pantauKoneksiSheets } from '../services/sheets-sync.js';
 import { jalankanAutoPull } from '../services/auto-pull.js';
-import {
-  migrasiKataKunciBawaan, bersihkanProvisionalTertaut, perbaikiTautanManualSalah,
-  hapusProvisionalTakTerjangkau, pulihkanProvisionalHilang,
-} from '../data/migrasi.js';
+import { migrasiKataKunciBawaan } from '../data/migrasi.js';
 
 /**
  * Header hanya dipakai di layar HP; di layar lebar tempatnya diambil alih
@@ -99,51 +95,6 @@ async function mulai() {
       toastSukses(`${migrasiKataKunci.jumlahKataKunci} kata kunci baru ditambahkan ke `
         + `${migrasiKataKunci.jumlahKategori} kategori bawaan. Buka halaman Kategori dan tekan `
         + '"Kelompokkan ulang semua transaksi" agar transaksi lama ikut terkoreksi.');
-    }
-
-    // Tautan manual ke baris yang tidak bisa mewakilinya (arah/bank beda,
-    // atau baris provisional) dikembalikan jadi "belum cocok" lebih dulu,
-    // supaya pembersihan di bawah tidak menghapus provisional karenanya.
-    const tautanSalah = await perbaikiTautanManualSalah().catch((e) => {
-      console.error('Perbaikan tautan manual gagal:', e);
-      return null;
-    });
-    if (tautanSalah?.jumlah) {
-      toastSukses(`${tautanSalah.jumlah} tautan manual yang keliru dikembalikan ke daftar tinjauan`
-        + (tautanSalah.dibuatUlang ? ` (${tautanSalah.dibuatUlang} baris provisional dibuat ulang).` : '.'));
-    }
-
-    // Transaksi email yang sudah ditautkan manual ke baris e-statement tapi
-    // baris provisional-nya tertinggal (perilaku "Tautkan manual" lama).
-    const tertaut = await bersihkanProvisionalTertaut().catch((e) => {
-      console.error('Pembersihan provisional tertaut gagal:', e);
-      return null;
-    });
-    if (tertaut?.jumlah) {
-      toastSukses(`${tertaut.jumlah} baris provisional yang sudah ditautkan ke e-statement dihapus `
-        + `(${rupiah(tertaut.nominal)}).`);
-    }
-
-    // Email yang merujuk baris provisional yang sudah hilang -- transaksinya
-    // lenyap dari saldo padahal label di halaman Email masih menampilkannya.
-    const hilang = await pulihkanProvisionalHilang().catch((e) => {
-      console.error('Pemulihan provisional hilang gagal:', e);
-      return null;
-    });
-    if (hilang?.jumlah) {
-      toastSukses(`${hilang.jumlah} transaksi email yang baris pembukuannya hilang dicatat ulang`
-        + (hilang.dibuat ? ` (${hilang.dibuat} baris provisional dibuat).` : '.'));
-    }
-
-    // Provisional tanpa pemilik yang tampil di tinjauan, padahal kembarannya
-    // di e-statement sudah ada -- tidak ada tombol yang bisa menjangkaunya.
-    const takTerjangkau = await hapusProvisionalTakTerjangkau().catch((e) => {
-      console.error('Pembersihan provisional tak terjangkau gagal:', e);
-      return null;
-    });
-    if (takTerjangkau?.jumlah) {
-      toastSukses(`${takTerjangkau.jumlah} baris provisional yang sudah ada di e-statement dihapus `
-        + `(${rupiah(takTerjangkau.nominal)}).`);
     }
 
     // Antrean retry Sheets (kalau ada, dari sesi sebelumnya yang gagal
