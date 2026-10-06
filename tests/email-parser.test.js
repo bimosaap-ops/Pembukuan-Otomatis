@@ -156,7 +156,7 @@ test('parseEmailBCA: sample asli "Internet Transaction Journal" terparse lengkap
   assert.equal(hasil.location, 'JAKARTA TIMUR, 13450, ID');
   assert.equal(hasil.rrn, '315108853');
   assert.equal(hasil.refNo, '952712026091135324660QRS1141733407');
-  assert.equal(hasil.parserVersion, 'bca-v1');
+  assert.equal(hasil.parserVersion, 'bca-v2');
   assert.equal(hasil.confidence, 'high');
 
   const t = hasil.eventTime;
@@ -177,7 +177,7 @@ test('parseEmailPermata: sample asli "Transfer - Other Bank BI-FAST" terparse le
   assert.equal(hasil.merchantRaw, 'BIMO SAPUTRO');
   assert.equal(hasil.jenisTransaksi, 'Transfer BI-FAST');
   assert.equal(hasil.refNo, '408582925');
-  assert.equal(hasil.parserVersion, 'permata-v1');
+  assert.equal(hasil.parserVersion, 'permata-v2');
   assert.equal(hasil.confidence, 'high');
 
   const t = hasil.eventTime;
@@ -201,7 +201,7 @@ test('parseEmailBCA: sub-template transfer sesama BCA (field "Jenis Transfer") t
   assert.equal(hasil.location, null);
   assert.equal(hasil.rrn, null, 'template transfer tidak menyertakan RRN sama sekali');
   assert.equal(hasil.refNo, '82810E1E-936E-4C63-8C72-AD6AC4496318');
-  assert.equal(hasil.parserVersion, 'bca-v1');
+  assert.equal(hasil.parserVersion, 'bca-v2');
 
   const t = hasil.eventTime;
   assert.equal(t.getFullYear(), 2026);
@@ -341,4 +341,128 @@ test('parseEmailBerdasarkanBank: transaksi berstatus Gagal tidak dicatat', () =>
 test('parseEmailBerdasarkanBank: status Berhasil tetap terparse', () => {
   assert.equal(parseEmailBerdasarkanBank('BCA', EMAIL_BCA).parsedOk, true);
   assert.equal(parseEmailBerdasarkanBank('Permata', EMAIL_PERMATA).parsedOk, true);
+});
+
+/* ==========================================================================
+   Template tambahan, disusun dari email asli (nama, nomor rekening, dan
+   referensi disamarkan).
+   ========================================================================== */
+
+const bca = (isi) => `
+Hai PEMILIK,
+Anda baru saja melakukan transaksi dengan menggunakan fasilitas myBCA.
+Berikut ini adalah detail transaksi Anda :
+Status : Berhasil
+${isi}
+Mohon simpan email ini sebagai referensi transaksi Anda.
+`;
+
+test('parseEmailBCA: transfer ke bank lain memakai Nominal (biaya terpisah) dan Nama Penerima', () => {
+  const h = parseEmailBCA(bca(`Tanggal Transaksi : 28 Agu 2026 23:45:21
+Jenis Transfer : Transfer ke BANK MANDIRI
+Dari Rekening : 6090xxxx94
+Rekening Tujuan
+  Nama Penerima : PENERIMA CONTOH
+  Bank Tujuan : BANK MANDIRI
+Nominal : IDR 6,000,000.00
+Biaya : IDR 6,500.00
+Nomor Referensi : REF-TRF-1`));
+  assert.equal(h.parsedOk, true);
+  assert.equal(h.amount, 6000000, 'biaya transfer tidak ikut dijumlah');
+  assert.equal(h.merchantRaw, 'PENERIMA CONTOH');
+  assert.equal(h.jenisTransaksi, 'Transfer ke BANK MANDIRI');
+  assert.equal(h.direction, 'debit');
+  assert.equal(h.parserVersion, 'bca-v2');
+});
+
+test('parseEmailBCA: tarik tunai tanpa kartu -> lawan transaksi = jenis transfer', () => {
+  const h = parseEmailBCA(bca(`Tanggal Transaksi : 16 Agu 2026 13:30:50
+Jenis Transfer : Cardless - Tarik Tunai
+Sumber Dana : 6090xxxx94
+Nominal : IDR 200,000.00
+Nomor Referensi : REF-ATM-1`));
+  assert.equal(h.parsedOk, true);
+  assert.equal(h.amount, 200000);
+  assert.equal(h.merchantRaw, 'Cardless - Tarik Tunai');
+});
+
+test('parseEmailBCA: top up Flazz memakai Nominal Top Up', () => {
+  const h = parseEmailBCA(bca(`Tanggal Transaksi : 06 Sep 2026 21:56:21
+Jenis Transaksi : Top Up Flazz
+Nomor Kartu Flazz : 0145000000000000
+Nominal Top Up : IDR 20,000.00
+Nomor Referensi : REF-FLAZZ-1`));
+  assert.equal(h.parsedOk, true);
+  assert.equal(h.amount, 20000);
+  assert.equal(h.merchantRaw, 'Top Up Flazz');
+});
+
+test('parseEmailBCA: pulsa memakai Total Bayar (sudah termasuk biaya admin)', () => {
+  const h = parseEmailBCA(bca(`Tanggal Transaksi : 16 Jul 2026 08:16:39
+Jenis Transaksi : Pulsa - TELKOMSEL PULSA
+Nominal : IDR 100,000.00
+Biaya Admin : IDR 2,000.00
+Total Bayar : IDR 102,000.00
+No. Referensi : REF-PULSA-1`));
+  assert.equal(h.amount, 102000);
+  assert.equal(h.merchantRaw, 'Pulsa - TELKOMSEL PULSA');
+});
+
+test('parseEmailBCA: Transfer QRIS dengan Total Transfer "-" jatuh ke Nominal', () => {
+  const h = parseEmailBCA(bca(`Tanggal Transaksi : 05 Jul 2026 13:47:45
+Jenis Transaksi : Transfer QRIS
+Nama Penerima : PENERIMA QRIS
+Nominal : IDR 60,000.00
+Biaya : -
+Total Transfer : -`));
+  assert.equal(h.amount, 60000);
+  assert.equal(h.merchantRaw, 'PENERIMA QRIS');
+});
+
+const permata = (isi) => `
+Terima kasih Anda telah menggunakan fasilitas Permata ME.
+${isi}
+Semoga informasi ini bermanfaat bagi Anda.
+`;
+
+test('parseEmailPermata: QR Pay (tanggal dd/mm/yyyy, Total Nominal, Nama Merchant)', () => {
+  const h = parseEmailPermata(permata(`Tanggal : 22/07/2026
+Jam : 21:13:40
+Kategori : QR Pay
+Nama Merchant : WARUNG CONTOH
+Total Nominal : 70,000
+No. Referensi Transaksi : 220726000000
+Status Transaksi : Sukses`));
+  assert.equal(h.parsedOk, true);
+  assert.equal(h.amount, 70000);
+  assert.equal(h.merchantRaw, 'WARUNG CONTOH');
+  assert.equal(h.direction, 'debit');
+  assert.equal(h.eventTime.getMonth(), 6, 'Juli = indeks 6');
+  assert.equal(h.eventTime.getDate(), 22);
+  assert.equal(h.refNo, '220726000000');
+});
+
+test('parseEmailPermata: top up e-wallet memakai Nominal Isi Ulang', () => {
+  const h = parseEmailPermata(permata(`Tanggal : 15 Jul 2026
+Jam : 11:18:39
+Kategori : Isi Ulang Gojek
+Kategori Isi Ulang : Go-Pay Customer
+Nominal Isi Ulang : IDR 35,000
+Nomor Referensi Transaksi : 282200000
+Status Transaksi : Berhasil`));
+  assert.equal(h.amount, 35000);
+  assert.equal(h.merchantRaw, 'Go-Pay Customer');
+  assert.equal(h.jenisTransaksi, 'Isi Ulang Gojek');
+});
+
+test('parseEmailPermata: pembayaran Virtual Account memakai Total Tagihan dan Tipe Pembayaran', () => {
+  const h = parseEmailPermata(permata(`Tanggal : 18 Jul 2026
+Jam : 19:26:55
+Kategori : Pembayaran Virtual Account
+Tipe Pembayaran : OVO
+Total Tagihan : IDR 150,000
+Nama Nasabah : PEMILIK
+Status Transaksi : Berhasil`));
+  assert.equal(h.amount, 150000);
+  assert.equal(h.merchantRaw, 'OVO');
 });
