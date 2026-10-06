@@ -342,7 +342,7 @@ export async function simpanDraft(draft, pilihan = {}) {
     ? `${transaksi.length} transaksi tersimpan · ${tertahan} ternyata sudah ada`
     : `${transaksi.length} transaksi tersimpan`);
 
-  // "Fase C": e-statement yang baru tersimpan mungkin mengonfirmasi transaksi
+  // E-statement yang baru tersimpan mungkin mengonfirmasi transaksi
   // email yang sebelumnya dicatat provisional (belum ada padanan statement).
   // WAJIB dijalankan SEBELUM hitungUlangSaldo final di bawah -- kalau
   // dibalik, saldo sempat dihitung dari state yang belum tuntas (provisional

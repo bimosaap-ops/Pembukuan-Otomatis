@@ -291,3 +291,54 @@ test('ekstrakField: nilai yang sendiri memuat ":" tidak terpotong di titik dua p
 test('ekstrakField: label tidak ditemukan mengembalikan string kosong, bukan error', () => {
   assert.equal(ekstrakField('Status : Berhasil', 'TidakAda'), '');
 });
+
+/* Disusun dari email "Permata Bank: Incoming Transfer" asli; nomor
+   referensi disamarkan. */
+const EMAIL_PERMATA_MASUK = `
+Terima kasih telah memilih Permata Bank.
+
+Berikut ini adalah informasi transfer masuk ke rekening Anda:
+
+Tanggal : 24 Aug 2026
+Jam : 07:46:27
+Bank Pengirim : BANK PERMATA TBK
+Nama Pengirim : KREDITUR PAYROLL NEW PEB
+Rekening Penerima : 1238XXXX10 (IDR)
+Nama Penerima : BIMO SAPUTRO
+Nominal : IDR 11,100,000.00
+Berita : -
+Nomor Referensi Transaksi : 2026082407462700000000000000000
+
+------------------------------
+
+The following is the incoming transfer information to your account:
+`;
+
+test('parseEmailPermata: transfer masuk tercatat KREDIT dengan lawan transaksi = pengirim', () => {
+  const hasil = parseEmailPermata(EMAIL_PERMATA_MASUK);
+  assert.equal(hasil.parsedOk, true);
+  assert.equal(hasil.direction, 'kredit');
+  assert.equal(hasil.amount, 11100000);
+  assert.equal(hasil.merchantRaw, 'KREDITUR PAYROLL NEW PEB', 'bukan Nama Penerima (pemilik rekening sendiri)');
+  assert.equal(hasil.jenisTransaksi, 'Transfer Masuk');
+});
+
+test('parseEmailPermata: transfer keluar tetap DEBIT', () => {
+  assert.equal(parseEmailPermata(EMAIL_PERMATA).direction, 'debit');
+});
+
+test('parseEmailBerdasarkanBank: transaksi berstatus Gagal tidak dicatat', () => {
+  const gagalBca = EMAIL_BCA.replace(/Status(\s*):\s*Berhasil/, 'Status$1: Gagal');
+  assert.notEqual(gagalBca, EMAIL_BCA, 'fixture harus memuat baris Status');
+  const hasil = parseEmailBerdasarkanBank('BCA', gagalBca);
+  assert.equal(hasil.parsedOk, false);
+  assert.match(hasil.error, /gagal/i);
+
+  const gagalPermata = EMAIL_PERMATA.replace('Status Transaksi            : Berhasil', 'Status Transaksi            : Gagal');
+  assert.equal(parseEmailBerdasarkanBank('Permata', gagalPermata).parsedOk, false);
+});
+
+test('parseEmailBerdasarkanBank: status Berhasil tetap terparse', () => {
+  assert.equal(parseEmailBerdasarkanBank('BCA', EMAIL_BCA).parsedOk, true);
+  assert.equal(parseEmailBerdasarkanBank('Permata', EMAIL_PERMATA).parsedOk, true);
+});

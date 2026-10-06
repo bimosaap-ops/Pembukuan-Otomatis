@@ -1,5 +1,5 @@
 /**
- * Auto-pull ("Fase A" — Sheets jadi editor utama untuk Transaksi/Akun/
+ * Auto-pull (Sheets jadi editor utama untuk Transaksi/Akun/
  * Kategori, PWA read-only untuk data itu): tarik akun, kategori, lalu
  * transaksi dari Google Sheets secara berkala TANPA perlu klik tombol,
  * supaya edit manual di Sheets (yang menstempel "Diubah Pada"/"Dikirim

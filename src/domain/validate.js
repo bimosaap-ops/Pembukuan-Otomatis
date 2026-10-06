@@ -197,14 +197,9 @@ export function statementTerawalBersaldo(uploads) {
   // bila tidak ada statement lain yang periodenya lebih awal. Kalau ada — dan
   // kebetulan statement itulah yang tidak menyimpan angka saldo cetakan bank —
   // maka saldo sebelum periode ini memang tidak diketahui, dan memakai angka
-  // ini berarti seluruh mutasi di bulan-bulan sebelumnya terhitung dua kali.
-  //
-  // Bukan kasus karangan: pada satu rekening BCA di data produksi, 23 dari 23
-  // statement tidak menyimpan angka saldo sama sekali. Meng-upload ulang SATU
-  // statement bulan tengah akan membuat statement itu jadi "yang terawal
-  // bersaldo" — dan tanpa penjagaan ini, Saldo Awal rekening akan dipindahkan
-  // ke saldo awal bulan itu, menggeser pembukuan sebesar netto sebelas bulan
-  // sebelumnya.
+  // ini berarti seluruh mutasi di bulan-bulan sebelumnya terhitung dua kali
+  // (mis. upload ulang satu statement bulan tengah di rekening yang
+  // statement lainnya tidak menyimpan saldo).
   const adaYangLebihAwal = daftar.some((u) => String(u.periodeAwal) < String(t.periodeAwal));
   if (adaYangLebihAwal) return null;
 
@@ -215,15 +210,10 @@ export function statementTerawalBersaldo(uploads) {
  * Nilai Saldo Awal yang SEHARUSNYA dipakai rekening, atau null bila yang
  * tersimpan sekarang sudah benar / tidak bisa ditentukan.
  *
- * Kenapa ini perlu: Saldo Awal rekening dulu diisi dari statement yang
- * KEBETULAN di-upload lebih dulu, bukan dari statement yang periodenya paling
- * awal — dan sekali terisi tidak pernah dikoreksi. Meng-upload statement yang
- * lebih tua sesudahnya menambahkan transaksinya ke pembukuan tanpa memundurkan
- * titik berangkatnya, sehingga SELURUH saldo hitungan rekening itu bergeser
- * sebesar mutasi yang terlewat — diam-diam, dan untuk selamanya. Terlihat di
- * data produksi pada DUA rekening sekaligus: satu bergeser Rp 8.012.650 (tab
- * "Kontrol Saldo" melaporkan selisih yang sama persis di SEMUA 21 bulannya),
- * satu lagi Rp 2.769.511.
+ * Saldo Awal yang diisi dari statement yang kebetulan di-upload lebih dulu
+ * (bukan yang periodenya paling awal) menggeser SELURUH saldo hitungan
+ * rekening sebesar mutasi yang terlewat, saat statement yang lebih tua
+ * di-upload sesudahnya.
  *
  * Angka cetakan bank pada statement TERAWAL menang atas apa pun yang tersimpan:
  * untuk rekening bank, "saldo sebelum transaksi pertama yang diimpor" justru

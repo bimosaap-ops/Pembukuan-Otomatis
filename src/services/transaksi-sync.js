@@ -70,7 +70,7 @@ async function terapkanBarisTransaksi(row) {
 
   if (!remoteLebihBaru(lokal, mapped)) return { status: 'dilewati', accountId: lokal.accountId };
 
-  // Bank/No. Rekening bisa diedit manual langsung di Sheet ("Fase A": Sheets
+  // Bank/No. Rekening bisa diedit manual langsung di Sheet (Sheets
   // jadi editor utama untuk Transaksi) -- accountId tidak portable antar
   // perangkat/Sheet, jadi diresolusi ULANG lewat cariAtauBuat() setiap kali
   // baris hasil pull menunjuk bank/nomor rekening BERBEDA dari akun lokal

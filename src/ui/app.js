@@ -101,7 +101,7 @@ async function mulai() {
     // tersinkron) dicoba lagi begitu database siap, dan tiap kali koneksi pulih.
     pantauKoneksiSheets();
 
-    // "Fase A": Sheets jadi editor utama Transaksi/Akun/Kategori -- tarik
+    // Sheets jadi editor utama Transaksi/Akun/Kategori -- tarik
     // otomatis berkala supaya edit manual di Sheets sampai ke PWA tanpa
     // perlu tombol manual (yang tetap ada di Pengaturan sebagai fallback).
     jalankanAutoPull();

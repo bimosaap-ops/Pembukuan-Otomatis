@@ -91,8 +91,30 @@ const HEADER_TRANSAKSI_EMAIL = ['Gmail Message ID', 'Bank', 'Waktu Transaksi', '
 const BATAS_ISI_EMAIL = 2000;
 /** Label Gmail penanda "sudah diperiksa" — dasar idempotensi pollEmailTransaksi(). */
 const LABEL_EMAIL_DIPROSES = 'Pembukuan/Diproses';
-/** Kata di subjek yang membuat email dilewati tanpa diperiksa lebih lanjut (PRD §10.2). */
-const KATA_KECUALI_EMAIL = ['OTP', 'PROMO', 'PROMOSI', 'NEWSLETTER', 'IKLAN', 'ADVERTISEMENT'];
+/**
+ * Subjek yang pasti bukan notifikasi transaksi. Email ini dilabeli dan
+ * dilewati, bukan disimpan sebagai "gagal diparse". Daftar disusun dari
+ * subjek nyata di _EmailMasuk; jangan tambahkan kata yang bisa muncul di
+ * subjek transaksi (mis. "TOP UP", "TRANSFER", "PAYMENT").
+ */
+const KATA_KECUALI_EMAIL = [
+  'OTP', 'PROMO', 'PROMOSI', 'NEWSLETTER', 'IKLAN', 'ADVERTISEMENT',
+  // Keamanan & akun
+  'LOGIN', 'PASSWORD', 'VERIFIKASI', 'AKTIVASI', 'BIOMETRIK', 'PERANGKAT BARU', 'NEW DEVICE',
+  'BCA ID', 'MOBILE PIN', 'NO. HP', 'PENIPUAN',
+  // Informasi rekening & layanan
+  'E-STATEMENT', 'SUKU BUNGA', 'BIAYA BULANAN', 'STATUS REKENING', 'PEMROSESAN REKENING',
+  'VERSI TERBARU', 'IMPORT TRANSFER LIST',
+  // Pemasaran
+  'NIKMATI', 'HADIAH', 'CASHBACK', 'RAYAKAN',
+];
+
+/**
+ * Notifikasi transaksi yang GAGAL tidak memindahkan uang, jadi tidak boleh
+ * tercatat. Bank memakai template yang sama untuk transaksi berhasil maupun
+ * gagal; bedanya hanya baris "Status".
+ */
+const POLA_STATUS_GAGAL = /Status(?:\s+Transaksi)?\s*:\s*(?:Gagal|Failed|Ditolak|Rejected)\b/i;
 /** Jendela pencarian mundur tiap jalan — self-healing kalau ada run yang terlewat (PRD §9.5). */
 const JENDELA_PENCARIAN_EMAIL_HARI = 3;
 /** Batas jumlah thread diproses per jalan, menjaga kuota eksekusi Apps Script. */
@@ -2069,8 +2091,9 @@ function parseEmailBCATransferSesamaBCA(body) {
 }
 
 /**
- * Parser email Permata ME "Transfer - Other Bank BI-FAST" (transfer keluar),
- * dari sampel asli. Template Permata lain belum didukung. Fungsi murni.
+ * Parser email Permata, dari sampel asli: "Transfer - Other Bank BI-FAST"
+ * (transfer keluar) dan "Incoming Transfer" (transfer masuk). Template
+ * Permata lain belum didukung. Fungsi murni.
  */
 function parseEmailPermata(bodyText) {
   const body = String(bodyText || '');
@@ -2080,6 +2103,10 @@ function parseEmailPermata(bodyText) {
   const namaPenerima = ekstrakField(body, 'Nama Penerima');
   const nominal = ekstrakField(body, 'Nominal');
   const nomorReferensi = ekstrakField(body, 'Nomor referensi transaksi');
+  // Template "Incoming Transfer" (gaji, kiriman masuk) memakai Tanggal/Jam/
+  // Nominal yang sama, tapi uangnya MASUK dan lawan transaksinya pengirim.
+  const namaPengirim = ekstrakField(body, 'Nama Pengirim');
+  const masuk = /transfer masuk|incoming transfer/i.test(body) || Boolean(namaPengirim);
 
   const eventTime = parseTanggalJamTerpisah(tanggal, jam);
   const amount = parseNominalIDR(nominal);
@@ -2093,9 +2120,9 @@ function parseEmailPermata(bodyText) {
     bank: 'Permata',
     eventTime,
     amount,
-    direction: 'debit', // template ini khusus transfer KELUAR (Rekening Asal -> Rekening Tujuan)
-    merchantRaw: namaPenerima || null,
-    jenisTransaksi: kategori || null,
+    direction: masuk ? 'kredit' : 'debit',
+    merchantRaw: (masuk ? namaPengirim : namaPenerima) || null,
+    jenisTransaksi: kategori || (masuk ? 'Transfer Masuk' : null),
     acquirer: null,
     location: null,
     rrn: null,
@@ -2107,6 +2134,9 @@ function parseEmailPermata(bodyText) {
 
 /** Dispatch parser berdasarkan nama bank dari Konfigurasi Email. */
 function parseEmailBerdasarkanBank(bank, bodyText) {
+  if (POLA_STATUS_GAGAL.test(String(bodyText || ''))) {
+    return { parsedOk: false, error: 'Transaksi berstatus gagal, tidak dicatat' };
+  }
   if (bank === 'BCA') return parseEmailBCA(bodyText);
   if (bank === 'Permata') return parseEmailPermata(bodyText);
   return { parsedOk: false, error: `Parser untuk bank "${bank}" belum tersedia` };

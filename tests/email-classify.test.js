@@ -63,3 +63,39 @@ test('klasifikasikanEmail: daftar konfigurasi kosong -> selalu unknown', () => {
   const hasil = klasifikasikanEmail('BCA <noreply@bca.co.id>', 'Notifikasi Transaksi', []);
   assert.deepEqual(hasil, { outcome: 'unknown', bank: null });
 });
+
+test('klasifikasikanEmail: email informasi bank (bukan transaksi) -> non_transaction', () => {
+  const permata = [{ polaPengirim: 'permatabank.co.id', polaSubjek: '', bank: 'Permata', aktif: true }];
+  const bca = [{ polaPengirim: 'bca.co.id', polaSubjek: '', bank: 'BCA', aktif: true }];
+  for (const subjek of [
+    'Permata Bank e-Statement a/n BIMO SAPUTRO untuk bulan August 2026',
+    'Permata Net : Login Information',
+    'Notifikasi Aktivasi Masuk dengan Biometrik',
+    'Informasi Perubahan Suku Bunga Permata ME Saver dan Permata Payroll',
+    'Permata ME : Registration mobile PIN',
+  ]) {
+    assert.equal(klasifikasikanEmail('x@permatabank.co.id', subjek, permata).outcome, 'non_transaction', subjek);
+  }
+  for (const subjek of ['Akses myBCA dari Perangkat Baru', 'Panduan Reset Password BCA ID', 'New Device Accessing myBCA']) {
+    assert.equal(klasifikasikanEmail('bca@bca.co.id', subjek, bca).outcome, 'non_transaction', subjek);
+  }
+});
+
+test('klasifikasikanEmail: subjek transaksi asli TIDAK ikut tersaring kata kecuali', () => {
+  const konfigAsli = [
+    { polaPengirim: 'bca.co.id', polaSubjek: '', bank: 'BCA', aktif: true },
+    { polaPengirim: 'permatabank.co.id', polaSubjek: '', bank: 'Permata', aktif: true },
+  ];
+  for (const [dari, subjek] of [
+    ['bca@bca.co.id', 'Internet Transaction Journal'],
+    ['bca@bca.co.id', 'Tarik Tunai Berhasil'],
+    ['x@permatabank.co.id', 'Transfer - Other Bank BI-FAST'],
+    ['x@permatabank.co.id', 'Permata Bank: Incoming Transfer'],
+    ['x@permatabank.co.id', 'Permata ME : Transfer - Other Account'],
+    ['x@permatabank.co.id', 'Permata ME : QR Pay'],
+    ['x@permatabank.co.id', 'Permata ME : Top Up - GoPay'],
+    ['x@permatabank.co.id', 'Permata ME : Payment - Virtual Account'],
+  ]) {
+    assert.equal(klasifikasikanEmail(dari, subjek, konfigAsli).outcome, 'transaction_email', subjek);
+  }
+});

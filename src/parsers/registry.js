@@ -22,15 +22,6 @@ export function adapterUntuk(kode) {
   return ADAPTERS[kode] || generik;
 }
 
-export function daftarAdapter() {
-  return [
-    { kode: ADAPTER.BCA, ...bca.info },
-    { kode: ADAPTER.PERMATA, ...permata.info },
-    { kode: ADAPTER.PERMATA_MUTASI, ...permataMutasi.info },
-    { kode: ADAPTER.GENERIK, ...generik.info },
-  ];
-}
-
 /**
  * Memproses potongan teks seluruh halaman menjadi daftar transaksi.
  *
