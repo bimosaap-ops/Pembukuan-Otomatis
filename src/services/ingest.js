@@ -16,7 +16,7 @@ import { hashBiner } from '../core/hash.js';
 import { bukaDokumen, ekstrakPotongan, ButuhPassword } from '../parsers/pdf-loader.js';
 import { parseStatement } from '../parsers/registry.js';
 import {
-  validasiBaris, cocokkanRingkasan, periodeDariBaris, koreksiSaldoAwalAkun,
+  validasiBaris, cocokkanRingkasan, periodeDariBaris, koreksiSaldoAwalAkun, statementSahTanpaTransaksi,
 } from '../domain/validate.js';
 import { bubuhiBaseHash, tandaiDuplikat, ringkasDuplikat, hashFinal } from '../domain/dedupe.js';
 import { kategorikanBanyak } from '../domain/categorize.js';
@@ -26,6 +26,7 @@ import * as trxRepo from '../data/repo/transactions.js';
 import * as uploadRepo from '../data/repo/uploads.js';
 import * as kategoriRepo from '../data/repo/categories.js';
 import { emit, EVENT } from '../core/events.js';
+import { rupiah } from '../core/format.js';
 import { syncAtauAntri, syncStatementKeSheets, syncEntitasKeSheets } from './sheets-sync.js';
 import { ledgerMergeAktif, rekonsiliasiSetelahUpload } from './email-ledger-merge.js';
 
@@ -100,6 +101,26 @@ export async function prosesFile(file, opsi = {}) {
   lapor('deteksi', 'selesai', hasil.bank ? `${hasil.bank}${hasil.nomorRekening ? ` · ${hasil.nomorRekening}` : ''}` : 'Bank tidak dikenali, memakai pembaca umum');
 
   if (!hasil.transaksi.length) {
+    if (statementSahTanpaTransaksi(hasil)) {
+      // Statement sah tanpa mutasi: tidak ada yang divalidasi atau dicek
+      // duplikatnya, tapi rekening dan angka saldonya tetap disimpan.
+      lapor('parsing', 'selesai', 'Tidak ada transaksi pada periode ini');
+      lapor('validasi', 'selesai', `Saldo tetap ${rupiah(hasil.ringkasan.saldoAkhir)}`);
+      lapor('duplikasi', 'selesai', 'Tidak ada transaksi untuk dicek');
+      const akunCocok = await cariAkunCocok(hasil);
+      return {
+        ...draftKosong({ file, fileHash, hasil, potongan, pernahAda }),
+        kosongSah: true,
+        akunCocok,
+        identitas: {
+          bank: hasil.bank || akunCocok?.bank || '',
+          nomorRekening: hasil.nomorRekening || akunCocok?.nomorRekening || '',
+        },
+        periodeAwal: hasil.periodeAwal,
+        periodeAkhir: hasil.periodeAkhir,
+        catatan: hasil.catatan || [],
+      };
+    }
     lapor('parsing', 'gagal', 'Tidak ada baris transaksi yang terbaca');
     return draftKosong({ file, fileHash, hasil, potongan, pernahAda });
   }
@@ -375,6 +396,7 @@ export async function simpanDraft(draft, pilihan = {}) {
 }
 
 function tentukanStatus(draft, jumlahDisimpan) {
+  if (draft.kosongSah) return STATUS_UPLOAD.SUKSES;
   if (!jumlahDisimpan) return STATUS_UPLOAD.GAGAL;
   if (draft.ringkas.curiga > 0 || (draft.cekTotal && !draft.cekTotal.semuaCocok)) return STATUS_UPLOAD.SEBAGIAN;
   return STATUS_UPLOAD.SUKSES;
