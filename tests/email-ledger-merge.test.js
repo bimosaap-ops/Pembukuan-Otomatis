@@ -9,6 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  rencanakanBersihProvisionalTertaut,
   kunciSettingAkunBca, rencanakanRekonsiliasi, putuskanAksiBackfill,
   pilihProvisionalTanpaPemilik, rencanakanBersihProvisionalDobel, bentukBarisEmail,
   rencanakanKoreksiTanggalProvisional, rencanakanHapusYatimSheet,
@@ -388,4 +389,40 @@ test('rencanakanHapusYatimSheet: tetap cocok setelah tanggal lokal dikoreksi ke 
   const yatim = barisSheet({ hash: 'bhD#etrxe_x', tanggal: '2026-09-19', deskripsi: 'DIVA QUINTA MAHMUDA', nominal: -700000 });
   const hapus = rencanakanHapusYatimSheet([yatim], [lokalWib], [emailDiniHari], akunMap);
   assert.equal(hapus.length, 1);
+});
+
+/* --------------------------------------------------------------------------
+   rencanakanBersihProvisionalTertaut — sisa "Tautkan manual" versi lama
+   -------------------------------------------------------------------------- */
+
+test('rencanakanBersihProvisionalTertaut: MATCHED ke baris PDF tapi provisional masih ada -> dibersihkan', () => {
+  const peta = new Map([
+    ['pdf1', { id: 'pdf1', sumber: 'pdf' }],
+    ['prov1', { id: 'prov1', sumber: 'email_provisional' }],
+  ]);
+  const email = { id: 'e1', statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: 'pdf1', provisionalTrxId: 'prov1' };
+  assert.deepEqual(rencanakanBersihProvisionalTertaut([email], peta), [email]);
+});
+
+test('rencanakanBersihProvisionalTertaut: yang tidak boleh disentuh', () => {
+  const peta = new Map([
+    ['pdf1', { id: 'pdf1', sumber: 'pdf' }],
+    ['prov1', { id: 'prov1', sumber: 'email_provisional' }],
+    ['prov2', { id: 'prov2', sumber: 'email_provisional' }],
+  ]);
+  const kasus = [
+    // Belum cocok: provisional memang satu-satunya catatan.
+    { id: 'a', statusCocok: STATUS_COCOK_EMAIL.MISSING, transaksiCocokId: '', provisionalTrxId: 'prov1' },
+    // Ditautkan ke baris provisional (bukan e-statement).
+    { id: 'b', statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: 'prov2', provisionalTrxId: 'prov1' },
+    // Menunjuk dirinya sendiri.
+    { id: 'c', statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: 'prov1', provisionalTrxId: 'prov1' },
+    // Baris statement-nya tidak ada di perangkat ini.
+    { id: 'd', statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: 'hilang', provisionalTrxId: 'prov1' },
+    // Rujukan provisional menunjuk baris PDF (bukan provisional) -- jangan hapus.
+    { id: 'e', statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: 'pdf1', provisionalTrxId: 'pdf1' },
+    // Sudah bersih.
+    { id: 'f', statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: 'pdf1', provisionalTrxId: '' },
+  ];
+  assert.deepEqual(rencanakanBersihProvisionalTertaut(kasus, peta), []);
 });

@@ -23,6 +23,7 @@ import {
 } from '../services/sheets-sync.js';
 import {
   rencanakanBersihProvisionalDobel, rencanakanKoreksiTanggalProvisional, rencanakanHapusYatimSheet,
+  rencanakanBersihProvisionalTertaut, hapusProvisionalManual,
 } from '../services/email-ledger-merge.js';
 import { SUMBER } from '../domain/entities.js';
 
@@ -489,4 +490,23 @@ export async function hapusProvisionalYatimDiSheet() {
     jumlah: hapus.length,
     nominal: hapus.reduce((n, r) => n + Math.abs(Number(r.nominal) || 0), 0),
   };
+}
+
+/**
+ * Hapus baris provisional milik transaksi email yang sudah ditautkan ke baris
+ * e-statement -- sisa "Tautkan manual" versi lama yang hanya menandai MATCHED
+ * tanpa menghapus provisional-nya, sehingga transaksinya terhitung dua kali.
+ * Tanpa bendera: kondisinya sendiri (MATCHED + masih memegang provisional)
+ * tidak pernah terbentuk oleh alur yang benar, jadi aman diperiksa tiap buka.
+ */
+export async function bersihkanProvisionalTertaut() {
+  const [emailLokal, transaksi] = await Promise.all([emailTrxRepo.semua(), trxRepo.semua()]);
+  const perId = new Map(transaksi.map((t) => [t.id, t]));
+  const sasaran = rencanakanBersihProvisionalTertaut(emailLokal, perId);
+  let nominal = 0;
+  for (const email of sasaran) {
+    const dihapus = await hapusProvisionalManual(email);
+    if (dihapus) nominal += Math.abs(Number(dihapus.nominal) || 0);
+  }
+  return { jumlah: sasaran.length, nominal };
 }

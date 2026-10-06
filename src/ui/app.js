@@ -19,7 +19,7 @@ import { jalankanAutoPull } from '../services/auto-pull.js';
 import {
   jalankanMigrasi, migrasiKataKunciBawaan, migrasiKategoriInvestasi, migrasiKategoriFinalEmail,
   hapusProvisionalYatimDuplikat, hapusProvisionalDobelEmail, migrasiTanggalProvisionalWib,
-  hapusProvisionalYatimDiSheet,
+  hapusProvisionalYatimDiSheet, bersihkanProvisionalTertaut,
 } from '../data/migrasi.js';
 
 /**
@@ -154,6 +154,17 @@ async function mulai() {
     if (migrasiHapusDobel?.dijalankan && migrasiHapusDobel.jumlah) {
       toastSukses(`${migrasiHapusDobel.jumlah} baris transaksi email dobel dibersihkan `
         + `(${rupiah(migrasiHapusDobel.nominal)}).`);
+    }
+
+    // Transaksi email yang sudah ditautkan manual ke baris e-statement tapi
+    // baris provisional-nya tertinggal (perilaku "Tautkan manual" lama).
+    const tertaut = await bersihkanProvisionalTertaut().catch((e) => {
+      console.error('Pembersihan provisional tertaut gagal:', e);
+      return null;
+    });
+    if (tertaut?.jumlah) {
+      toastSukses(`${tertaut.jumlah} baris provisional yang sudah ditautkan ke e-statement dihapus `
+        + `(${rupiah(tertaut.nominal)}).`);
     }
 
     // Kembaran yang hanya ada di Sheet -- tidak terlihat oleh pembersih lokal
