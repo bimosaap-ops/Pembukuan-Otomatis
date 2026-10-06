@@ -3406,7 +3406,7 @@ function doPost(e) {
     } catch (err) {
       return json({ ok: false, error: String(err && err.message || err) });
     } finally {
-      kunciEntitas.releaseLock();
+      lepasKunci(kunciEntitas);
     }
   }
 
@@ -3483,19 +3483,28 @@ function doPost(e) {
       if (h) nomorBaris[h] = i + 2; // +2: baris 1 header, array mulai dari 0
     });
 
-    // Baris mana yang harus hilang dari Sheet.
-    const dibuang = {};
-    hapus.forEach((h) => { if (nomorBaris[h]) dibuang[nomorBaris[h]] = true; });
+    // Baris mana yang harus hilang dari Sheet — dicatat sebagai HASH, bukan
+    // nomor baris. hapusBaris() membaca ulang kolom Hash tepat sebelum
+    // menghapus, jadi baris yang bergeser sejak bacaan di atas tidak membuat
+    // baris lain ikut terbuang.
+    const hashDibuang = {};
+    hapus.forEach((h) => { if (nomorBaris[h]) hashDibuang[h] = true; });
     let dipertahankan = 0;
     if (mintaSelaras) {
-      lama.forEach((r, i) => {
+      lama.forEach((r) => {
         const h = String(r[0] || '');
         if (!h || dedup.has(h)) return;
         const label = `${String(r[7] || '').trim()} ${String(r[8] || '').trim()}`.trim();
         if (label && !rekeningPengirim[label]) { dipertahankan += 1; return; }
-        dibuang[i + 2] = true;
+        hashDibuang[h] = true;
       });
     }
+    // Penyelarasan juga membuang KEMBARAN: hash yang muncul di lebih dari satu
+    // baris. Hash unik di aplikasi, jadi kembaran hanya bisa sisa kerusakan;
+    // satu baris dipertahankan (yang dipetakan nomorBaris = kemunculan
+    // terakhir) dan akan ditimpa upsert dengan isi yang benar.
+    const buangKembar = mintaSelaras;
+    const dibuang = tandaiBarisDibuang(lama.map((r) => String(r[0] || '')), hashDibuang, buangKembar);
     const jumlahDibuang = Object.keys(dibuang).length;
 
     // Pratinjau: hanya melapor, tidak menyentuh apa pun. Dipakai dialog
@@ -3544,7 +3553,8 @@ function doPost(e) {
       sh.getRange(last+1, KOLOM_WAKTU, tambah.length, 1).setNumberFormat(FORMAT_WAKTU);
     }
 
-    if (jumlahDibuang) hapusBaris(sh, dibuang);
+    let jumlahTerhapus = 0;
+    if (jumlahDibuang) jumlahTerhapus = hapusBaris(sh, hashDibuang, buangKembar);
 
     // Dashboard dibangun PALING AKHIR dan hanya bila diminta, supaya hiasan
     // tidak pernah ikut menentukan apakah transaksinya tersimpan — dan supaya
@@ -3555,11 +3565,31 @@ function doPost(e) {
       ok: true,
       inserted: tambah.length,
       updated: perbarui.length,
-      dihapus: jumlahDibuang,
+      dihapus: jumlahTerhapus,
       dipertahankan: dipertahankan,
     }));
   } catch (err) {
     return json({ok:false, error: String(err && err.message || err)});
+  } finally {
+    lepasKunci(kunci);
+  }
+}
+
+/**
+ * Lepas kunci SESUDAH seluruh perubahan Sheet benar-benar diterapkan.
+ *
+ * Apps Script menahan penulisan (setValues, deleteRows) di buffer dan baru
+ * menerapkannya saat eksekusi berakhir — yang terjadi SESUDAH blok finally
+ * ini. Tanpa flush, permintaan berikutnya bisa mendapat kunci lalu membaca
+ * kolom Hash yang belum memuat penghapusan permintaan sebelumnya: nomor baris
+ * hasil bacaannya meleset sebanyak baris yang baru dihapus, dan penghapusan/
+ * pembaruan berikutnya mengenai baris lain. Ini cocok dengan kerusakan
+ * 06/10/2026 17:51 (baris Agustus terarsip & tertimpa kembaran, sementara
+ * baris provisional September yang diminta dihapus masih ada).
+ */
+function lepasKunci(kunci) {
+  try {
+    SpreadsheetApp.flush();
   } finally {
     kunci.releaseLock();
   }
@@ -3589,37 +3619,69 @@ function rapikanDashboard(ss, sh) {
 const AMBANG_TULIS_BORONG = 20;
 
 /**
- * Buang baris-baris yang nomornya ada di `dibuang`.
+ * Nomor baris (2-based, kunci objek) yang harus dibuang dari kolom Hash.
+ *
+ * @param {string[]} hashKolom isi kolom Hash mulai baris 2
+ * @param {Object<string, boolean>} hashDibuang hash yang seluruh barisnya dibuang
+ * @param {boolean} buangKembar buang juga kemunculan ganda sebuah hash,
+ *   sisakan kemunculan TERAKHIR (yang dipakai nomorBaris di doPost)
+ */
+function tandaiBarisDibuang(hashKolom, hashDibuang, buangKembar) {
+  const terakhir = {};
+  hashKolom.forEach((h, i) => { if (h) terakhir[h] = i; });
+  const dibuang = {};
+  hashKolom.forEach((h, i) => {
+    if (!h) return;
+    if (hashDibuang[h] || (buangKembar && terakhir[h] !== i)) dibuang[i + 2] = true;
+  });
+  return dibuang;
+}
+
+/**
+ * Buang baris-baris yang hash-nya ada di `hashDibuang` (dan, bila diminta,
+ * kembaran hash). Mengembalikan jumlah baris yang benar-benar dibuang.
+ *
+ * Nomor barisnya ditentukan dari bacaan kolom Hash yang dilakukan DI SINI,
+ * sesaat sebelum menghapus — bukan dari bacaan di awal doPost. Penghapusan
+ * berdasarkan nomor baris yang sudah basi pernah mengarsipkan dan membuang
+ * baris yang salah; dengan hash, baris yang bergeser tetap dikenali sebagai
+ * dirinya sendiri.
  *
  * Untuk jumlah kecil, operasi per baris paling murah — tapi penyelarasan bisa
  * membuang ratusan baris sekaligus, dan `deleteRow` satu per satu jauh lebih
- * mahal daripada penulisan biasa. Di atas ambang, seluruh blok yang tersisa
- * ditulis ulang sekali lalu ekornya dipangkas dalam satu operasi -- BEDA dari
- * pola yang dihapus di tulisPembaruan(): di sini cuma SATU array (`sisa`)
- * yang dibaca, difilter, lalu ditulis balik pada indeks yang sama persis --
- * tidak ada offset dari daftar terpisah yang perlu dicocokkan ke posisi
- * baris lain, jadi tidak rentan pada kelas bug yang sama.
+ * mahal daripada penulisan biasa. Di atas ambang, seluruh blok dibaca sekali,
+ * baris yang dibuang dipilih ulang dari kolom Hash BLOK ITU SENDIRI, sisanya
+ * ditulis balik, lalu ekornya dipangkas dalam satu operasi.
  */
-function hapusBaris(sh, dibuang) {
+function hapusBaris(sh, hashDibuang, buangKembar) {
   const last = sh.getLastRow();
-  if (last < 2) return;
+  if (last < 2) return 0;
+  const hashKolom = sh.getRange(2, 1, last - 1, 1).getValues().map((r) => String(r[0] || ''));
+  const dibuang = tandaiBarisDibuang(hashKolom, hashDibuang, buangKembar === true);
   const nomor = Object.keys(dibuang).map(Number).sort((a, b) => a - b);
-  if (!nomor.length) return;
-
-  arsipkan(sh, nomor);
+  if (!nomor.length) return 0;
 
   if (nomor.length <= AMBANG_TULIS_BORONG) {
+    arsipkan(sh, nomor);
     // Menurun, supaya penghapusan satu baris tidak menggeser nomor berikutnya.
     for (let i = nomor.length - 1; i >= 0; i -= 1) sh.deleteRow(nomor[i]);
-    return;
+    return nomor.length;
   }
 
   const lebar = HEADER.length;
-  const rng = sh.getRange(2, 1, last - 1, lebar);
-  const sisa = rng.getValues().filter((_, i) => !dibuang[i + 2]);
+  const blok = sh.getRange(2, 1, last - 1, lebar).getValues();
+  // Dipilih ulang dari isi blok yang akan ditulis balik, supaya arsip,
+  // penyaringan, dan penulisan memakai satu sumber yang sama persis.
+  const dibuangBlok = tandaiBarisDibuang(blok.map((r) => String(r[0] || '')), hashDibuang, buangKembar === true);
+  const nomorBlok = Object.keys(dibuangBlok).map(Number).sort((a, b) => a - b);
+  if (!nomorBlok.length) return 0;
+  arsipkanIsi(sh, nomorBlok.map((n) => blok[n - 2]));
+
+  const sisa = blok.filter((_, i) => !dibuangBlok[i + 2]);
   if (sisa.length) sh.getRange(2, 1, sisa.length, lebar).setValues(sisa);
   const ekor = (last - 1) - sisa.length;
   if (ekor > 0) sh.deleteRows(2 + sisa.length, ekor);
+  return nomorBlok.length;
 }
 
 /**
@@ -3674,7 +3736,6 @@ function tulisPembaruan(sh, perbarui) {
  */
 function arsipkan(sh, nomor) {
   try {
-    const ss = sh.getParent();
     const lebar = HEADER.length;
     if (!nomor.length) return;
 
@@ -3686,7 +3747,19 @@ function arsipkan(sh, nomor) {
     const awal = nomor[0];
     const akhir = nomor[nomor.length - 1];
     const jendela = sh.getRange(awal, 1, akhir - awal + 1, lebar).getValues();
-    const isi = nomor.map((n) => jendela[n - awal]);
+    arsipkanIsi(sh, nomor.map((n) => jendela[n - awal]));
+  } catch (e) {
+    // Arsip adalah jaring pengaman, bukan syarat. Kegagalannya tidak boleh
+    // membatalkan penghapusan yang sudah diminta dan sudah dikonfirmasi.
+    console.warn('Gagal mengarsipkan baris:', e);
+  }
+}
+
+/** Tulis isi baris yang akan dibuang ke tab arsip (lihat arsipkan()). */
+function arsipkanIsi(sh, isi) {
+  try {
+    const ss = sh.getParent();
+    const lebar = HEADER.length;
     if (!isi.length) return;
 
     const headerArsip = ['Dihapus Pada'].concat(HEADER);
