@@ -890,6 +890,8 @@ export async function tarikTransaksiDariSheets(sejak) {
     ok: true,
     baris: Array.isArray(jawab.baris) ? jawab.baris : [],
     dihapus: Array.isArray(jawab.dihapus) ? jawab.dihapus : [],
+    // Sejajar dengan `dihapus`; kosong dari Apps Script versi lama.
+    dihapusHash: Array.isArray(jawab.dihapusHash) ? jawab.dihapusHash : [],
     sekarang: jawab.sekarang,
   };
 }
