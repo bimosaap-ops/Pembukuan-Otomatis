@@ -40,7 +40,6 @@ import { hitungBaseHash, hashFinal } from '../domain/dedupe.js';
 import { cocokkanTransaksiEmail } from '../domain/rekonsiliasiEmail.js';
 import { sarankanKategoriEmail } from '../domain/kategoriEmail.js';
 import { rentangTanggalKandidat, tanggalWib } from '../core/dates.js';
-import { normalisasiDeskripsi } from '../core/format.js';
 import { syncAtauAntri, hapusDariSheets } from './sheets-sync.js';
 
 /** Kata kunci penanda rekening RDN pada teks notifikasi email BCA (keputusan
@@ -108,18 +107,15 @@ export async function resolusiAkunEmail(trxEmail) {
 
 /**
  * Tanggal, deskripsi, dan nominal bertanda baris ledger provisional untuk
- * satu transaksi email -- murni. Dipakai bersama oleh pembuat baris
- * (buatProvisionalDariEmail) dan pembersih dobel
- * (rencanakanBersihProvisionalDobel) supaya keduanya pasti menghitung kunci
- * yang sama.
+ * satu transaksi email -- murni, dipakai buatProvisionalDariEmail().
  */
 export function bentukBarisEmail(trxEmail) {
   const magnitudo = Math.abs(Number(trxEmail.nominal) || 0);
   return {
     tanggal: tanggalWib(trxEmail.waktuTransaksi),
     // Tanggal yang dipakai SEBELUM perbaikan zona waktu (potongan ISO UTC).
-    // Hanya untuk mengenali baris provisional lama yang belum dikoreksi
-    // migrasiTanggalProvisionalWib() -- jangan dipakai untuk baris baru.
+    // Hanya untuk mengenali baris provisional lama yang masih bertanggal UTC
+    // (mis. dari Sheet) -- jangan dipakai untuk baris baru.
     tanggalLama: String(trxEmail.waktuTransaksi || '').slice(0, 10),
     deskripsi: trxEmail.merchantMentah || `Transaksi ${trxEmail.bank || ''}`.trim(),
     nominal: trxEmail.arah === 'debit' ? -magnitudo : magnitudo,
@@ -162,189 +158,6 @@ export function pilihProvisionalTanpaPemilik(kandidat, idEmail, emailLokal) {
   const milikSendiri = kandidat.find((t) => idEmailPemilik(t) === idEmail || dirujuk.get(t.id) === idEmail);
   if (milikSendiri) return milikSendiri;
   return kandidat.find((t) => !dirujuk.has(t.id) && !idLokal.has(idEmailPemilik(t))) || null;
-}
-
-/**
- * Rencana pembersihan baris provisional dobel yang SUDAH terlanjur ada --
- * murni, diekspor untuk tes; dijalankan sekali oleh migrasi
- * hapusProvisionalDobelEmail() (data/migrasi.js).
- *
- * Per kelompok baseHash yang berisi lebih dari satu baris provisional,
- * jumlah yang dipertahankan = jumlah transaksi email lokal yang memang
- * menghasilkan kunci itu (bank + tanggal + deskripsi + nominal). Kelompok
- * tanpa satu pun email pasangan DILEWATI -- tanpa pembanding, dua baris
- * kembar tidak bisa dibedakan dari dua transaksi sah, dan menghapus uang
- * yang benar-benar keluar lebih buruk daripada membiarkan dobel.
- *
- * Yang dipertahankan lebih dulu: baris yang dirujuk `provisionalTrxId`
- * email lokal (tidak pernah dihapus), lalu baris yang paling akhir diubah
- * (menjaga koreksi kategori yang mungkin dibuat pengguna di Sheet). Email
- * yang belum memegang baris mana pun ditautkan ke baris yang dipertahankan,
- * supaya rekonsiliasi saat e-statement bulan itu diupload bisa
- * menggantikannya -- tanpa tautan, baris itu akan dobel lagi dengan baris
- * statement.
- *
- * @param {Array} provisional seluruh baris ledger ber-sumber email_provisional
- * @param {Array} emailLokal seluruh record email_transactions lokal
- * @param {Map} akunMap accountId -> akun (untuk bank)
- * @returns {{hapus: Array, tautkan: Array<{email: object, trx: object}>}}
- */
-export function rencanakanBersihProvisionalDobel(provisional, emailLokal, akunMap) {
-  const kunci = (bank, tanggal, deskripsi, nominal) => [
-    bank || '', tanggal, normalisasiDeskripsi(deskripsi), (Math.round(Number(nominal) * 100) / 100).toFixed(2),
-  ].join('|');
-
-  const emailPerKunci = new Map();
-  for (const e of emailLokal) {
-    const b = bentukBarisEmail(e);
-    // Didaftarkan di bawah tanggal WIB DAN tanggal UTC lama: pembersihan ini
-    // berjalan sebelum migrasiTanggalProvisionalWib(), saat baris yang
-    // terlanjur ada masih bertanggal UTC.
-    for (const tgl of new Set([b.tanggal, b.tanggalLama])) {
-      const k = kunci(e.bank, tgl, b.deskripsi, b.nominal);
-      if (!emailPerKunci.has(k)) emailPerKunci.set(k, []);
-      emailPerKunci.get(k).push(e);
-    }
-  }
-
-  const idAda = new Set(provisional.map((t) => t.id));
-  const dirujuk = new Set(emailLokal.map((e) => e.provisionalTrxId).filter((id) => idAda.has(id)));
-
-  const kelompok = new Map();
-  for (const t of provisional) {
-    const bh = baseHashDari(t);
-    if (!bh) continue;
-    if (!kelompok.has(bh)) kelompok.set(bh, []);
-    kelompok.get(bh).push(t);
-  }
-
-  const hapus = [];
-  const tautkan = [];
-  for (const baris of kelompok.values()) {
-    if (baris.length < 2) continue;
-    const contoh = baris[0];
-    const email = emailPerKunci.get(kunci(
-      akunMap.get(contoh.accountId)?.bank, contoh.tanggal, contoh.deskripsi, contoh.nominal,
-    )) || [];
-    if (!email.length) continue;
-
-    const dipegang = baris.filter((t) => dirujuk.has(t.id));
-    const bebas = baris.filter((t) => !dirujuk.has(t.id))
-      .sort((a, b) => String(b.diubahPada || '').localeCompare(String(a.diubahPada || '')));
-    const sisaKuota = Math.max(email.length - dipegang.length, 0);
-    const dipertahankan = bebas.slice(0, sisaKuota);
-    hapus.push(...bebas.slice(sisaKuota));
-
-    const emailTanpaBaris = email.filter((e) => !dirujuk.has(e.provisionalTrxId));
-    dipertahankan.forEach((trx, i) => {
-      if (emailTanpaBaris[i]) tautkan.push({ email: emailTanpaBaris[i], trx });
-    });
-  }
-  return { hapus, tautkan };
-}
-
-/**
- * Rencana penghapusan baris provisional dobel yang HANYA ada di Sheet --
- * murni, diekspor untuk tes; dijalankan sekali oleh
- * hapusProvisionalYatimDiSheet() (data/migrasi.js).
- *
- * Melengkapi rencanakanBersihProvisionalDobel(), yang hanya melihat database
- * lokal. Di data produksi insiden 2026-10-06, perangkat utama memegang 2290
- * transaksi sementara Sheet 2343 -- selisihnya tepat 53 baris dobel, yang
- * tidak pernah tertarik ke perangkat (checkpoint tarik sudah melewatinya).
- * Pembersih lokal tidak melihat satu pun kelompok berisi dua baris.
- *
- * Baris Sheet dianggap yatim bila ber-sumber email_provisional, hash dan
- * id-nya tidak ada di perangkat ini, dan perangkat ini sudah memegang baris
- * provisional dengan awalan hash yang sama. Yang dihapus hanya kelebihannya
- * terhadap jumlah email pasangan; kelompok tanpa email pasangan atau tanpa
- * baris lokal dilewati (bisa jadi transaksi sah yang belum tertarik).
- *
- * Kelompok dipakai lewat AWALAN HASH, bukan field baseHash: hash tidak
- * pernah berubah, sedangkan baseHash lokal dihitung ulang oleh
- * migrasiTanggalProvisionalWib().
- *
- * @param {Array} barisSheet hasil tarikTransaksiDariSheets(null).baris
- * @param {Array} transaksiLokal seluruh transaksi lokal
- * @param {Array} emailLokal seluruh record email_transactions lokal
- * @param {Map} akunMap accountId -> akun (untuk bank)
- * @returns {Array} baris Sheet yang harus dihapus
- */
-export function rencanakanHapusYatimSheet(barisSheet, transaksiLokal, emailLokal, akunMap) {
-  const awalan = (t) => String(t.hash || '').split('#')[0];
-  const hashLokal = new Set(transaksiLokal.map((t) => t.hash).filter(Boolean));
-  const idLokal = new Set(transaksiLokal.map((t) => t.id));
-
-  const lokalPerAwalan = new Map();
-  for (const t of transaksiLokal) {
-    if (t.sumber !== SUMBER.EMAIL_PROVISIONAL || !awalan(t)) continue;
-    if (!lokalPerAwalan.has(awalan(t))) lokalPerAwalan.set(awalan(t), []);
-    lokalPerAwalan.get(awalan(t)).push(t);
-  }
-
-  const yatimPerAwalan = new Map();
-  for (const r of barisSheet) {
-    if (r.sumber !== SUMBER.EMAIL_PROVISIONAL || !awalan(r)) continue;
-    if (hashLokal.has(r.hash) || idLokal.has(r.id)) continue;
-    if (!yatimPerAwalan.has(awalan(r))) yatimPerAwalan.set(awalan(r), []);
-    yatimPerAwalan.get(awalan(r)).push(r);
-  }
-
-  const kunci = (bank, tanggal, deskripsi, nominal) => [
-    bank || '', tanggal, normalisasiDeskripsi(deskripsi), (Math.round(Number(nominal) * 100) / 100).toFixed(2),
-  ].join('|');
-  const jumlahEmail = new Map();
-  for (const e of emailLokal) {
-    const b = bentukBarisEmail(e);
-    for (const tgl of new Set([b.tanggal, b.tanggalLama])) {
-      const k = kunci(e.bank, tgl, b.deskripsi, b.nominal);
-      jumlahEmail.set(k, (jumlahEmail.get(k) || 0) + 1);
-    }
-  }
-
-  const hapus = [];
-  for (const [aw, yatim] of yatimPerAwalan) {
-    const lokal = lokalPerAwalan.get(aw) || [];
-    if (!lokal.length) continue;
-    const contoh = lokal[0];
-    // Tanggal dari baris Sheet (tanggal asal awalan hash), bukan dari baris
-    // lokal yang mungkin sudah dikoreksi ke WIB.
-    const harapan = jumlahEmail.get(kunci(
-      akunMap.get(contoh.accountId)?.bank, yatim[0].tanggal, contoh.deskripsi, contoh.nominal,
-    )) || 0;
-    if (!harapan) continue;
-    const kuota = Math.max(harapan - lokal.length, 0);
-    const urut = [...yatim].sort((a, b) => String(b.diubahPada || '').localeCompare(String(a.diubahPada || '')));
-    hapus.push(...urut.slice(kuota));
-  }
-  return hapus;
-}
-
-/**
- * Rencana koreksi tanggal baris provisional lama yang tercatat dengan tanggal
- * UTC -- murni, diekspor untuk tes; dijalankan sekali oleh
- * migrasiTanggalProvisionalWib() (data/migrasi.js).
- *
- * Hanya baris yang emailnya ada di perangkat ini yang dikoreksi (pemilik
- * dari `emailTrxId`, ordinal `e<id>` pada hash, atau `provisionalTrxId`
- * email), dan hanya bila tanggalnya masih persis tanggal UTC lama -- baris
- * yang tanggalnya sudah diubah pengguna lewat Sheet tidak disentuh.
- * `baseHash` ikut dihitung ulang oleh pemanggil; `hash` sengaja tetap
- * (kunci upsert Sheets), jadi Sheet memperbarui baris yang sama.
- *
- * @returns {Array<{trx: object, tanggal: string}>}
- */
-export function rencanakanKoreksiTanggalProvisional(provisional, emailLokal) {
-  const emailPerId = new Map(emailLokal.map((e) => [e.id, e]));
-  const emailPerTrx = new Map(emailLokal.filter((e) => e.provisionalTrxId).map((e) => [e.provisionalTrxId, e]));
-  const rencana = [];
-  for (const t of provisional) {
-    const email = emailPerTrx.get(t.id) || emailPerId.get(idEmailPemilik(t));
-    if (!email) continue;
-    const { tanggal, tanggalLama } = bentukBarisEmail(email);
-    if (tanggal !== tanggalLama && t.tanggal === tanggalLama) rencana.push({ trx: t, tanggal });
-  }
-  return rencana;
 }
 
 /**
@@ -397,8 +210,8 @@ export async function buatProvisionalDariEmail(trxEmail, daftarKategori, kamusMa
   // dua kali (insiden 2026-10-06). Baris seperti itu diadopsi, bukan
   // diduplikasi. Hash-nya sengaja TIDAK diganti: hash adalah kunci upsert
   // Sheets, mengubahnya berarti hapus + tulis ulang di sana.
-  // baseHash bertanggal UTC ikut dicari: baris dari perangkat yang belum
-  // menjalankan migrasiTanggalProvisionalWib() masih memakainya.
+  // baseHash bertanggal UTC ikut dicari: baris lama yang belum dikoreksi ke
+  // WIB masih memakainya.
   const baseHashLama = tanggalLama === tanggal ? baseHash : await hitungBaseHash({
     accountId: akun.id, tanggal: tanggalLama, deskripsi, nominal: nominalBertanda,
   });

@@ -12,8 +12,7 @@ import {
   rencanakanBersihProvisionalTertaut, rencanakanPerbaikiTautanManual, tautanSah,
   rencanakanHapusProvisionalTakTerjangkau, rencanakanPulihkanProvisionalHilang,
   kunciSettingAkunBca, rencanakanRekonsiliasi, putuskanAksiBackfill,
-  pilihProvisionalTanpaPemilik, rencanakanBersihProvisionalDobel, bentukBarisEmail,
-  rencanakanKoreksiTanggalProvisional, rencanakanHapusYatimSheet,
+  pilihProvisionalTanpaPemilik, bentukBarisEmail,
 } from '../src/services/email-ledger-merge.js';
 import { KUNCI } from '../src/data/repo/settings.js';
 import { STATUS_COCOK_EMAIL, buatTransaksiEmail } from '../src/domain/entities.js';
@@ -200,9 +199,8 @@ test('putuskanAksiBackfill: AMBIGUOUS (dua kandidat skor nyaris sama) -> TETAP "
 });
 
 /* ==========================================================================
-   Insiden 2026-10-06: satu email, dua baris provisional dengan id email beda
+   Adopsi baris provisional lintas id email
    ========================================================================== */
-
 
 function provisional(over = {}) {
   return {
@@ -219,7 +217,6 @@ function provisional(over = {}) {
   };
 }
 
-const akunMap = new Map([['acc_bca', { id: 'acc_bca', bank: 'BCA' }]]);
 const emailKabita = emailTrx({
   id: 'trxe_lokal', bank: 'BCA', waktuTransaksi: '2026-09-28T14:52:33.000Z', nominal: 15000, merchantMentah: 'Warung kabita',
 });
@@ -259,48 +256,6 @@ test('pilihProvisionalTanpaPemilik: dua email kembar mengadopsi dua baris yang b
   assert.equal(pilihProvisionalTanpaPemilik(sesudah, 'trxe_2', [{ ...e1, provisionalTrxId: 'trx_a' }, e2]), b);
 });
 
-test('rencanakanBersihProvisionalDobel: satu email, dua baris -> baris yang tidak dipegang dihapus', () => {
-  const dipegang = provisional({ id: 'trx_lokal', hash: 'bh1#etrxe_lokal', emailTrxId: 'trxe_lokal' });
-  const asing = provisional({ id: 'trx_asing', hash: 'bh1#etrxe_asing', diubahPada: '2026-10-06T02:19:19.566Z' });
-  const { hapus, tautkan } = rencanakanBersihProvisionalDobel(
-    [dipegang, asing], [{ ...emailKabita, provisionalTrxId: 'trx_lokal' }], akunMap,
-  );
-  assert.deepEqual(hapus.map((t) => t.id), ['trx_asing']);
-  assert.equal(tautkan.length, 0);
-});
-
-test('rencanakanBersihProvisionalDobel: tak ada yang dipegang -> sisakan yang terakhir diubah dan tautkan ke email', () => {
-  const lama = provisional({ id: 'trx_lama', hash: 'bh1#etrxe_x' });
-  const baru = provisional({ id: 'trx_baru', hash: 'bh1#etrxe_y', diubahPada: '2026-10-06T02:19:19.566Z' });
-  const { hapus, tautkan } = rencanakanBersihProvisionalDobel([lama, baru], [emailKabita], akunMap);
-  assert.deepEqual(hapus.map((t) => t.id), ['trx_lama']);
-  assert.equal(tautkan.length, 1);
-  assert.equal(tautkan[0].trx.id, 'trx_baru');
-  assert.equal(tautkan[0].email.id, 'trxe_lokal');
-});
-
-test('rencanakanBersihProvisionalDobel: dua email kembar yang sah -> dua baris dipertahankan', () => {
-  const e2 = { ...emailKabita, id: 'trxe_kedua', gmailMessageId: 'msg_2' };
-  const a = provisional({ id: 'trx_a', hash: 'bh1#etrxe_a' });
-  const b = provisional({ id: 'trx_b', hash: 'bh1#etrxe_b' });
-  const { hapus } = rencanakanBersihProvisionalDobel([a, b], [emailKabita, e2], akunMap);
-  assert.equal(hapus.length, 0);
-});
-
-test('rencanakanBersihProvisionalDobel: kelompok tanpa email pasangan tidak disentuh', () => {
-  const a = provisional({ id: 'trx_a', hash: 'bh1#etrxe_a' });
-  const b = provisional({ id: 'trx_b', hash: 'bh1#etrxe_b' });
-  const { hapus } = rencanakanBersihProvisionalDobel([a, b], [], akunMap);
-  assert.equal(hapus.length, 0);
-});
-
-test('rencanakanBersihProvisionalDobel: baseHash kosong (tarik Sheets lama) dipulihkan dari hash', () => {
-  const a = provisional({ id: 'trx_a', baseHash: '', hash: 'bh1#etrxe_a' });
-  const b = provisional({ id: 'trx_b', baseHash: '', hash: 'bh1#etrxe_b', diubahPada: '2026-10-07T00:00:00.000Z' });
-  const { hapus } = rencanakanBersihProvisionalDobel([a, b], [emailKabita], akunMap);
-  assert.deepEqual(hapus.map((t) => t.id), ['trx_a']);
-});
-
 /* ==========================================================================
    Tanggal transaksi email: WIB, bukan potongan ISO UTC
    ========================================================================== */
@@ -322,74 +277,6 @@ test('bentukBarisEmail: transaksi dini hari memakai tanggal WIB', () => {
   const b = bentukBarisEmail(emailDiniHari);
   assert.equal(b.tanggal, '2026-09-20');
   assert.equal(b.tanggalLama, '2026-09-19');
-});
-
-test('rencanakanBersihProvisionalDobel: baris dobel lama bertanggal UTC tetap dikenali', () => {
-  const a = provisional({ id: 'trx_a', tanggal: '2026-09-19', deskripsi: 'DIVA QUINTA MAHMUDA', nominal: -700000, hash: 'bhD#etrxe_a', baseHash: 'bhD' });
-  const b = provisional({ id: 'trx_b', tanggal: '2026-09-19', deskripsi: 'DIVA QUINTA MAHMUDA', nominal: -700000, hash: 'bhD#etrxe_b', baseHash: 'bhD', diubahPada: '2026-10-07T00:00:00.000Z' });
-  const { hapus } = rencanakanBersihProvisionalDobel([a, b], [emailDiniHari], akunMap);
-  assert.deepEqual(hapus.map((t) => t.id), ['trx_a']);
-});
-
-test('rencanakanKoreksiTanggalProvisional: baris bertanggal UTC milik email lokal dikoreksi ke WIB', () => {
-  const baris = provisional({ id: 'trx_d', tanggal: '2026-09-19', hash: 'bhD#etrxe_diva' });
-  const rencana = rencanakanKoreksiTanggalProvisional([baris], [emailDiniHari]);
-  assert.equal(rencana.length, 1);
-  assert.equal(rencana[0].trx.id, 'trx_d');
-  assert.equal(rencana[0].tanggal, '2026-09-20');
-});
-
-test('rencanakanKoreksiTanggalProvisional: baris yang tanggalnya sudah benar atau diubah pengguna tidak disentuh', () => {
-  const sudahBenar = provisional({ id: 'trx_1', tanggal: '2026-09-20', hash: 'x#etrxe_diva' });
-  const diubahPengguna = provisional({ id: 'trx_2', tanggal: '2026-09-22', emailTrxId: 'trxe_diva' });
-  const siang = provisional({ id: 'trx_3', tanggal: '2026-09-28', hash: 'y#etrxe_lokal' });
-  const tanpaEmail = provisional({ id: 'trx_4', tanggal: '2026-09-19', hash: 'z#etrxe_asing' });
-  assert.equal(rencanakanKoreksiTanggalProvisional([sudahBenar, diubahPengguna, siang, tanpaEmail], [emailDiniHari, emailKabita]).length, 0);
-});
-
-/* ==========================================================================
-   Kembaran yang hanya ada di Sheet (perangkat 2290 baris, Sheet 2343)
-   ========================================================================== */
-
-function barisSheet(over = {}) {
-  return {
-    id: 'trx_sheet', hash: 'bh1#etrxe_asing', sumber: 'email_provisional',
-    tanggal: '2026-09-28', deskripsi: 'Warung kabita', nominal: -15000, diubahPada: '2026-10-06T02:17:34.558Z',
-    ...over,
-  };
-}
-const lokalKabita = provisional({ id: 'trx_lokal', hash: 'bh1#etrxe_lokal', sumber: 'email_provisional' });
-
-test('rencanakanHapusYatimSheet: kembaran yang hanya ada di Sheet dihapus, baris lokal tidak', () => {
-  const sheet = [barisSheet({ id: 'trx_lokal', hash: 'bh1#etrxe_lokal' }), barisSheet()];
-  const hapus = rencanakanHapusYatimSheet(sheet, [lokalKabita], [emailKabita], akunMap);
-  assert.deepEqual(hapus.map((r) => r.hash), ['bh1#etrxe_asing']);
-});
-
-test('rencanakanHapusYatimSheet: dua email kembar sah, satu baris belum tertarik -> tidak dihapus', () => {
-  const e2 = { ...emailKabita, id: 'trxe_kedua' };
-  const hapus = rencanakanHapusYatimSheet([barisSheet()], [lokalKabita], [emailKabita, e2], akunMap);
-  assert.equal(hapus.length, 0);
-});
-
-test('rencanakanHapusYatimSheet: tanpa baris lokal atau tanpa email pasangan -> tidak disentuh', () => {
-  assert.equal(rencanakanHapusYatimSheet([barisSheet()], [], [emailKabita], akunMap).length, 0);
-  assert.equal(rencanakanHapusYatimSheet([barisSheet()], [lokalKabita], [], akunMap).length, 0);
-});
-
-test('rencanakanHapusYatimSheet: baris non-provisional di Sheet tidak pernah disentuh', () => {
-  const pdf = barisSheet({ sumber: 'pdf', hash: 'bh1#1' });
-  assert.equal(rencanakanHapusYatimSheet([pdf], [lokalKabita], [emailKabita], akunMap).length, 0);
-});
-
-test('rencanakanHapusYatimSheet: tetap cocok setelah tanggal lokal dikoreksi ke WIB', () => {
-  const lokalWib = provisional({
-    id: 'trx_l', hash: 'bhD#etrxe_diva', baseHash: 'bhBaru', sumber: 'email_provisional',
-    tanggal: '2026-09-20', deskripsi: 'DIVA QUINTA MAHMUDA', nominal: -700000,
-  });
-  const yatim = barisSheet({ hash: 'bhD#etrxe_x', tanggal: '2026-09-19', deskripsi: 'DIVA QUINTA MAHMUDA', nominal: -700000 });
-  const hapus = rencanakanHapusYatimSheet([yatim], [lokalWib], [emailDiniHari], akunMap);
-  assert.equal(hapus.length, 1);
 });
 
 /* --------------------------------------------------------------------------

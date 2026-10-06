@@ -17,8 +17,7 @@ import { rupiah } from '../core/format.js';
 import { pantauKoneksiSheets } from '../services/sheets-sync.js';
 import { jalankanAutoPull } from '../services/auto-pull.js';
 import {
-  migrasiKataKunciBawaan, hapusProvisionalDobelEmail, migrasiTanggalProvisionalWib,
-  hapusProvisionalYatimDiSheet, bersihkanProvisionalTertaut, perbaikiTautanManualSalah,
+  migrasiKataKunciBawaan, bersihkanProvisionalTertaut, perbaikiTautanManualSalah,
   hapusProvisionalTakTerjangkau, pulihkanProvisionalHilang,
 } from '../data/migrasi.js';
 
@@ -102,17 +101,6 @@ async function mulai() {
         + '"Kelompokkan ulang semua transaksi" agar transaksi lama ikut terkoreksi.');
     }
 
-    // Pembersihan insiden 2026-10-06: transaksi email yang tercatat dua kali
-    // dengan id email berbeda (lihat migrasi.js hapusProvisionalDobelEmail).
-    const migrasiHapusDobel = await hapusProvisionalDobelEmail().catch((e) => {
-      console.error('Migrasi hapus provisional dobel gagal:', e);
-      return null;
-    });
-    if (migrasiHapusDobel?.dijalankan && migrasiHapusDobel.jumlah) {
-      toastSukses(`${migrasiHapusDobel.jumlah} baris transaksi email dobel dibersihkan `
-        + `(${rupiah(migrasiHapusDobel.nominal)}).`);
-    }
-
     // Tautan manual ke baris yang tidak bisa mewakilinya (arah/bank beda,
     // atau baris provisional) dikembalikan jadi "belum cocok" lebih dulu,
     // supaya pembersihan di bawah tidak menghapus provisional karenanya.
@@ -156,35 +144,6 @@ async function mulai() {
     if (takTerjangkau?.jumlah) {
       toastSukses(`${takTerjangkau.jumlah} baris provisional yang sudah ada di e-statement dihapus `
         + `(${rupiah(takTerjangkau.nominal)}).`);
-    }
-
-    // Kembaran yang hanya ada di Sheet -- tidak terlihat oleh pembersih lokal
-    // di atas karena tidak pernah tertarik ke perangkat ini. SENGAJA tidak
-    // di-await: migrasi ini menarik seluruh tab Transaksi lewat webhook (bisa
-    // puluhan detik, dan lebih lama lagi saat Sheets lambat atau tak
-    // terjangkau -- benderanya baru ditulis kalau berhasil, jadi ia dicoba
-    // lagi tiap aplikasi dibuka). Menunggunya di sini menahan mulaiRouter()
-    // di bawah dan layar tetap kosong selama itu. Urutannya terhadap
-    // migrasiTanggalProvisionalWib() tidak penting: pencocokannya lewat
-    // awalan hash, yang tidak diubah koreksi tanggal.
-    hapusProvisionalYatimDiSheet()
-      .then((hasil) => {
-        if (hasil?.dijalankan && hasil.jumlah) {
-          toastSukses(`${hasil.jumlah} baris transaksi email dobel di Google Sheet dihapus `
-            + `(${rupiah(hasil.nominal)}).`);
-        }
-      })
-      .catch((e) => console.error('Migrasi hapus provisional yatim di Sheet gagal:', e));
-
-    // Sesudah pembersihan dobel di atas (yang masih mengelompokkan per
-    // baseHash bertanggal UTC): transaksi email dini hari WIB yang tercatat
-    // sehari lebih awal dikoreksi tanggalnya.
-    const migrasiTanggal = await migrasiTanggalProvisionalWib().catch((e) => {
-      console.error('Migrasi tanggal provisional WIB gagal:', e);
-      return null;
-    });
-    if (migrasiTanggal?.dijalankan && migrasiTanggal.jumlah) {
-      toastSukses(`Tanggal ${migrasiTanggal.jumlah} transaksi email dini hari dikoreksi ke WIB.`);
     }
 
     // Antrean retry Sheets (kalau ada, dari sesi sebelumnya yang gagal
