@@ -20,6 +20,7 @@ import {
   jalankanMigrasi, migrasiKataKunciBawaan, migrasiKategoriInvestasi, migrasiKategoriFinalEmail,
   hapusProvisionalYatimDuplikat, hapusProvisionalDobelEmail, migrasiTanggalProvisionalWib,
   hapusProvisionalYatimDiSheet, bersihkanProvisionalTertaut, perbaikiTautanManualSalah,
+  hapusProvisionalTakTerjangkau,
 } from '../data/migrasi.js';
 
 /**
@@ -177,6 +178,17 @@ async function mulai() {
     if (tertaut?.jumlah) {
       toastSukses(`${tertaut.jumlah} baris provisional yang sudah ditautkan ke e-statement dihapus `
         + `(${rupiah(tertaut.nominal)}).`);
+    }
+
+    // Provisional tanpa pemilik yang tampil di tinjauan, padahal kembarannya
+    // di e-statement sudah ada -- tidak ada tombol yang bisa menjangkaunya.
+    const takTerjangkau = await hapusProvisionalTakTerjangkau().catch((e) => {
+      console.error('Pembersihan provisional tak terjangkau gagal:', e);
+      return null;
+    });
+    if (takTerjangkau?.jumlah) {
+      toastSukses(`${takTerjangkau.jumlah} baris provisional yang sudah ada di e-statement dihapus `
+        + `(${rupiah(takTerjangkau.nominal)}).`);
     }
 
     // Kembaran yang hanya ada di Sheet -- tidak terlihat oleh pembersih lokal

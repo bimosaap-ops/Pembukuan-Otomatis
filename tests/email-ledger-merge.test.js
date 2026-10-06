@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 
 import {
   rencanakanBersihProvisionalTertaut, rencanakanPerbaikiTautanManual, tautanSah,
+  rencanakanHapusProvisionalTakTerjangkau,
   kunciSettingAkunBca, rencanakanRekonsiliasi, putuskanAksiBackfill,
   pilihProvisionalTanpaPemilik, rencanakanBersihProvisionalDobel, bentukBarisEmail,
   rencanakanKoreksiTanggalProvisional, rencanakanHapusYatimSheet,
@@ -469,4 +470,59 @@ test('rencanakanPerbaikiTautanManual: hanya tautan manual yang tidak sah', () =>
   const otomatis = m('oto', 'bcaMasuk', { alasanCocok: 'skor_tinggi' });
   const hasil = rencanakanPerbaikiTautanManual([permataKeBca, keProvisional, hilang, sah, otomatis], peta, akun);
   assert.deepEqual(hasil.map((e) => e.id), ['permata', 'self', 'hilang']);
+});
+
+/* --------------------------------------------------------------------------
+   rencanakanHapusProvisionalTakTerjangkau
+   -------------------------------------------------------------------------- */
+
+const trxUji = (id, sumber, tanggal, nominal, extra = {}) => ({ id, sumber, tanggal, nominal, accountId: 'bca', ...extra });
+
+test('provisional tanpa perujuk dengan kembaran e-statement (H+0/H+1) dihapus', () => {
+  const transaksi = [
+    trxUji('prov', 'email_provisional', '2026-09-20', -700000, { emailTrxId: 'trxe_hilang' }),
+    trxUji('pdf', 'pdf', '2026-09-20', -700000),
+  ];
+  const hasil = rencanakanHapusProvisionalTakTerjangkau(transaksi, []);
+  assert.deepEqual(hasil.map((r) => [r.provisional.id, r.statement.id]), [['prov', 'pdf']]);
+});
+
+test('provisional milik email yang masih tampil di tinjauan TIDAK disentuh', () => {
+  const transaksi = [
+    trxUji('prov', 'email_provisional', '2026-09-30', -50000),
+    trxUji('pdf', 'pdf', '2026-09-30', -50000),
+  ];
+  const email = { id: 'e', provisionalTrxId: 'prov', statusCocok: STATUS_COCOK_EMAIL.MISSING, statusResolusi: 'terbuka' };
+  assert.deepEqual(rencanakanHapusProvisionalTakTerjangkau(transaksi, [email]), []);
+});
+
+test('tanpa kembaran, beda rekening, atau tanggal terlalu jauh -> tidak dihapus', () => {
+  const transaksi = [
+    trxUji('p1', 'email_provisional', '2026-09-20', -700000),
+    trxUji('x1', 'pdf', '2026-09-23', -700000),
+    trxUji('x2', 'pdf', '2026-09-20', -700000, { accountId: 'lain' }),
+    trxUji('x3', 'pdf', '2026-09-20', -70000),
+  ];
+  assert.deepEqual(rencanakanHapusProvisionalTakTerjangkau(transaksi, []), []);
+});
+
+test('satu baris e-statement hanya untuk satu provisional', () => {
+  const transaksi = [
+    trxUji('p1', 'email_provisional', '2026-09-20', -50000),
+    trxUji('p2', 'email_provisional', '2026-09-20', -50000),
+    trxUji('s1', 'pdf', '2026-09-20', -50000),
+  ];
+  const hasil = rencanakanHapusProvisionalTakTerjangkau(transaksi, []);
+  assert.equal(hasil.length, 1);
+});
+
+test('provisional milik email MATCHED (tidak tampil) dengan kembaran -> dihapus, email ikut dikembalikan', () => {
+  const transaksi = [
+    trxUji('prov', 'email_provisional', '2026-09-20', -700000),
+    trxUji('pdf', 'pdf', '2026-09-21', -700000),
+  ];
+  const email = { id: 'e', provisionalTrxId: 'prov', statusCocok: STATUS_COCOK_EMAIL.MATCHED, statusResolusi: 'terbuka' };
+  const hasil = rencanakanHapusProvisionalTakTerjangkau(transaksi, [email]);
+  assert.equal(hasil.length, 1);
+  assert.equal(hasil[0].email.id, 'e');
 });
