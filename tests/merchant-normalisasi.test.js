@@ -69,7 +69,7 @@ test('normalisasiMerchant: boilerplate "TRANSAKSI DEBIT TGL... 00000.00<merchant
   assert.equal(normalisasiMerchant('TRANSAKSI DEBIT TGL: 16/06 QR 014 00000.00SUSHIRO K'), 'SUSHIRO K');
 
   // Efek yang dicari: merchant_key-nya jadi cukup dekat dengan versi email
-  // supaya kemiripan merchant (rekonsiliasiEmail.js/tinjauanOtomatis.js)
+  // supaya kemiripan merchant (rekonsiliasiEmail.js)
   // bisa terdeteksi -- sebelum perbaikan ini, noise TGL/kode QR/sisa angka
   // nominal membuat keduanya tidak pernah beririsan sama sekali.
   const dariStatement = normalisasiMerchant('TRANSAKSI DEBIT TGL: 14/06 QRC014 00000.00IDM INDOMA');
