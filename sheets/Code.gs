@@ -361,6 +361,42 @@ function getSheet() {
   return sh;
 }
 
+/** Kriteria tiap kolom sebuah filter, siap dipasang ulang ke filter baru. */
+function bacaKriteriaFilter(filter, kolomAwal, kolomAkhir) {
+  const kriteria = [];
+  for (let k = kolomAwal; k <= kolomAkhir; k += 1) {
+    const c = filter.getColumnFilterCriteria(k);
+    if (c) kriteria.push({ k, c: c.copy().build() });
+  }
+  return kriteria;
+}
+
+/**
+ * Jalankan `fn` dengan filter tab dicabut sementara, lalu pasang lagi dengan
+ * kriteria yang sama (juga bila `fn` melempar).
+ *
+ * Baris yang sedang disembunyikan filter biasa tidak ikut terbuang oleh
+ * deleteRow/deleteRows, padahal isinya sudah tersalin ke _Arsip: Sheet tetap
+ * memuat baris yang menurut aplikasi sudah dihapus.
+ */
+function tanpaFilter(sh, fn) {
+  const filter = sh.getFilter();
+  if (!filter) return fn();
+  const rng = filter.getRange();
+  const barisAwal = rng.getRow();
+  const kolomAwal = rng.getColumn();
+  const kolomAkhir = rng.getLastColumn();
+  const kriteria = bacaKriteriaFilter(filter, kolomAwal, kolomAkhir);
+  filter.remove();
+  try {
+    return fn();
+  } finally {
+    const tinggi = Math.max(sh.getMaxRows() - barisAwal + 1, 1);
+    const baru = sh.getRange(barisAwal, kolomAwal, tinggi, kolomAkhir - kolomAwal + 1).createFilter();
+    kriteria.forEach(({ k, c }) => baru.setColumnFilterCriteria(k, c));
+  }
+}
+
 /**
  * Pastikan filter tab data mencakup kolom A (Hash).
  *
@@ -380,11 +416,7 @@ function pastikanFilterMencakupHash(sh) {
 
   const kolomAwal = rng.getColumn();
   const kolomAkhir = rng.getLastColumn();
-  const kriteria = [];
-  for (let k = kolomAwal; k <= kolomAkhir; k += 1) {
-    const c = filter.getColumnFilterCriteria(k);
-    if (c) kriteria.push({ k, c: c.copy().build() });
-  }
+  const kriteria = bacaKriteriaFilter(filter, kolomAwal, kolomAkhir);
   filter.remove();
   const baru = sh.getRange(1, 1, sh.getMaxRows(), Math.max(kolomAkhir, sh.getLastColumn(), HEADER.length))
     .createFilter();
@@ -1907,7 +1939,7 @@ function tanganiEntitas(data, header, kolom, namaTab) {
     // Statement tidak punya tombstone: tidak pernah ditarik balik ke perangkat,
     // dan baris yang tertinggal membuat Kontrol Saldo membandingkan dengan
     // statement yang sudah dibatalkan. Dihapus dari bawah ke atas.
-    nomorTombstone.sort((a, b) => b - a).forEach((n) => sh.deleteRow(n));
+    tanpaFilter(sh, () => nomorTombstone.sort((a, b) => b - a).forEach((n) => sh.deleteRow(n)));
   }
 
   return {
@@ -3118,6 +3150,21 @@ function tandaiBarisDibuang(hashKolom, hashDibuang, buangKembar) {
  * dalam satu operasi.
  */
 function hapusBaris(sh, hashDibuang, buangKembar) {
+  const jumlah = tanpaFilter(sh, () => hapusBarisTanpaFilter(sh, hashDibuang, buangKembar));
+  // Verifikasi: baris yang tertinggal berarti Sheet berbeda dari aplikasi.
+  // Melempar membuat doPost membalas gagal, sehingga aplikasi menyimpan
+  // permintaan hapus ini di antrean dan mencobanya lagi, alih-alih
+  // menganggapnya berhasil.
+  const last = sh.getLastRow();
+  if (last >= 2) {
+    const tersisa = sh.getRange(2, 1, last - 1, 1).getValues()
+      .filter((r) => hashDibuang[String(r[0] || '')]).length;
+    if (tersisa) throw new Error(`${tersisa} baris tidak terhapus dari tab data; akan dicoba lagi.`);
+  }
+  return jumlah;
+}
+
+function hapusBarisTanpaFilter(sh, hashDibuang, buangKembar) {
   const last = sh.getLastRow();
   if (last < 2) return 0;
   const hashKolom = sh.getRange(2, 1, last - 1, 1).getValues().map((r) => String(r[0] || ''));
