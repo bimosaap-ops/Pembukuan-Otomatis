@@ -714,10 +714,18 @@ export async function backfillProvisionalEmailLama() {
   // seperti ini berbahaya (race antar banyak POST request nyaris bersamaan).
   const baruDibuat = [];
 
+  const akunMap = await akunRepo.peta();
   for (const trxEmail of kandidatEmail) {
     const rentang = rentangTanggalKandidat(trxEmail.waktuTransaksi);
     const kandidatMentah = rentang ? await trxRepo.rentangTanggal(rentang.dari, rentang.sampai) : [];
-    const kandidatStatement = kandidatMentah.filter((k) => k.sumber !== SUMBER.EMAIL_PROVISIONAL);
+    // Bank rekening harus sama: transaksi email Permata tidak mungkin
+    // diwakili baris e-statement BCA (lihat tautanSah).
+    const bankEmail = String(trxEmail.bank || '').trim().toLowerCase();
+    const kandidatStatement = kandidatMentah.filter((k) => {
+      if (k.sumber === SUMBER.EMAIL_PROVISIONAL) return false;
+      const bankAkun = String(akunMap.get(k.accountId)?.bank || '').trim().toLowerCase();
+      return !(bankEmail && bankAkun && bankEmail !== bankAkun);
+    });
     const { aksi, cocok } = putuskanAksiBackfill(trxEmail, kandidatStatement);
 
     if (aksi === 'tautkan') {
@@ -811,6 +819,10 @@ export async function hapusProvisionalManual(trxEmail) {
  * terhitung dua kali di saldo.
  */
 export async function tautkanManual(trxEmail, trxStatement) {
+  const akun = await akunRepo.satu(trxStatement.accountId);
+  if (!tautanSah(trxEmail, trxStatement, akun)) {
+    throw new Error('Baris ini tidak bisa mewakili transaksi email tersebut (arah atau rekeningnya berbeda).');
+  }
   let email = trxEmail;
   if (trxEmail.provisionalTrxId && trxEmail.provisionalTrxId !== trxStatement.id) {
     await hapusProvisionalManual(trxEmail);
@@ -834,14 +846,48 @@ export async function tautkanManual(trxEmail, trxStatement) {
  * @param {Map<string, object>} transaksiPerId transaksi ledger per id
  * @returns {Array} transaksi email yang provisional-nya harus dihapus
  */
-export function rencanakanBersihProvisionalTertaut(emailLokal, transaksiPerId) {
+export function rencanakanBersihProvisionalTertaut(emailLokal, transaksiPerId, akunMap = new Map()) {
   return (emailLokal || []).filter((e) => {
     if (e.statusCocok !== STATUS_COCOK_EMAIL.MATCHED) return false;
     if (!e.provisionalTrxId || !e.transaksiCocokId || e.provisionalTrxId === e.transaksiCocokId) return false;
     const statement = transaksiPerId.get(e.transaksiCocokId);
     const provisional = transaksiPerId.get(e.provisionalTrxId);
     return Boolean(statement && provisional
-      && statement.sumber !== SUMBER.EMAIL_PROVISIONAL
-      && provisional.sumber === SUMBER.EMAIL_PROVISIONAL);
+      && provisional.sumber === SUMBER.EMAIL_PROVISIONAL
+      && tautanSah(e, statement, akunMap.get(statement.accountId)));
+  });
+}
+
+/**
+ * Bolehkah baris ledger ini dipakai mewakili transaksi email? Harus baris
+ * e-statement (bukan provisional), arahnya sama (email debit = nominal
+ * negatif), dan -- bila keduanya diketahui -- bank rekeningnya sama.
+ *
+ * Tanpa pemeriksaan ini "Tautkan manual" bisa memasangkan transfer KELUAR
+ * dari Permata dengan baris MASUK-nya di BCA (sisi penerima transfer yang
+ * sama), lalu menghapus satu-satunya catatan pengeluaran di Permata.
+ */
+export function tautanSah(trxEmail, trxStatement, akunStatement) {
+  if (!trxStatement || trxStatement.sumber === SUMBER.EMAIL_PROVISIONAL) return false;
+  const nominal = Number(trxStatement.nominal) || 0;
+  const debit = trxEmail.arah === 'debit';
+  if (debit ? nominal >= 0 : nominal <= 0) return false;
+  const bankEmail = String(trxEmail.bank || '').trim().toLowerCase();
+  const bankAkun = String(akunStatement?.bank || '').trim().toLowerCase();
+  return !(bankEmail && bankAkun && bankEmail !== bankAkun);
+}
+
+/**
+ * Tautan manual yang tidak sah (lihat tautanSah) -- ke baris provisional,
+ * ke baris yang sudah tidak ada, ke arah berlawanan, atau ke bank lain.
+ * Murni, diekspor untuk tes; dijalankan oleh perbaikiTautanManualSalah().
+ * Hanya tautan manual yang disentuh: tautan otomatis sudah melewati
+ * cocokkanTransaksiEmail().
+ */
+export function rencanakanPerbaikiTautanManual(emailLokal, transaksiPerId, akunMap = new Map()) {
+  return (emailLokal || []).filter((e) => {
+    if (e.statusCocok !== STATUS_COCOK_EMAIL.MATCHED || e.alasanCocok !== 'manual_link') return false;
+    const statement = transaksiPerId.get(e.transaksiCocokId);
+    return !tautanSah(e, statement, statement ? akunMap.get(statement.accountId) : null);
   });
 }

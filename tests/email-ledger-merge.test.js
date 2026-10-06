@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  rencanakanBersihProvisionalTertaut,
+  rencanakanBersihProvisionalTertaut, rencanakanPerbaikiTautanManual, tautanSah,
   kunciSettingAkunBca, rencanakanRekonsiliasi, putuskanAksiBackfill,
   pilihProvisionalTanpaPemilik, rencanakanBersihProvisionalDobel, bentukBarisEmail,
   rencanakanKoreksiTanggalProvisional, rencanakanHapusYatimSheet,
@@ -397,10 +397,12 @@ test('rencanakanHapusYatimSheet: tetap cocok setelah tanggal lokal dikoreksi ke 
 
 test('rencanakanBersihProvisionalTertaut: MATCHED ke baris PDF tapi provisional masih ada -> dibersihkan', () => {
   const peta = new Map([
-    ['pdf1', { id: 'pdf1', sumber: 'pdf' }],
-    ['prov1', { id: 'prov1', sumber: 'email_provisional' }],
+    ['pdf1', { id: 'pdf1', sumber: 'pdf', nominal: -169100, accountId: 'bca' }],
+    ['prov1', { id: 'prov1', sumber: 'email_provisional', nominal: -169100, accountId: 'bca' }],
   ]);
-  const email = { id: 'e1', statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: 'pdf1', provisionalTrxId: 'prov1' };
+  const email = {
+    id: 'e1', bank: 'BCA', arah: 'debit', statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: 'pdf1', provisionalTrxId: 'prov1',
+  };
   assert.deepEqual(rencanakanBersihProvisionalTertaut([email], peta), [email]);
 });
 
@@ -425,4 +427,46 @@ test('rencanakanBersihProvisionalTertaut: yang tidak boleh disentuh', () => {
     { id: 'f', statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: 'pdf1', provisionalTrxId: '' },
   ];
   assert.deepEqual(rencanakanBersihProvisionalTertaut(kasus, peta), []);
+});
+
+test('rencanakanBersihProvisionalTertaut: tautan ke rekening lain TIDAK menghapus provisional', () => {
+  const akun = new Map([['bca', { bank: 'BCA' }], ['permata', { bank: 'Permata' }]]);
+  const peta = new Map([
+    ['bcaMasuk', { id: 'bcaMasuk', sumber: 'pdf', nominal: 12000000, accountId: 'bca' }],
+    ['prov1', { id: 'prov1', sumber: 'email_provisional', nominal: -12000000, accountId: 'permata' }],
+  ]);
+  const email = {
+    id: 'e1', bank: 'Permata', arah: 'debit', statusCocok: STATUS_COCOK_EMAIL.MATCHED,
+    transaksiCocokId: 'bcaMasuk', provisionalTrxId: 'prov1', alasanCocok: 'manual_link',
+  };
+  assert.deepEqual(rencanakanBersihProvisionalTertaut([email], peta, akun), []);
+});
+
+test('tautanSah: arah, bank, dan sumber harus sesuai', () => {
+  const akun = { bank: 'BCA' };
+  const debitBca = { arah: 'debit', bank: 'BCA' };
+  assert.equal(tautanSah(debitBca, { sumber: 'pdf', nominal: -50000 }, akun), true);
+  assert.equal(tautanSah(debitBca, { sumber: 'pdf', nominal: 50000 }, akun), false, 'arah berlawanan');
+  assert.equal(tautanSah(debitBca, { sumber: 'email_provisional', nominal: -50000 }, akun), false, 'baris provisional');
+  assert.equal(tautanSah({ arah: 'debit', bank: 'Permata' }, { sumber: 'pdf', nominal: -50000 }, akun), false, 'bank lain');
+  assert.equal(tautanSah(debitBca, null, akun), false, 'baris tidak ada');
+});
+
+test('rencanakanPerbaikiTautanManual: hanya tautan manual yang tidak sah', () => {
+  const akun = new Map([['bca', { bank: 'BCA' }]]);
+  const peta = new Map([
+    ['bcaMasuk', { id: 'bcaMasuk', sumber: 'pdf', nominal: 12000000, accountId: 'bca' }],
+    ['bcaKeluar', { id: 'bcaKeluar', sumber: 'pdf', nominal: -169100, accountId: 'bca' }],
+    ['prov', { id: 'prov', sumber: 'email_provisional', nominal: -50000, accountId: 'bca' }],
+  ]);
+  const m = (id, cocok, extra = {}) => ({
+    id, bank: 'BCA', arah: 'debit', statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: cocok, alasanCocok: 'manual_link', ...extra,
+  });
+  const permataKeBca = m('permata', 'bcaMasuk', { bank: 'Permata' });
+  const keProvisional = m('self', 'prov', { provisionalTrxId: 'prov' });
+  const hilang = m('hilang', 'tidakAda');
+  const sah = m('sah', 'bcaKeluar');
+  const otomatis = m('oto', 'bcaMasuk', { alasanCocok: 'skor_tinggi' });
+  const hasil = rencanakanPerbaikiTautanManual([permataKeBca, keProvisional, hilang, sah, otomatis], peta, akun);
+  assert.deepEqual(hasil.map((e) => e.id), ['permata', 'self', 'hilang']);
 });

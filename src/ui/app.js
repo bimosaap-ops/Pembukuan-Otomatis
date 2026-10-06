@@ -19,7 +19,7 @@ import { jalankanAutoPull } from '../services/auto-pull.js';
 import {
   jalankanMigrasi, migrasiKataKunciBawaan, migrasiKategoriInvestasi, migrasiKategoriFinalEmail,
   hapusProvisionalYatimDuplikat, hapusProvisionalDobelEmail, migrasiTanggalProvisionalWib,
-  hapusProvisionalYatimDiSheet, bersihkanProvisionalTertaut,
+  hapusProvisionalYatimDiSheet, bersihkanProvisionalTertaut, perbaikiTautanManualSalah,
 } from '../data/migrasi.js';
 
 /**
@@ -154,6 +154,18 @@ async function mulai() {
     if (migrasiHapusDobel?.dijalankan && migrasiHapusDobel.jumlah) {
       toastSukses(`${migrasiHapusDobel.jumlah} baris transaksi email dobel dibersihkan `
         + `(${rupiah(migrasiHapusDobel.nominal)}).`);
+    }
+
+    // Tautan manual ke baris yang tidak bisa mewakilinya (arah/bank beda,
+    // atau baris provisional) dikembalikan jadi "belum cocok" lebih dulu,
+    // supaya pembersihan di bawah tidak menghapus provisional karenanya.
+    const tautanSalah = await perbaikiTautanManualSalah().catch((e) => {
+      console.error('Perbaikan tautan manual gagal:', e);
+      return null;
+    });
+    if (tautanSalah?.jumlah) {
+      toastSukses(`${tautanSalah.jumlah} tautan manual yang keliru dikembalikan ke daftar tinjauan`
+        + (tautanSalah.dibuatUlang ? ` (${tautanSalah.dibuatUlang} baris provisional dibuat ulang).` : '.'));
     }
 
     // Transaksi email yang sudah ditautkan manual ke baris e-statement tapi

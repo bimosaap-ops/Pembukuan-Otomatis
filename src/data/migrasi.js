@@ -24,8 +24,9 @@ import {
 import {
   rencanakanBersihProvisionalDobel, rencanakanKoreksiTanggalProvisional, rencanakanHapusYatimSheet,
   rencanakanBersihProvisionalTertaut, hapusProvisionalManual,
+  rencanakanPerbaikiTautanManual, backfillProvisionalEmailLama,
 } from '../services/email-ledger-merge.js';
-import { SUMBER } from '../domain/entities.js';
+import { SUMBER, STATUS_COCOK_EMAIL } from '../domain/entities.js';
 
 /** Bendera di store settings; nilainya versi migrasi yang sudah dijalankan. */
 export const KUNCI_MIGRASI = 'migrasiHashRekening';
@@ -500,13 +501,40 @@ export async function hapusProvisionalYatimDiSheet() {
  * tidak pernah terbentuk oleh alur yang benar, jadi aman diperiksa tiap buka.
  */
 export async function bersihkanProvisionalTertaut() {
-  const [emailLokal, transaksi] = await Promise.all([emailTrxRepo.semua(), trxRepo.semua()]);
+  const [emailLokal, transaksi, akunMap] = await Promise.all([emailTrxRepo.semua(), trxRepo.semua(), akunRepo.peta()]);
   const perId = new Map(transaksi.map((t) => [t.id, t]));
-  const sasaran = rencanakanBersihProvisionalTertaut(emailLokal, perId);
+  const sasaran = rencanakanBersihProvisionalTertaut(emailLokal, perId, akunMap);
   let nominal = 0;
   for (const email of sasaran) {
     const dihapus = await hapusProvisionalManual(email);
     if (dihapus) nominal += Math.abs(Number(dihapus.nominal) || 0);
   }
   return { jumlah: sasaran.length, nominal };
+}
+
+/**
+ * Kembalikan tautan manual yang tidak sah (ke baris provisional, ke arah
+ * berlawanan, ke bank lain, atau ke baris yang sudah hilang) menjadi
+ * MISSING, lalu jalankan backfill supaya transaksi yang provisional-nya
+ * sudah terhapus mendapat baris provisional lagi. Kasus nyata 2026-10-06:
+ * tiga transfer keluar Permata ditautkan ke baris masuk di BCA, provisional
+ * Permata-nya terhapus, dan pengeluaran Rp 24.670.000 hilang dari Permata.
+ */
+export async function perbaikiTautanManualSalah() {
+  const [emailLokal, transaksi, akunMap] = await Promise.all([emailTrxRepo.semua(), trxRepo.semua(), akunRepo.peta()]);
+  const perId = new Map(transaksi.map((t) => [t.id, t]));
+  const sasaran = rencanakanPerbaikiTautanManual(emailLokal, perId, akunMap);
+  for (const e of sasaran) {
+    const provisionalAda = e.provisionalTrxId && perId.get(e.provisionalTrxId)?.sumber === SUMBER.EMAIL_PROVISIONAL;
+    await emailTrxRepo.simpanSatu({
+      ...e,
+      statusCocok: STATUS_COCOK_EMAIL.MISSING,
+      transaksiCocokId: '',
+      skorCocok: null,
+      alasanCocok: '',
+      provisionalTrxId: provisionalAda ? e.provisionalTrxId : '',
+    });
+  }
+  const backfill = sasaran.length ? await backfillProvisionalEmailLama() : { dibuat: 0 };
+  return { jumlah: sasaran.length, dibuatUlang: backfill.dibuat || 0 };
 }
