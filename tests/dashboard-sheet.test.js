@@ -620,7 +620,7 @@ function barisPenuh(i) {
  */
 function jalankanDoPost({
   barisAda = 0, payload, kunciMacet = false, gridTambahan = [], arsipGrid = null,
-  statementGrid = null,
+  statementGrid = null, setelahBacaPertama = null,
 }) {
   const grid = [HEADER_UJI.slice()];
   for (let i = 0; i < barisAda; i += 1) {
@@ -639,6 +639,10 @@ function jalankanDoPost({
   const tulisan = [];  // {baris, kolom, tinggi, lebar, nilai}
   const dibuatSheet = [];
   const dihapusBaris = [];
+  const kejadian = [];  // urutan flush/lepas kunci
+  // Dipanggil sekali, tepat sesudah bacaan pertama blok data Transaksi — untuk
+  // meniru Sheet yang berubah di tengah permintaan (baris bergeser).
+  let kaitBaca = setelahBacaPertama;
   const props = {};
 
   function buatSheet(nama, isi) {
@@ -668,6 +672,7 @@ function jalankanDoPost({
             const sumber = isi[baris - 1 + r] || [];
             out.push(Array.from({ length: lebar }, (_, c) => sumber[kolom - 1 + c] ?? ''));
           }
+          if (nama === 'Transaksi' && kaitBaca && baris === 2 && kolom === 1 && tinggi > 1) { const f = kaitBaca; kaitBaca = null; f(isi); }
           return out;
         },
         setValues(nilai) {
@@ -706,6 +711,7 @@ function jalankanDoPost({
   const sandbox = {
     SpreadsheetApp: {
       getActiveSpreadsheet: () => ss,
+      flush: () => { kejadian.push('flush'); },
       BandingTheme: { LIGHT_GREY: 'LG' },
       BorderStyle: { SOLID_THICK: 'SOLID_THICK' },
       newConditionalFormatRule() {
@@ -718,7 +724,7 @@ function jalankanDoPost({
     LockService: {
       getScriptLock: () => ({
         waitLock: () => { if (kunciMacet) throw new Error('timeout'); },
-        releaseLock: () => {},
+        releaseLock: () => { kejadian.push('lepas'); },
       }),
     },
     Charts: { ChartType: { PIE: 'PIE', COLUMN: 'COLUMN', LINE: 'LINE' } },
@@ -735,7 +741,7 @@ function jalankanDoPost({
     `${src}\n; return { doPost };`)(...Object.values(sandbox));
   api.doPost({ postData: { contents: JSON.stringify(payload) } });
 
-  return { balasan, bacaan, tulisan, dibuatSheet, dihapusBaris, grid, lembar };
+  return { balasan, bacaan, tulisan, dibuatSheet, dihapusBaris, grid, lembar, kejadian };
 }
 
 /** Identitas saja: bentuk yang dikirim permintaan penyelarasan. */
@@ -882,6 +888,88 @@ test('arsip membaca satu jendela, bukan satu panggilan per baris yang dihapus', 
   const bacaSatuBaris = h.bacaan.filter((b) => b.sheet === 'Transaksi' && b.baris >= 2 && b.tinggi === 1);
   assert.ok(bacaSatuBaris.length < 10,
     `${bacaSatuBaris.length} pembacaan per baris — seharusnya satu jendela`);
+});
+
+/** Hash yang tersisa di tab Transaksi (tanpa header). */
+const hashTersisa = (h) => h.lembar.Transaksi.getRange(2, 1, h.lembar.Transaksi.getLastRow() - 1, 1)
+  .getValues().map((r) => r[0]);
+const hashArsip = (h) => h.lembar._Arsip.getRange(2, 2, h.lembar._Arsip.getLastRow() - 1, 1)
+  .getValues().map((r) => r[0]);
+
+for (const [label, jumlah] of [['per baris', 3], ['tulis borong', 25]]) {
+  test(`hapus (${label}) memakai hash, bukan nomor baris yang sudah basi`, () => {
+    // Kejadian 06/10/2026 17:51: provisional September yang diminta dihapus
+    // tetap ada, sementara baris PDF Agustus di atasnya yang terarsip &
+    // terbuang. Ditiru di sini dengan menggeser baris (5 baris teratas hilang)
+    // tepat sesudah doPost membaca kolom Hash.
+    const target = Array.from({ length: jumlah }, (_, i) => `h${50 + i}`);
+    const h = jalankanDoPost({
+      barisAda: 120,
+      arsipGrid: [['Dihapus Pada'].concat(HEADER_UJI, ['ID Transaksi', 'Diubah Pada'])],
+      payload: { rows: [], hapus: target },
+      setelahBacaPertama: (isi) => { isi.splice(1, 5); },
+    });
+
+    assert.equal(h.balasan.dihapus, jumlah);
+    const sisa = hashTersisa(h);
+    target.forEach((t) => assert.ok(!sisa.includes(t), `${t} seharusnya terhapus`));
+    assert.equal(sisa.length, 120 - 5 - jumlah, 'tidak boleh ada baris lain yang ikut terbuang');
+    assert.deepEqual(hashArsip(h).sort(), target.slice().sort(), 'arsip berisi persis baris yang diminta');
+  });
+}
+
+test('penyelarasan membuang kembaran hash dan menyisakan satu baris', () => {
+  // Sisa kerusakan: baris h3 & h7 tertulis dua kali. Hash unik di aplikasi,
+  // jadi kembaran tidak pernah sah — tapi satu barisnya harus tetap ada.
+  const kembar = [barisPenuh(3), barisPenuh(7)].map((b) => [b.hash, b.tanggal, b.deskripsi,
+    b.nominal, b.debit, b.kredit, b.kategoriId, b.bank, b.nomorRekening, b.namaPemilik, b.sumber,
+    b.uploadedFileId, new Date(), b.kategoriNama, false, b.saldo]);
+  const rows = Array.from({ length: 10 }, (_, i) => identitas(i));
+  const h = jalankanDoPost({
+    barisAda: 10,
+    gridTambahan: kembar,
+    payload: { selaras: true, hanyaSelaras: true, rows, jumlah: rows.length },
+  });
+
+  assert.equal(h.balasan.dihapus, 2);
+  assert.deepEqual(hashTersisa(h).slice().sort(), rows.map((r) => r.hash).sort());
+});
+
+test('pratinjau penyelarasan ikut menghitung kembaran', () => {
+  const kembar = [barisPenuh(3)].map((b) => [b.hash, b.tanggal, b.deskripsi, b.nominal, b.debit,
+    b.kredit, b.kategoriId, b.bank, b.nomorRekening, b.namaPemilik, b.sumber, b.uploadedFileId,
+    new Date(), b.kategoriNama, false, b.saldo]);
+  const rows = Array.from({ length: 10 }, (_, i) => identitas(i));
+  const h = jalankanDoPost({
+    barisAda: 10,
+    gridTambahan: kembar,
+    payload: { selaras: true, hanyaSelaras: true, praTinjau: true, rows, jumlah: rows.length },
+  });
+  assert.equal(h.balasan.akanDihapus, 1);
+  assert.equal(hashTersisa(h).length, 11, 'pratinjau tidak menghapus apa pun');
+});
+
+test('hapus biasa TIDAK membuang kembaran yang tidak diminta', () => {
+  // Di luar penyelarasan, Sheet tidak disapu: hanya hash yang disebut.
+  const kembar = [barisPenuh(3)].map((b) => [b.hash, b.tanggal, b.deskripsi, b.nominal, b.debit,
+    b.kredit, b.kategoriId, b.bank, b.nomorRekening, b.namaPemilik, b.sumber, b.uploadedFileId,
+    new Date(), b.kategoriNama, false, b.saldo]);
+  const h = jalankanDoPost({ barisAda: 10, gridTambahan: kembar, payload: { rows: [], hapus: ['h5'] } });
+  assert.equal(h.balasan.dihapus, 1);
+  assert.equal(hashTersisa(h).filter((x) => x === 'h3').length, 2);
+});
+
+test('perubahan Sheet di-flush sebelum kunci dilepas', () => {
+  // Penulisan Apps Script tertahan di buffer sampai eksekusi selesai. Kalau
+  // kunci lepas lebih dulu, permintaan berikutnya membaca nomor baris lama.
+  const h = jalankanDoPost({ barisAda: 30, payload: { rows: [], hapus: ['h1', 'h2'] } });
+  assert.deepEqual(h.kejadian.slice(-2), ['flush', 'lepas']);
+
+  const e = jalankanDoPost({
+    payload: { entity: 'statement', rows: [{ id: 'upl_x', bulan: '2026-09' }] },
+    statementGrid: [[]],
+  });
+  assert.deepEqual(e.kejadian.slice(-2), ['flush', 'lepas']);
 });
 
 test('ping tetap menjawab walau kunci skrip sedang dipegang proses lain', () => {
