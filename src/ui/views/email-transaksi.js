@@ -246,7 +246,7 @@ export async function mount(wadah) {
           const kandidat = kandidatMap.get(t.transaksiCocokId);
           return [
             h('button.btn-kecil', { type: 'button', onclick: () => bukaTautkanManual(t) }, 'Tautkan manual'),
-            kandidat ? h('button.btn-kecil', { type: 'button', onclick: () => terimaTautan(t) }, 'Terima tautan ini') : null,
+            kandidat ? h('button.btn-kecil', { type: 'button', onclick: () => terimaTautan(t, kandidat) }, 'Terima tautan ini') : null,
             h('button.btn-kecil.btn-halus', { type: 'button', onclick: () => abaikan(t) }, 'Abaikan'),
             // "Fase C": baris ini sudah dicatat sebagai transaksi provisional
             // di ledger (lihat services/email-ledger-merge.js) — beri jalan
@@ -329,9 +329,19 @@ export async function mount(wadah) {
     emit(EVENT.DATA_BERUBAH, { sumber: 'email-kategori' });
   }
 
-  async function terimaTautan(trx) {
-    await emailTrxRepo.simpanSatu({ ...trx, statusResolusi: STATUS_RESOLUSI_EMAIL.DISELESAIKAN });
-    toastSukses('Ditandai selesai.');
+  /**
+   * Menerima kandidat = menautkannya. Lewat tautkanManual() supaya baris
+   * provisional ikut dihapus; hanya menandai "selesai" meninggalkan provisional
+   * DAN baris statement-nya sama-sama di ledger (terhitung dua kali).
+   */
+  async function terimaTautan(trx, kandidat) {
+    try {
+      await tautkanManual(trx, kandidat);
+    } catch (e) {
+      toastGagal(e.message);
+      return;
+    }
+    toastSukses('Ditautkan ke baris e-statement.');
     emit(EVENT.DATA_BERUBAH, { sumber: 'email-selesai' });
   }
 
@@ -364,6 +374,9 @@ export async function mount(wadah) {
     });
     if (!ya) return;
     await hapusProvisionalManual(trx);
+    // Ditandai selesai: tanpa ini backfill berikutnya melihat email MISSING
+    // tanpa provisional dan membuatkannya lagi.
+    await emailTrxRepo.simpanSatu({ ...trx, provisionalTrxId: '', statusResolusi: STATUS_RESOLUSI_EMAIL.DISELESAIKAN });
     toastSukses('Baris provisional dihapus.');
     emit(EVENT.DATA_BERUBAH, { sumber: 'email-hapus-provisional' });
   }

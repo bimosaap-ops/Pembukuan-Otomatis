@@ -122,13 +122,13 @@ export async function hapusTransaksi(id) {
 export async function hapusPerFileUpload(uploadedFileId) {
   const rows = await perFileUpload(uploadedFileId);
   await hapusBanyak(STORE.TRANSACTIONS, rows.map((r) => r.id));
-  return { jumlah: rows.length, hash: rows.map((r) => r.hash).filter(Boolean) };
+  return { jumlah: rows.length, ids: rows.map((r) => r.id), hash: rows.map((r) => r.hash).filter(Boolean) };
 }
 
 export async function hapusPerAkun(accountId) {
   const rows = await perAkun(accountId);
   await hapusBanyak(STORE.TRANSACTIONS, rows.map((r) => r.id));
-  return { jumlah: rows.length, hash: rows.map((r) => r.hash).filter(Boolean) };
+  return { jumlah: rows.length, ids: rows.map((r) => r.id), hash: rows.map((r) => r.hash).filter(Boolean) };
 }
 
 /**

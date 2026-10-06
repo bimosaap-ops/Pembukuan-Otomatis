@@ -372,8 +372,8 @@ async function tandaiSengketa(trxEmail, trxStatement, cocok) {
  * mungkin merupakan 2 transaksi bank berbeda).
  *
  * @param {Array} transaksiBaruDariUpload baris e-statement yang baru disimpan
- * @param {Array} kandidatEmail transaksi email TERBUKA yang punya baris provisional
- *   (statusCocok apa pun -- termasuk MISMATCH/AMBIGUOUS lama, lihat rekonsiliasiSetelahUpload())
+ * @param {Array} kandidatEmail transaksi email yang masih memegang baris provisional
+ *   (lihat rekonsiliasiSetelahUpload())
  * @returns {Array<{trxEmail:object, trxStatement:object|null, cocok:object}>} `trxStatement`
  *   null berarti AMBIGUOUS tanpa kandidat tunggal (skor dua kandidat nyaris
  *   sama) -- lihat cocokkanTransaksiEmail(), JANGAN ditebak jadi salah satunya.
@@ -421,19 +421,14 @@ export async function rekonsiliasiSetelahUpload(transaksiBaruDariUpload) {
   const hasil = { digantikan: 0, disengketakan: 0, akunTersentuh: new Set() };
   if (!transaksiBaruDariUpload?.length) return hasil;
 
-  // Kandidat email: SEMUA yang masih TERBUKA dan sudah punya baris provisional
-  // -- ini SENGAJA tidak dibatasi ke statusCocok===MISSING saja. Baris yang
-  // sudah ditandai MISMATCH/AMBIGUOUS oleh upload statement SEBELUMNYA (lihat
-  // tandaiSengketa()) tetap harus dievaluasi ulang di sini: statement yang
-  // salah pasang bulan lalu tidak menutup kemungkinan statement yang BENAR
-  // muncul di upload berikutnya. Tanpa ini baris disengketakan tidak pernah
-  // ketemu pasangannya lagi -- provisional-nya nyangkut selamanya, dan begitu
-  // pasangan yang benar akhirnya diupload, baris itu jadi DOBEL permanen
-  // (provisional lama + statement baru sama-sama masuk ledger) karena sudah
-  // tersingkir dari daftar kandidat. Yang benar-benar tidak perlu dievaluasi
-  // ulang cuma yang sudah DISELESAIKAN/DIABAIKAN pengguna secara eksplisit.
+  // Kandidat: setiap email yang masih memegang baris provisional, apa pun
+  // statusCocok-nya (MISMATCH/AMBIGUOUS lama bisa menemukan pasangan yang
+  // benar di upload berikutnya) dan apa pun statusResolusi-nya (keputusan
+  // tinjauan tidak menghapus baris dari ledger). Tanpa itu, provisional yang
+  // tersingkir dari kandidat jadi DOBEL permanen begitu statement-nya masuk.
+  // Sengketa baru hanya ditandai untuk email yang masih TERBUKA.
   const kandidatEmail = (await emailTrxRepo.semua())
-    .filter((t) => t.statusResolusi === STATUS_RESOLUSI_EMAIL.TERBUKA && t.provisionalTrxId);
+    .filter((t) => t.provisionalTrxId && t.statusCocok !== STATUS_COCOK_EMAIL.MATCHED);
   if (!kandidatEmail.length) return hasil;
 
   const rencana = rencanakanRekonsiliasi(transaksiBaruDariUpload, kandidatEmail);
@@ -447,7 +442,7 @@ export async function rekonsiliasiSetelahUpload(transaksiBaruDariUpload) {
         hashDihapus.push(dihapus.hash);
       }
       hasil.digantikan += 1;
-    } else {
+    } else if (trxEmail.statusResolusi === STATUS_RESOLUSI_EMAIL.TERBUKA) {
       await tandaiSengketa(trxEmail, trxStatement, cocok);
       hasil.disengketakan += 1;
     }
@@ -483,6 +478,22 @@ export async function rekonsiliasiSetelahUpload(transaksiBaruDariUpload) {
 export function putuskanAksiBackfill(trxEmail, kandidatStatement) {
   const cocok = cocokkanTransaksiEmail(trxEmail, kandidatStatement);
   return { aksi: cocok.status === STATUS_COCOK_EMAIL.MATCHED ? 'tautkan' : 'provisional', cocok };
+}
+
+/**
+ * Baris e-statement di ledger yang boleh mewakili `trxEmail`: dalam jendela
+ * tanggalnya, bukan provisional, dan bank rekeningnya sama (transaksi email
+ * Permata tidak mungkin diwakili baris BCA, lihat tautanSah).
+ */
+async function kandidatStatementUntuk(trxEmail, akunMap) {
+  const rentang = rentangTanggalKandidat(trxEmail.waktuTransaksi);
+  const kandidatMentah = rentang ? await trxRepo.rentangTanggal(rentang.dari, rentang.sampai) : [];
+  const bankEmail = String(trxEmail.bank || '').trim().toLowerCase();
+  return kandidatMentah.filter((k) => {
+    if (k.sumber === SUMBER.EMAIL_PROVISIONAL) return false;
+    const bankAkun = String(akunMap.get(k.accountId)?.bank || '').trim().toLowerCase();
+    return !(bankEmail && bankAkun && bankEmail !== bankAkun);
+  });
 }
 
 /**
@@ -529,16 +540,7 @@ export async function backfillProvisionalEmailLama() {
 
   const akunMap = await akunRepo.peta();
   for (const trxEmail of kandidatEmail) {
-    const rentang = rentangTanggalKandidat(trxEmail.waktuTransaksi);
-    const kandidatMentah = rentang ? await trxRepo.rentangTanggal(rentang.dari, rentang.sampai) : [];
-    // Bank rekening harus sama: transaksi email Permata tidak mungkin
-    // diwakili baris e-statement BCA (lihat tautanSah).
-    const bankEmail = String(trxEmail.bank || '').trim().toLowerCase();
-    const kandidatStatement = kandidatMentah.filter((k) => {
-      if (k.sumber === SUMBER.EMAIL_PROVISIONAL) return false;
-      const bankAkun = String(akunMap.get(k.accountId)?.bank || '').trim().toLowerCase();
-      return !(bankEmail && bankAkun && bankEmail !== bankAkun);
-    });
+    const kandidatStatement = await kandidatStatementUntuk(trxEmail, akunMap);
     const { aksi, cocok } = putuskanAksiBackfill(trxEmail, kandidatStatement);
 
     if (aksi === 'tautkan') {
@@ -651,27 +653,6 @@ export async function tautkanManual(trxEmail, trxStatement) {
 }
 
 /**
- * Transaksi email yang sudah MATCHED ke baris statement tapi masih memegang
- * baris provisional -- sisa "Tautkan manual" versi lama. Murni, diekspor
- * untuk tes; dijalankan oleh bersihkanProvisionalTertaut() (data/migrasi.js).
- *
- * @param {Array} emailLokal record transaksi email
- * @param {Map<string, object>} transaksiPerId transaksi ledger per id
- * @returns {Array} transaksi email yang provisional-nya harus dihapus
- */
-export function rencanakanBersihProvisionalTertaut(emailLokal, transaksiPerId, akunMap = new Map()) {
-  return (emailLokal || []).filter((e) => {
-    if (e.statusCocok !== STATUS_COCOK_EMAIL.MATCHED) return false;
-    if (!e.provisionalTrxId || !e.transaksiCocokId || e.provisionalTrxId === e.transaksiCocokId) return false;
-    const statement = transaksiPerId.get(e.transaksiCocokId);
-    const provisional = transaksiPerId.get(e.provisionalTrxId);
-    return Boolean(statement && provisional
-      && provisional.sumber === SUMBER.EMAIL_PROVISIONAL
-      && tautanSah(e, statement, akunMap.get(statement.accountId)));
-  });
-}
-
-/**
  * Bolehkah baris ledger ini dipakai mewakili transaksi email? Harus baris
  * e-statement (bukan provisional), arahnya sama (email debit = nominal
  * negatif), dan -- bila keduanya diketahui -- bank rekeningnya sama.
@@ -691,81 +672,94 @@ export function tautanSah(trxEmail, trxStatement, akunStatement) {
 }
 
 /**
- * Tautan manual yang tidak sah (lihat tautanSah) -- ke baris provisional,
- * ke baris yang sudah tidak ada, ke arah berlawanan, atau ke bank lain.
- * Murni, diekspor untuk tes; dijalankan oleh perbaikiTautanManualSalah().
- * Hanya tautan manual yang disentuh: tautan otomatis sudah melewati
- * cocokkanTransaksiEmail().
+ * Rencana penyesuaian transaksi email setelah baris ledger `idTerhapus`
+ * dihapus -- murni, diekspor untuk tes. Menjaga dua invarian: email tidak
+ * pernah merujuk baris yang sudah tidak ada, dan transaksi yang dibuktikan
+ * email tidak hilang dari pembukuan tanpa keputusan siapa pun.
+ *
+ *   - `evaluasiUlang`: email MATCHED yang baris statement-nya terhapus (mis.
+ *     upload dibatalkan). Transaksinya tetap nyata, jadi email dikembalikan
+ *     ke MISSING untuk dinilai ulang backfill: ditautkan ke baris lain bila
+ *     ada, atau dibuatkan provisional lagi.
+ *   - `tautkanAtauSelesaikan`: baris provisional-nya yang terhapus. Itu
+ *     keputusan (pengguna, atau perangkat lain yang sudah menggantinya dengan
+ *     baris statement), jadi tidak dibuat ulang: ditautkan ke baris statement
+ *     bila ada, kalau tidak ditandai selesai.
+ *   - `lepasKandidat`: hanya kandidat sengketanya yang terhapus.
+ *
+ * @param {Array} emailLokal seluruh record email_transactions lokal
+ * @param {Set<string>} idTerhapus id transaksi ledger yang baru dihapus
+ * @returns {Array<{email: object, aksi: 'evaluasiUlang'|'tautkanAtauSelesaikan'|'lepasKandidat'}>}
  */
-export function rencanakanPerbaikiTautanManual(emailLokal, transaksiPerId, akunMap = new Map()) {
-  return (emailLokal || []).filter((e) => {
-    if (e.statusCocok !== STATUS_COCOK_EMAIL.MATCHED || e.alasanCocok !== 'manual_link') return false;
-    const statement = transaksiPerId.get(e.transaksiCocokId);
-    return !tautanSah(e, statement, statement ? akunMap.get(statement.accountId) : null);
-  });
+export function rencanakanSetelahHapus(emailLokal, idTerhapus) {
+  const rencana = [];
+  for (const e of emailLokal || []) {
+    const provHilang = Boolean(e.provisionalTrxId) && idTerhapus.has(e.provisionalTrxId);
+    const cocokHilang = Boolean(e.transaksiCocokId) && idTerhapus.has(e.transaksiCocokId);
+    if (!provHilang && !cocokHilang) continue;
+    const lepas = {
+      ...e,
+      provisionalTrxId: provHilang ? '' : e.provisionalTrxId,
+      transaksiCocokId: cocokHilang ? '' : e.transaksiCocokId,
+    };
+    if (e.statusCocok === STATUS_COCOK_EMAIL.MATCHED && cocokHilang) {
+      rencana.push({
+        email: { ...lepas, statusCocok: STATUS_COCOK_EMAIL.MISSING, skorCocok: null, alasanCocok: '' },
+        aksi: 'evaluasiUlang',
+      });
+    } else if (provHilang) {
+      rencana.push({ email: lepas, aksi: 'tautkanAtauSelesaikan' });
+    } else {
+      rencana.push({ email: lepas, aksi: 'lepasKandidat' });
+    }
+  }
+  return rencana;
 }
 
 /**
- * Baris provisional yang tidak bisa dijangkau dari halaman Transaksi Email
- * -- tidak dirujuk email mana pun, atau dirujuk email yang tidak tampil di
- * daftar tinjauan (sudah MATCHED/diselesaikan/diabaikan) -- padahal baris
- * e-statement kembarannya (rekening sama, nominal sama, tanggal selisih
- * paling banyak 1 hari karena pembukuan bank bisa H+1) sudah ada. Baris
- * seperti ini terhitung dua kali dan pengguna tidak punya tombol untuk
- * membersihkannya (Transaksi read-only, "Fase A"). Kasus nyata 2026-10-06:
- * DIVA QUINTA MAHMUDA Rp 700.000 tanggal 20/9.
+ * Panggil SETIAP KALI baris ledger dihapus di luar modul ini (hapus manual,
+ * batal upload, hapus rekening, penghapusan yang ditarik dari Sheets).
+ * Lihat rencanakanSetelahHapus() untuk aturannya.
  *
- * Satu baris statement hanya dipakai untuk satu provisional. Murni,
- * diekspor untuk tes; dijalankan oleh hapusProvisionalTakTerjangkau().
- *
- * @returns {Array<{provisional: object, statement: object, email: object|null}>}
+ * @param {Array<string>} ids id transaksi yang sudah dihapus
+ * @param {{evaluasiUlang?: boolean}} opsi `false` saat rekeningnya sendiri
+ *   dihapus: email yang terdampak ditutup, karena menilainya ulang hanya
+ *   akan membuat rekening baru lagi.
+ * @returns {Promise<{disesuaikan: number}>}
  */
-export function rencanakanHapusProvisionalTakTerjangkau(transaksi, emailLokal) {
-  const tampil = new Set([STATUS_COCOK_EMAIL.MISSING, STATUS_COCOK_EMAIL.MISMATCH, STATUS_COCOK_EMAIL.AMBIGUOUS]);
-  const terlihat = (e) => e && e.statusResolusi === STATUS_RESOLUSI_EMAIL.TERBUKA && tampil.has(e.statusCocok);
-  const perujuk = new Map();
-  const perId = new Map();
-  for (const e of (emailLokal || [])) {
-    perId.set(e.id, e);
-    if (e.provisionalTrxId) perujuk.set(e.provisionalTrxId, e);
-  }
-  const hari = (t) => Date.parse(`${String(t).slice(0, 10)}T00:00:00Z`) / 86400000;
+export async function setelahTransaksiDihapus(ids, { evaluasiUlang = true } = {}) {
+  if (!ids?.length) return { disesuaikan: 0 };
+  const rencana = rencanakanSetelahHapus(await emailTrxRepo.semua(), new Set(ids));
+  if (!rencana.length) return { disesuaikan: 0 };
 
-  const statement = (transaksi || []).filter((t) => t.sumber !== SUMBER.EMAIL_PROVISIONAL);
-  const provisional = (transaksi || []).filter((t) => t.sumber === SUMBER.EMAIL_PROVISIONAL)
-    .sort((a, b) => String(a.tanggal).localeCompare(String(b.tanggal)) || String(a.id).localeCompare(String(b.id)));
-  const terpakai = new Set();
-  const hasil = [];
-  for (const p of provisional) {
-    const rujuk = perujuk.get(p.id);
-    if (terlihat(rujuk)) continue;
-    // Pemilik lewat emailTrxId yang masih tampil di tinjauan (dan tidak sedang
-    // memegang provisional lain) -- biarkan pengguna yang memutuskan.
-    const pemilik = rujuk || perId.get(p.emailTrxId) || null;
-    if (!rujuk && terlihat(pemilik) && !pemilik.provisionalTrxId) continue;
-    const kembar = statement.find((s) => !terpakai.has(s.id)
-      && s.accountId === p.accountId
-      && Math.abs((Number(s.nominal) || 0) - (Number(p.nominal) || 0)) < 0.005
-      && Math.abs(hari(s.tanggal) - hari(p.tanggal)) <= 1);
-    if (!kembar) continue;
-    terpakai.add(kembar.id);
-    hasil.push({ provisional: p, statement: kembar, email: rujuk || null });
+  const akunMap = await akunRepo.peta();
+  let perluBackfill = false;
+  for (const { email, aksi } of rencana) {
+    if (aksi === 'tautkanAtauSelesaikan') {
+      const cocok = cocokkanTransaksiEmail(email, await kandidatStatementUntuk(email, akunMap));
+      const statement = cocok.status === STATUS_COCOK_EMAIL.MATCHED && cocok.kandidatId
+        ? await trxRepo.satu(cocok.kandidatId) : null;
+      await emailTrxRepo.simpanSatu(statement
+        ? {
+          ...email, statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: statement.id,
+          skorCocok: cocok.skor, alasanCocok: cocok.alasan,
+        }
+        : {
+          ...email,
+          statusResolusi: email.statusResolusi === STATUS_RESOLUSI_EMAIL.TERBUKA
+            ? STATUS_RESOLUSI_EMAIL.DISELESAIKAN : email.statusResolusi,
+        });
+      continue;
+    }
+    if (aksi === 'evaluasiUlang' && !evaluasiUlang) {
+      // Rekeningnya ikut dihapus: ditutup, supaya backfill berikutnya tidak
+      // membuat rekening baru hanya untuk email ini.
+      await emailTrxRepo.simpanSatu({ ...email, statusResolusi: STATUS_RESOLUSI_EMAIL.DISELESAIKAN });
+      continue;
+    }
+    await emailTrxRepo.simpanSatu(email);
+    if (aksi === 'evaluasiUlang') perluBackfill = true;
   }
-  return hasil;
-}
-
-/**
- * Transaksi email terbuka yang masih merujuk baris provisional yang sudah
- * tidak ada di ledger. Halaman Transaksi Email tetap menampilkan label
- * "Provisional di ledger" (labelnya hanya membaca rujukan), dan backfill
- * melewatinya karena rujukannya terisi -- transaksinya hilang dari saldo
- * tanpa ada yang menyadari. Kasus nyata 2026-10-06: tiga transfer keluar
- * Permata Rp 24.670.000. MATCHED tidak disentuh: baris statement-nya yang
- * mewakili. Murni, diekspor untuk tes.
- */
-export function rencanakanPulihkanProvisionalHilang(emailLokal, idTransaksi) {
-  return (emailLokal || []).filter((e) => e.statusResolusi === STATUS_RESOLUSI_EMAIL.TERBUKA
-    && e.statusCocok !== STATUS_COCOK_EMAIL.MATCHED
-    && e.provisionalTrxId
-    && !idTransaksi.has(e.provisionalTrxId));
+  if (perluBackfill) await backfillProvisionalEmailLama();
+  return { disesuaikan: rencana.length };
 }

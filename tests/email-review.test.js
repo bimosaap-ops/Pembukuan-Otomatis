@@ -12,7 +12,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  bangunEksporTinjauan, validasiKeputusan, terapkanSatuKeputusan,
+  bangunEksporTinjauan, validasiKeputusan, terapkanSatuKeputusan, targetTautan,
 } from '../src/services/email-review.js';
 import { STATUS_COCOK_EMAIL, STATUS_RESOLUSI_EMAIL } from '../src/domain/entities.js';
 
@@ -87,22 +87,25 @@ test('validasiKeputusan: input bukan objek (null/array/string) ditolak dengan je
   assert.equal(validasiKeputusan('msg_1').valid, false);
 });
 
-test('terapkanSatuKeputusan: aksi tautkan mengisi statusCocok/transaksiCocokId/alasanCocok, mengosongkan skorCocok', () => {
-  const trx = { id: 'trxe_1', statusCocok: STATUS_COCOK_EMAIL.AMBIGUOUS, skorCocok: 20, statusResolusi: STATUS_RESOLUSI_EMAIL.TERBUKA };
-  const hasil = terapkanSatuKeputusan(trx, { gmailMessageId: 'msg_1', aksi: 'tautkan', transaksiCocokId: 'trx_a', alasan: 'cocok manual' });
-
-  assert.equal(hasil.id, 'trxe_1', 'id asli dipertahankan supaya simpanSatu memperbarui baris yang sama');
-  assert.equal(hasil.statusCocok, STATUS_COCOK_EMAIL.MATCHED);
-  assert.equal(hasil.transaksiCocokId, 'trx_a');
-  assert.equal(hasil.alasanCocok, 'cocok manual');
-  assert.equal(hasil.skorCocok, null);
-  assert.equal(hasil.statusResolusi, STATUS_RESOLUSI_EMAIL.TERBUKA, 'statusResolusi tidak ikut berubah oleh aksi tautkan');
+test('targetTautan: tautkan memakai transaksiCocokId dari berkas', () => {
+  const trx = { id: 'trxe_1', transaksiCocokId: 'trx_lama' };
+  assert.equal(targetTautan(trx, { aksi: 'tautkan', transaksiCocokId: 'trx_a' }), 'trx_a');
 });
 
-test('terapkanSatuKeputusan: aksi tautkan tanpa alasan eksplisit -> alasanCocok default "tinjauan_manual"', () => {
-  const trx = { id: 'trxe_1', statusCocok: STATUS_COCOK_EMAIL.AMBIGUOUS };
-  const hasil = terapkanSatuKeputusan(trx, { gmailMessageId: 'msg_1', aksi: 'tautkan', transaksiCocokId: 'trx_a' });
-  assert.equal(hasil.alasanCocok, 'tinjauan_manual');
+test('targetTautan: selesai = "Terima tautan ini", menautkan ke kandidat yang tercatat', () => {
+  assert.equal(targetTautan({ transaksiCocokId: 'trx_a' }, { aksi: 'selesai' }), 'trx_a');
+  assert.equal(targetTautan({ transaksiCocokId: '' }, { aksi: 'selesai' }), null, 'tanpa kandidat: cukup ditandai selesai');
+});
+
+test('targetTautan: abaikan tidak pernah menautkan', () => {
+  assert.equal(targetTautan({ transaksiCocokId: 'trx_a' }, { aksi: 'abaikan' }), null);
+});
+
+test('terapkanSatuKeputusan tidak pernah menghasilkan MATCHED: tautan wajib lewat tautkanManual()', () => {
+  const trx = { id: 'trxe_1', statusCocok: STATUS_COCOK_EMAIL.AMBIGUOUS, statusResolusi: STATUS_RESOLUSI_EMAIL.TERBUKA };
+  for (const aksi of ['selesai', 'abaikan']) {
+    assert.notEqual(terapkanSatuKeputusan(trx, { aksi }).statusCocok, STATUS_COCOK_EMAIL.MATCHED);
+  }
 });
 
 test('terapkanSatuKeputusan: aksi selesai hanya mengubah statusResolusi, statusCocok/transaksiCocokId tidak disentuh', () => {

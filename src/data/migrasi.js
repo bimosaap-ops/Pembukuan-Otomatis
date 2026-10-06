@@ -1,31 +1,15 @@
 /**
- * Pemeliharaan data yang dijalankan saat aplikasi dibuka.
+ * Migrasi data sekali jalan, dijaga bendera di store `settings`.
  *
- * Dua jenis:
- *   - Migrasi berbendera (store `settings`), berhenti sendiri setelah sekali
- *     jalan. Bukan lewat `onupgradeneeded` di db.js karena butuh operasi
- *     async, dan transaksi IndexedDB keburu tertutup sebelum `await` pertama.
- *   - Pemeriksaan integritas tanpa bendera, aman diulang tiap buka: kondisi
- *     yang diperbaikinya tidak terbentuk oleh alur yang benar, jadi biasanya
- *     tidak menemukan apa pun.
- *
+ * Bukan lewat `onupgradeneeded` di db.js: migrasi di sini butuh operasi async,
+ * dan transaksi IndexedDB keburu tertutup sebelum `await` pertama selesai.
  * Bagian yang menghitung dipisah jadi fungsi murni supaya bisa diuji tanpa
  * IndexedDB.
  */
 
 import * as pengaturanRepo from './repo/settings.js';
-import * as trxRepo from './repo/transactions.js';
 import * as kategoriRepo from './repo/categories.js';
-import * as emailTrxRepo from './repo/email-transactions.js';
-import * as akunRepo from './repo/accounts.js';
 import { KATEGORI_BAWAAN, tambahPola } from '../domain/categorize.js';
-import { hapusDariSheets } from '../services/sheets-sync.js';
-import {
-  rencanakanBersihProvisionalTertaut, hapusProvisionalManual,
-  rencanakanPerbaikiTautanManual, backfillProvisionalEmailLama, rencanakanHapusProvisionalTakTerjangkau,
-  rencanakanPulihkanProvisionalHilang,
-} from '../services/email-ledger-merge.js';
-import { SUMBER, STATUS_COCOK_EMAIL } from '../domain/entities.js';
 
 /**
  * Bendera migrasi kata kunci kategori bawaan — lihat migrasiKataKunciBawaan.
@@ -107,105 +91,4 @@ export async function migrasiKataKunciBawaan() {
 
   await pengaturanRepo.tulis(KUNCI_MIGRASI_KATA_KUNCI, '1');
   return { dijalankan: true, jumlahKategori: kategoriBerubah.length, jumlahKataKunci };
-}
-
-/**
- * Hapus baris provisional milik transaksi email yang sudah ditautkan ke baris
- * e-statement -- sisa "Tautkan manual" versi lama yang hanya menandai MATCHED
- * tanpa menghapus provisional-nya, sehingga transaksinya terhitung dua kali.
- * Tanpa bendera: kondisinya sendiri (MATCHED + masih memegang provisional)
- * tidak pernah terbentuk oleh alur yang benar, jadi aman diperiksa tiap buka.
- */
-export async function bersihkanProvisionalTertaut() {
-  const [emailLokal, transaksi, akunMap] = await Promise.all([emailTrxRepo.semua(), trxRepo.semua(), akunRepo.peta()]);
-  const perId = new Map(transaksi.map((t) => [t.id, t]));
-  const sasaran = rencanakanBersihProvisionalTertaut(emailLokal, perId, akunMap);
-  let nominal = 0;
-  for (const email of sasaran) {
-    const dihapus = await hapusProvisionalManual(email);
-    if (dihapus) nominal += Math.abs(Number(dihapus.nominal) || 0);
-  }
-  return { jumlah: sasaran.length, nominal };
-}
-
-/**
- * Kembalikan tautan manual yang tidak sah (ke baris provisional, ke arah
- * berlawanan, ke bank lain, atau ke baris yang sudah hilang) menjadi
- * MISSING, lalu jalankan backfill supaya transaksi yang provisional-nya
- * sudah terhapus mendapat baris provisional lagi. Kasus nyata 2026-10-06:
- * tiga transfer keluar Permata ditautkan ke baris masuk di BCA, provisional
- * Permata-nya terhapus, dan pengeluaran Rp 24.670.000 hilang dari Permata.
- */
-export async function perbaikiTautanManualSalah() {
-  const [emailLokal, transaksi, akunMap] = await Promise.all([emailTrxRepo.semua(), trxRepo.semua(), akunRepo.peta()]);
-  const perId = new Map(transaksi.map((t) => [t.id, t]));
-  const sasaran = rencanakanPerbaikiTautanManual(emailLokal, perId, akunMap);
-  for (const e of sasaran) {
-    const provisionalAda = e.provisionalTrxId && perId.get(e.provisionalTrxId)?.sumber === SUMBER.EMAIL_PROVISIONAL;
-    await emailTrxRepo.simpanSatu({
-      ...e,
-      statusCocok: STATUS_COCOK_EMAIL.MISSING,
-      transaksiCocokId: '',
-      skorCocok: null,
-      alasanCocok: '',
-      provisionalTrxId: provisionalAda ? e.provisionalTrxId : '',
-    });
-  }
-  const backfill = sasaran.length ? await backfillProvisionalEmailLama() : { dibuat: 0 };
-  return { jumlah: sasaran.length, dibuatUlang: backfill.dibuat || 0 };
-}
-
-/**
- * Hapus baris provisional yang tidak terjangkau dari UI tetapi sudah punya
- * kembaran di e-statement (lihat rencanakanHapusProvisionalTakTerjangkau).
- * Email perujuknya (bila ada) ditautkan ke baris statement kembarannya.
- */
-export async function hapusProvisionalTakTerjangkau() {
-  const [transaksi, emailLokal] = await Promise.all([trxRepo.semua(), emailTrxRepo.semua()]);
-  const rencana = rencanakanHapusProvisionalTakTerjangkau(transaksi, emailLokal);
-  if (!rencana.length) return { jumlah: 0, nominal: 0 };
-
-  const akunTersentuh = new Set();
-  for (const { provisional, statement, email } of rencana) {
-    await trxRepo.hapusTransaksi(provisional.id);
-    akunTersentuh.add(provisional.accountId);
-    if (email) {
-      await emailTrxRepo.simpanSatu({
-        ...email,
-        provisionalTrxId: '',
-        statusCocok: STATUS_COCOK_EMAIL.MATCHED,
-        transaksiCocokId: statement.id,
-      });
-    }
-  }
-  for (const accountId of akunTersentuh) {
-    if (accountId) await akunRepo.hitungUlangSaldo(accountId);
-  }
-  const hash = rencana.map((r) => r.provisional.hash).filter(Boolean);
-  if (hash.length) hapusDariSheets(hash).catch((e) => console.warn('Hapus provisional tak terjangkau di Sheets gagal:', e));
-  return {
-    jumlah: rencana.length,
-    nominal: rencana.reduce((n, r) => n + Math.abs(Number(r.provisional.nominal) || 0), 0),
-  };
-}
-
-/**
- * Buat ulang baris provisional untuk transaksi email terbuka yang rujukan
- * provisional-nya menunjuk baris yang sudah hilang (lihat
- * rencanakanPulihkanProvisionalHilang). Rujukannya dikosongkan dan status
- * dikembalikan ke MISSING, lalu backfill menilai ulang terhadap e-statement
- * sekarang: ditautkan bila sudah ada padanannya, dibuatkan provisional bila
- * belum.
- */
-export async function pulihkanProvisionalHilang() {
-  const [emailLokal, transaksi] = await Promise.all([emailTrxRepo.semua(), trxRepo.semua()]);
-  const sasaran = rencanakanPulihkanProvisionalHilang(emailLokal, new Set(transaksi.map((t) => t.id)));
-  if (!sasaran.length) return { jumlah: 0, dibuat: 0 };
-  for (const e of sasaran) {
-    await emailTrxRepo.simpanSatu({
-      ...e, provisionalTrxId: '', statusCocok: STATUS_COCOK_EMAIL.MISSING, transaksiCocokId: '',
-    });
-  }
-  const hasil = await backfillProvisionalEmailLama();
-  return { jumlah: sasaran.length, dibuat: hasil.dibuat || 0 };
 }

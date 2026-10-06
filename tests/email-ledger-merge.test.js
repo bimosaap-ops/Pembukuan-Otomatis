@@ -9,8 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  rencanakanBersihProvisionalTertaut, rencanakanPerbaikiTautanManual, tautanSah,
-  rencanakanHapusProvisionalTakTerjangkau, rencanakanPulihkanProvisionalHilang,
+  tautanSah, rencanakanSetelahHapus,
   kunciSettingAkunBca, rencanakanRekonsiliasi, putuskanAksiBackfill,
   pilihProvisionalTanpaPemilik, bentukBarisEmail,
 } from '../src/services/email-ledger-merge.js';
@@ -280,55 +279,8 @@ test('bentukBarisEmail: transaksi dini hari memakai tanggal WIB', () => {
 });
 
 /* --------------------------------------------------------------------------
-   rencanakanBersihProvisionalTertaut — sisa "Tautkan manual" versi lama
+   tautanSah — satu-satunya gerbang tautan manual (tautkanManual)
    -------------------------------------------------------------------------- */
-
-test('rencanakanBersihProvisionalTertaut: MATCHED ke baris PDF tapi provisional masih ada -> dibersihkan', () => {
-  const peta = new Map([
-    ['pdf1', { id: 'pdf1', sumber: 'pdf', nominal: -169100, accountId: 'bca' }],
-    ['prov1', { id: 'prov1', sumber: 'email_provisional', nominal: -169100, accountId: 'bca' }],
-  ]);
-  const email = {
-    id: 'e1', bank: 'BCA', arah: 'debit', statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: 'pdf1', provisionalTrxId: 'prov1',
-  };
-  assert.deepEqual(rencanakanBersihProvisionalTertaut([email], peta), [email]);
-});
-
-test('rencanakanBersihProvisionalTertaut: yang tidak boleh disentuh', () => {
-  const peta = new Map([
-    ['pdf1', { id: 'pdf1', sumber: 'pdf' }],
-    ['prov1', { id: 'prov1', sumber: 'email_provisional' }],
-    ['prov2', { id: 'prov2', sumber: 'email_provisional' }],
-  ]);
-  const kasus = [
-    // Belum cocok: provisional memang satu-satunya catatan.
-    { id: 'a', statusCocok: STATUS_COCOK_EMAIL.MISSING, transaksiCocokId: '', provisionalTrxId: 'prov1' },
-    // Ditautkan ke baris provisional (bukan e-statement).
-    { id: 'b', statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: 'prov2', provisionalTrxId: 'prov1' },
-    // Menunjuk dirinya sendiri.
-    { id: 'c', statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: 'prov1', provisionalTrxId: 'prov1' },
-    // Baris statement-nya tidak ada di perangkat ini.
-    { id: 'd', statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: 'hilang', provisionalTrxId: 'prov1' },
-    // Rujukan provisional menunjuk baris PDF (bukan provisional) -- jangan hapus.
-    { id: 'e', statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: 'pdf1', provisionalTrxId: 'pdf1' },
-    // Sudah bersih.
-    { id: 'f', statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: 'pdf1', provisionalTrxId: '' },
-  ];
-  assert.deepEqual(rencanakanBersihProvisionalTertaut(kasus, peta), []);
-});
-
-test('rencanakanBersihProvisionalTertaut: tautan ke rekening lain TIDAK menghapus provisional', () => {
-  const akun = new Map([['bca', { bank: 'BCA' }], ['permata', { bank: 'Permata' }]]);
-  const peta = new Map([
-    ['bcaMasuk', { id: 'bcaMasuk', sumber: 'pdf', nominal: 12000000, accountId: 'bca' }],
-    ['prov1', { id: 'prov1', sumber: 'email_provisional', nominal: -12000000, accountId: 'permata' }],
-  ]);
-  const email = {
-    id: 'e1', bank: 'Permata', arah: 'debit', statusCocok: STATUS_COCOK_EMAIL.MATCHED,
-    transaksiCocokId: 'bcaMasuk', provisionalTrxId: 'prov1', alasanCocok: 'manual_link',
-  };
-  assert.deepEqual(rencanakanBersihProvisionalTertaut([email], peta, akun), []);
-});
 
 test('tautanSah: arah, bank, dan sumber harus sesuai', () => {
   const akun = { bank: 'BCA' };
@@ -340,89 +292,45 @@ test('tautanSah: arah, bank, dan sumber harus sesuai', () => {
   assert.equal(tautanSah(debitBca, null, akun), false, 'baris tidak ada');
 });
 
-test('rencanakanPerbaikiTautanManual: hanya tautan manual yang tidak sah', () => {
-  const akun = new Map([['bca', { bank: 'BCA' }]]);
-  const peta = new Map([
-    ['bcaMasuk', { id: 'bcaMasuk', sumber: 'pdf', nominal: 12000000, accountId: 'bca' }],
-    ['bcaKeluar', { id: 'bcaKeluar', sumber: 'pdf', nominal: -169100, accountId: 'bca' }],
-    ['prov', { id: 'prov', sumber: 'email_provisional', nominal: -50000, accountId: 'bca' }],
-  ]);
-  const m = (id, cocok, extra = {}) => ({
-    id, bank: 'BCA', arah: 'debit', statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: cocok, alasanCocok: 'manual_link', ...extra,
-  });
-  const permataKeBca = m('permata', 'bcaMasuk', { bank: 'Permata' });
-  const keProvisional = m('self', 'prov', { provisionalTrxId: 'prov' });
-  const hilang = m('hilang', 'tidakAda');
-  const sah = m('sah', 'bcaKeluar');
-  const otomatis = m('oto', 'bcaMasuk', { alasanCocok: 'skor_tinggi' });
-  const hasil = rencanakanPerbaikiTautanManual([permataKeBca, keProvisional, hilang, sah, otomatis], peta, akun);
-  assert.deepEqual(hasil.map((e) => e.id), ['permata', 'self', 'hilang']);
-});
-
 /* --------------------------------------------------------------------------
-   rencanakanHapusProvisionalTakTerjangkau
+   rencanakanSetelahHapus — email tidak pernah merujuk baris yang sudah hilang
    -------------------------------------------------------------------------- */
 
-const trxUji = (id, sumber, tanggal, nominal, extra = {}) => ({ id, sumber, tanggal, nominal, accountId: 'bca', ...extra });
-
-test('provisional tanpa perujuk dengan kembaran e-statement (H+0/H+1) dihapus', () => {
-  const transaksi = [
-    trxUji('prov', 'email_provisional', '2026-09-20', -700000, { emailTrxId: 'trxe_hilang' }),
-    trxUji('pdf', 'pdf', '2026-09-20', -700000),
-  ];
-  const hasil = rencanakanHapusProvisionalTakTerjangkau(transaksi, []);
-  assert.deepEqual(hasil.map((r) => [r.provisional.id, r.statement.id]), [['prov', 'pdf']]);
+const emailRujuk = (id, extra = {}) => ({
+  id, statusCocok: STATUS_COCOK_EMAIL.MISSING, statusResolusi: 'terbuka', provisionalTrxId: '', transaksiCocokId: '', ...extra,
 });
 
-test('provisional milik email yang masih tampil di tinjauan TIDAK disentuh', () => {
-  const transaksi = [
-    trxUji('prov', 'email_provisional', '2026-09-30', -50000),
-    trxUji('pdf', 'pdf', '2026-09-30', -50000),
-  ];
-  const email = { id: 'e', provisionalTrxId: 'prov', statusCocok: STATUS_COCOK_EMAIL.MISSING, statusResolusi: 'terbuka' };
-  assert.deepEqual(rencanakanHapusProvisionalTakTerjangkau(transaksi, [email]), []);
+test('rencanakanSetelahHapus: baris statement dari email MATCHED terhapus -> dinilai ulang sebagai MISSING', () => {
+  const e = emailRujuk('e', { statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: 'pdf1', skorCocok: 90, alasanCocok: 'manual_link' });
+  const [r] = rencanakanSetelahHapus([e], new Set(['pdf1']));
+  assert.equal(r.aksi, 'evaluasiUlang');
+  assert.equal(r.email.statusCocok, STATUS_COCOK_EMAIL.MISSING);
+  assert.equal(r.email.transaksiCocokId, '');
+  assert.equal(r.email.skorCocok, null);
+  assert.equal(r.email.alasanCocok, '');
 });
 
-test('tanpa kembaran, beda rekening, atau tanggal terlalu jauh -> tidak dihapus', () => {
-  const transaksi = [
-    trxUji('p1', 'email_provisional', '2026-09-20', -700000),
-    trxUji('x1', 'pdf', '2026-09-23', -700000),
-    trxUji('x2', 'pdf', '2026-09-20', -700000, { accountId: 'lain' }),
-    trxUji('x3', 'pdf', '2026-09-20', -70000),
-  ];
-  assert.deepEqual(rencanakanHapusProvisionalTakTerjangkau(transaksi, []), []);
+test('rencanakanSetelahHapus: baris provisional terhapus -> rujukan dilepas, tidak dibuat ulang', () => {
+  const e = emailRujuk('e', { provisionalTrxId: 'prov1' });
+  const [r] = rencanakanSetelahHapus([e], new Set(['prov1']));
+  assert.equal(r.aksi, 'tautkanAtauSelesaikan');
+  assert.equal(r.email.provisionalTrxId, '');
 });
 
-test('satu baris e-statement hanya untuk satu provisional', () => {
-  const transaksi = [
-    trxUji('p1', 'email_provisional', '2026-09-20', -50000),
-    trxUji('p2', 'email_provisional', '2026-09-20', -50000),
-    trxUji('s1', 'pdf', '2026-09-20', -50000),
-  ];
-  const hasil = rencanakanHapusProvisionalTakTerjangkau(transaksi, []);
-  assert.equal(hasil.length, 1);
+test('rencanakanSetelahHapus: hanya kandidat sengketa yang terhapus -> kandidat dilepas, status tetap', () => {
+  const e = emailRujuk('e', { statusCocok: STATUS_COCOK_EMAIL.AMBIGUOUS, transaksiCocokId: 'pdf1', provisionalTrxId: 'prov1' });
+  const [r] = rencanakanSetelahHapus([e], new Set(['pdf1']));
+  assert.equal(r.aksi, 'lepasKandidat');
+  assert.equal(r.email.transaksiCocokId, '');
+  assert.equal(r.email.provisionalTrxId, 'prov1');
+  assert.equal(r.email.statusCocok, STATUS_COCOK_EMAIL.AMBIGUOUS);
 });
 
-test('provisional milik email MATCHED (tidak tampil) dengan kembaran -> dihapus, email ikut dikembalikan', () => {
-  const transaksi = [
-    trxUji('prov', 'email_provisional', '2026-09-20', -700000),
-    trxUji('pdf', 'pdf', '2026-09-21', -700000),
-  ];
-  const email = { id: 'e', provisionalTrxId: 'prov', statusCocok: STATUS_COCOK_EMAIL.MATCHED, statusResolusi: 'terbuka' };
-  const hasil = rencanakanHapusProvisionalTakTerjangkau(transaksi, [email]);
-  assert.equal(hasil.length, 1);
-  assert.equal(hasil[0].email.id, 'e');
-});
-
-test('rencanakanPulihkanProvisionalHilang: rujukan ke baris yang sudah tidak ada', () => {
-  const ada = new Set(['provAda']);
-  const e = (id, extra) => ({ id, statusResolusi: 'terbuka', statusCocok: STATUS_COCOK_EMAIL.AMBIGUOUS, ...extra });
+test('rencanakanSetelahHapus: email yang tidak merujuk baris terhapus tidak disentuh', () => {
   const daftar = [
-    e('hilang', { provisionalTrxId: 'provHilang' }),
-    e('ada', { provisionalTrxId: 'provAda' }),
-    e('tanpa', { provisionalTrxId: '' }),
-    e('matched', { provisionalTrxId: 'provHilang2', statusCocok: STATUS_COCOK_EMAIL.MATCHED }),
-    e('abaikan', { provisionalTrxId: 'provHilang3', statusResolusi: 'diabaikan' }),
+    emailRujuk('a', { provisionalTrxId: 'provLain' }),
+    emailRujuk('b', { statusCocok: STATUS_COCOK_EMAIL.MATCHED, transaksiCocokId: 'pdfLain' }),
+    emailRujuk('c'),
   ];
-  assert.deepEqual(rencanakanPulihkanProvisionalHilang(daftar, ada).map((x) => x.id), ['hilang']);
+  assert.deepEqual(rencanakanSetelahHapus(daftar, new Set(['pdf1', 'prov1'])), []);
 });
