@@ -26,10 +26,10 @@ import * as emailTrxRepo from '../../data/repo/email-transactions.js';
 import * as trxRepo from '../../data/repo/transactions.js';
 import * as kategoriRepo from '../../data/repo/categories.js';
 import * as kamusRepo from '../../data/repo/merchant-dictionary.js';
-import { STATUS_COCOK_EMAIL, STATUS_RESOLUSI_EMAIL } from '../../domain/entities.js';
+import { STATUS_COCOK_EMAIL, STATUS_RESOLUSI_EMAIL, SUMBER } from '../../domain/entities.js';
 import { tarikTransaksiEmail, rentangTanggalKandidat } from '../../services/email-feed-sync.js';
 import { eksporUntukTinjauan, terapkanHasilTinjauan } from '../../services/email-review.js';
-import { hapusProvisionalManual } from '../../services/email-ledger-merge.js';
+import { hapusProvisionalManual, tautkanManual } from '../../services/email-ledger-merge.js';
 import { unduhBlob } from '../../services/export.js';
 import { dataView } from '../components/data-view.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
@@ -389,7 +389,12 @@ export async function mount(wadah) {
 
     async function muat() {
       const rentang = rentangTanggalKandidat(trx.waktuTransaksi, HARI_CARI_MANUAL);
-      const kandidat = rentang ? await trxRepo.rentangTanggal(rentang.dari, rentang.sampai) : [];
+      // Baris provisional bukan transaksi e-statement -- menautkan email ke
+      // baris provisionalnya sendiri (atau milik email lain) tidak
+      // membuktikan apa pun dan tidak menghapus dobelnya.
+      const kandidat = rentang
+        ? (await trxRepo.rentangTanggal(rentang.dari, rentang.sampai)).filter((k) => k.sumber !== SUMBER.EMAIL_PROVISIONAL)
+        : [];
       ganti(daftarEl, kandidat.length
         ? [...kandidat].reverse().map((k) => h('.baris-antara', { style: { padding: '8px 0', borderBottom: '1px solid var(--line)' } }, [
           h('div', null, [
@@ -402,15 +407,9 @@ export async function mount(wadah) {
     }
 
     async function pilih(k) {
-      await emailTrxRepo.simpanSatu({
-        ...trx,
-        statusCocok: STATUS_COCOK_EMAIL.MATCHED,
-        transaksiCocokId: k.id,
-        skorCocok: null,
-        alasanCocok: 'manual_link',
-      });
+      await tautkanManual(trx, k);
       m.tutup();
-      toastSukses('Transaksi ditautkan.');
+      toastSukses(trx.provisionalTrxId ? 'Transaksi ditautkan, baris provisional dihapus.' : 'Transaksi ditautkan.');
       emit(EVENT.DATA_BERUBAH, { sumber: 'email-tautkan-manual' });
     }
   }

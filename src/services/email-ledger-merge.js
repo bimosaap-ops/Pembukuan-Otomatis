@@ -802,3 +802,46 @@ export async function hapusProvisionalManual(trxEmail) {
 
   return provisional;
 }
+
+/**
+ * Tautkan manual satu transaksi email ke baris e-statement pilihan pengguna.
+ * Sama seperti gantikanProvisional() pada rekonsiliasi otomatis: begitu ada
+ * baris statement yang mewakilinya, baris provisional-nya WAJIB hilang --
+ * menandai MATCHED saja (perilaku lama) membiarkan transaksi yang sama
+ * terhitung dua kali di saldo.
+ */
+export async function tautkanManual(trxEmail, trxStatement) {
+  let email = trxEmail;
+  if (trxEmail.provisionalTrxId && trxEmail.provisionalTrxId !== trxStatement.id) {
+    await hapusProvisionalManual(trxEmail);
+    email = { ...trxEmail, provisionalTrxId: '' };
+  }
+  await emailTrxRepo.simpanSatu({
+    ...email,
+    statusCocok: STATUS_COCOK_EMAIL.MATCHED,
+    transaksiCocokId: trxStatement.id,
+    skorCocok: null,
+    alasanCocok: 'manual_link',
+  });
+}
+
+/**
+ * Transaksi email yang sudah MATCHED ke baris statement tapi masih memegang
+ * baris provisional -- sisa "Tautkan manual" versi lama. Murni, diekspor
+ * untuk tes; dijalankan oleh bersihkanProvisionalTertaut() (data/migrasi.js).
+ *
+ * @param {Array} emailLokal record transaksi email
+ * @param {Map<string, object>} transaksiPerId transaksi ledger per id
+ * @returns {Array} transaksi email yang provisional-nya harus dihapus
+ */
+export function rencanakanBersihProvisionalTertaut(emailLokal, transaksiPerId) {
+  return (emailLokal || []).filter((e) => {
+    if (e.statusCocok !== STATUS_COCOK_EMAIL.MATCHED) return false;
+    if (!e.provisionalTrxId || !e.transaksiCocokId || e.provisionalTrxId === e.transaksiCocokId) return false;
+    const statement = transaksiPerId.get(e.transaksiCocokId);
+    const provisional = transaksiPerId.get(e.provisionalTrxId);
+    return Boolean(statement && provisional
+      && statement.sumber !== SUMBER.EMAIL_PROVISIONAL
+      && provisional.sumber === SUMBER.EMAIL_PROVISIONAL);
+  });
+}
