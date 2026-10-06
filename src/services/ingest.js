@@ -315,13 +315,9 @@ export async function simpanDraft(draft, pilihan = {}) {
   // statement yang baru saja masuk ikut dipertimbangkan.
   const uploadAkun = (await uploadRepo.daftar()).filter((u) => u.accountId === akun.id);
   const saldoAwalBaru = koreksiSaldoAwalAkun(akun.saldoAwal, uploadAkun);
-  if (saldoAwalBaru !== null) {
+  const saldoAwalDikoreksi = saldoAwalBaru !== null;
+  if (saldoAwalDikoreksi) {
     akun = await akunRepo.simpanAkun({ ...akun, saldoAwal: saldoAwalBaru });
-    // Tab "Akun" di Sheet adalah sumber angka Saldo Awal untuk tab "Kontrol
-    // Saldo"; tanpa dikirim balik, koreksinya cuma berlaku di perangkat ini
-    // dan kontrol saldonya tetap melaporkan selisih yang sudah tidak ada.
-    // Latar belakang, tidak ditunggu — sama seperti jalur Sheets lainnya.
-    syncEntitasKeSheets('akun', [akun]).catch((e) => console.warn('Sheets akun gagal:', e));
   }
 
   const transaksi = siapSimpan.map((b, i) => buatTransaksi({
@@ -366,6 +362,17 @@ export async function simpanDraft(draft, pilihan = {}) {
   for (const accountId of seluruhAkunTersentuh) {
     const hasilHitung = await akunRepo.hitungUlangSaldo(accountId);
     if (accountId === akun.id) akunTerbaru = hasilHitung;
+  }
+  // Tab "Akun" di Sheet adalah sumber angka Saldo Awal untuk tab "Kontrol
+  // Saldo"; tanpa dikirim balik, koreksinya cuma berlaku di perangkat ini
+  // dan kontrol saldonya tetap melaporkan selisih yang sudah tidak ada.
+  // Dikirim SESUDAH hitungUlangSaldo di atas, bukan saat Saldo Awal
+  // dikoreksi: baris Akun membawa kolom Saldo juga, dan mengirimnya lebih
+  // awal membuat Sheet mencatat saldo lama -- rekening baru dari statement
+  // tanpa transaksi tercatat bersaldo 0 padahal Saldo Awalnya sudah benar.
+  // Latar belakang, tidak ditunggu — sama seperti jalur Sheets lainnya.
+  if (saldoAwalDikoreksi && akunTerbaru) {
+    syncEntitasKeSheets('akun', [akunTerbaru]).catch((e) => console.warn('Sheets akun gagal:', e));
   }
   emit(EVENT.DATA_BERUBAH, { sumber: 'upload', uploadedFileId: rekaman.id });
   onLangkah('selesai', 'selesai', 'Saldo dan dashboard diperbarui');
