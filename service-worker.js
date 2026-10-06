@@ -17,10 +17,16 @@
  *     tidak berubah tanpa ganti nama berkas, ukurannya besar, dan mengunduhnya
  *     ulang tiap kali hanya membuang kuota.
  *
+ * Semua pengambilan kode aplikasi melewati cache HTTP browser (`reload` saat
+ * pemasangan, `no-cache` saat berjalan). GitHub Pages mengizinkan browser
+ * menyimpan berkas sampai 10 menit; tanpa ini, tepat setelah deploy sebagian
+ * modul datang dari versi lama dan sebagian dari versi baru, impornya tidak
+ * cocok, dan aplikasi berhenti di "Memuat aplikasi…".
+ *
  * Naikkan CACHE_NAME setiap kali aset berubah agar versi lama dibersihkan.
  */
 
-const CACHE_NAME = 'pembukuan-v36';
+const CACHE_NAME = 'pembukuan-v37';
 
 /** Berapa lama menunggu jaringan sebelum memakai salinan cache. */
 const BATAS_JARINGAN_MS = 2500;
@@ -123,7 +129,7 @@ self.addEventListener('install', (event) => {
     const cache = await caches.open(CACHE_NAME);
     // addAll gagal seluruhnya bila satu berkas meleset; disimpan satu per satu
     // agar satu aset yang hilang tidak membatalkan pemasangan.
-    await Promise.all(ASET.map((url) => cache.add(url).catch(() => {})));
+    await Promise.all(ASET.map((url) => cache.add(new Request(url, { cache: 'reload' })).catch(() => {})));
     await self.skipWaiting();
   })());
 });
@@ -146,7 +152,7 @@ self.addEventListener('fetch', (event) => {
   if (request.mode === 'navigate') {
     event.respondWith((async () => {
       try {
-        const jaringan = await fetch(request);
+        const jaringan = await fetch(request.url, { cache: 'no-cache', credentials: 'same-origin' });
         const cache = await caches.open(CACHE_NAME);
         cache.put('./index.html', jaringan.clone());
         return jaringan;
@@ -188,7 +194,7 @@ async function jaringanDulu(request) {
 
   try {
     const jaringan = await Promise.race([
-      fetch(request),
+      fetch(request, { cache: 'no-cache' }),
       new Promise((_, tolak) => setTimeout(() => tolak(new Error('lambat')), BATAS_JARINGAN_MS)),
     ]);
     if (jaringan && jaringan.ok) {
