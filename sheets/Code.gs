@@ -284,6 +284,7 @@ const MERAH = '#cc0000';
 
 /** Menu di spreadsheet, supaya perbaikan tidak perlu buka editor Apps Script. */
 function onOpen() {
+  try { pastikanFilterMencakupHash(getSheet()); } catch (e) { console.warn('Cek filter gagal:', e); }
   SpreadsheetApp.getUi()
     .createMenu('Pembukuan')
     .addItem('Bangun ulang Dashboard & rapikan data', 'bangunUlangDashboard')
@@ -547,6 +548,44 @@ function getSheet() {
   // dan permintaannya terlihat gagal. Sekarang hanya permintaan yang secara
   // eksplisit meminta `rapikan` yang membayarnya (lihat doPost).
   return sh;
+}
+
+/**
+ * Pastikan filter tab data mencakup kolom A (Hash).
+ *
+ * Kolom Hash disembunyikan, jadi filter yang dipasang lewat UI dengan mudah
+ * terbentang mulai kolom B. Mengurutkan lewat filter seperti itu memindahkan
+ * isi baris (tanggal, nominal, ID Transaksi, ...) tapi MENINGGALKAN Hash di
+ * tempatnya -- setiap Hash lalu menempel ke transaksi lain. Upsert dan hapus
+ * memakai Hash sebagai kunci, jadi sesudahnya pembaruan menimpa baris yang
+ * salah dan penghapusan provisional mengenai baris statement (insiden
+ * 06/10/2026: filter B1:T2248, 61 baris PDF Agustus terhapus; kemungkinan
+ * besar juga penyebab "81 baris tertukar" yang dicatat di tulisPembaruan()).
+ *
+ * Filter yang tidak mulai di kolom A dibuat ulang mulai kolom A dengan
+ * kriteria kolom yang sama, sehingga pengurutan berikutnya selalu
+ * memindahkan baris utuh.
+ *
+ * @returns {boolean} true bila filter diperbaiki
+ */
+function pastikanFilterMencakupHash(sh) {
+  const filter = sh.getFilter();
+  if (!filter) return false;
+  const rng = filter.getRange();
+  if (rng.getColumn() === 1) return false;
+
+  const kolomAwal = rng.getColumn();
+  const kolomAkhir = rng.getLastColumn();
+  const kriteria = [];
+  for (let k = kolomAwal; k <= kolomAkhir; k += 1) {
+    const c = filter.getColumnFilterCriteria(k);
+    if (c) kriteria.push({ k, c: c.copy().build() });
+  }
+  filter.remove();
+  const baru = sh.getRange(1, 1, sh.getMaxRows(), Math.max(kolomAkhir, sh.getLastColumn(), HEADER.length))
+    .createFilter();
+  kriteria.forEach(({ k, c }) => baru.setColumnFilterCriteria(k, c));
+  return true;
 }
 
 /**
@@ -2241,6 +2280,15 @@ function tanganiEntitas(data, header, kolom, namaTab) {
 
   const tambah = [];
   const perbarui = [];
+  // Angka statement yang kosong di aplikasi berarti "tidak terbaca dari PDF",
+  // bukan "hapus angkanya": banyak baris diisi tangan langsung di Sheet
+  // (statement lama yang ringkasannya tidak terbaca). Tanpa ini, "Kirim semua
+  // sekarang" mengosongkan seluruh angka yang diketik pengguna.
+  const kolomPertahankan = namaTab === STATEMENT_SHEET_NAME
+    ? ['saldoAwalStatement', 'saldoAkhirStatement', 'mutasiDebetStatement', 'mutasiKreditStatement']
+      .map((k) => kolom.indexOf(k)).filter((i) => i !== -1)
+    : [];
+  const isiLama = kolomPertahankan.length && last > 1 ? sh.getRange(2, 1, last - 1, lebar).getValues() : [];
   for (const r of dedup.values()) {
     const id = String(r.id);
     const nilai = kolom.map((k) => {
@@ -2248,6 +2296,12 @@ function tanganiEntitas(data, header, kolom, namaTab) {
       return v === null || v === undefined ? '' : v;
     });
     const baris = nomorBaris[id];
+    if (baris && kolomPertahankan.length) {
+      const lamaBaris = isiLama[baris - 2] || [];
+      kolomPertahankan.forEach((i) => {
+        if (nilai[i] === '' && lamaBaris[i] !== '' && lamaBaris[i] !== null && lamaBaris[i] !== undefined) nilai[i] = lamaBaris[i];
+      });
+    }
     if (baris && !ditombstone[baris]) perbarui.push({ baris, nilai });
     else if (!baris) tambah.push(nilai);
   }
@@ -3378,7 +3432,10 @@ function doPost(e) {
       const sejak = data.sejak ? new Date(data.sejak) : null;
       const sejakValid = sejak && !isNaN(sejak.getTime()) ? sejak : null;
       const hasil = tarikTransaksi(sejakValid);
-      return json({ ok: true, baris: hasil.baris, dihapus: hasil.dihapus, sekarang: new Date().toISOString() });
+      return json({
+        ok: true, baris: hasil.baris, dihapus: hasil.dihapus, dihapusHash: hasil.dihapusHash,
+        sekarang: new Date().toISOString(),
+      });
     } catch (err) {
       return json({ ok: false, error: String(err && err.message || err) });
     }
@@ -3469,6 +3526,11 @@ function doPost(e) {
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sh = getSheet();
+    try {
+      pastikanFilterMencakupHash(sh);
+    } catch (e) {
+      console.warn('Cek filter gagal:', e);
+    }
     const last = sh.getLastRow();
     const lebar = HEADER.length;
     // Dari blok data lama yang dibutuhkan hanyalah kolom Hash — dan, saat
@@ -3482,6 +3544,12 @@ function doPost(e) {
       const h = String(r[0] || '');
       if (h) nomorBaris[h] = i + 2; // +2: baris 1 header, array mulai dari 0
     });
+    // ID Transaksi per baris, untuk memastikan Hash di kolom A masih milik
+    // transaksi yang sama sebelum barisnya ditimpa (lihat konflik di bawah).
+    // Hanya dibaca bila ada yang mungkin diperbarui.
+    const kolomId = HEADER.indexOf('ID Transaksi') + 1;
+    const perluId = !hanyaSelaras && rows.length > 0 && last > 1;
+    const idPerBaris = perluId ? sh.getRange(2, kolomId, last - 1, 1).getValues().map((r) => String(r[0] || '')) : [];
 
     // Baris mana yang harus hilang dari Sheet — dicatat sebagai HASH, bukan
     // nomor baris. hapusBaris() membaca ulang kolom Hash tepat sebelum
@@ -3526,6 +3594,11 @@ function doPost(e) {
 
     const tambah = [];
     const perbarui = [];
+    // Hash yang di Sheet menempel ke ID Transaksi LAIN: barisnya sudah
+    // tergeser dari Hash-nya (mis. diurutkan lewat filter yang tidak mencakup
+    // kolom A). Menimpanya berarti menghapus isi transaksi lain, jadi
+    // dilewati dan dilaporkan, bukan ditulis.
+    const konflik = [];
     // Payload identitas tidak memuat isi baris. Menuliskannya akan mengganti
     // tanggal, nominal, dan kategori yang sudah benar dengan sel kosong — jadi
     // jalur tulis dilewati seluruhnya, bukan sekadar "kebetulan tidak kena".
@@ -3537,6 +3610,8 @@ function doPost(e) {
       const saldo = r.saldo === '' || r.saldo === null || r.saldo === undefined ? '' : Number(r.saldo);
       const baru = [hash, r.tanggal||'', r.deskripsi||'', Number(r.nominal)||0, Number(r.debit)||0, Number(r.kredit)||0, r.kategoriId||'', r.bank||'', r.nomorRekening||'', r.namaPemilik||'', r.sumber||'', r.uploadedFileId||'', ts, r.kategoriNama||'', r.transferInternal === true, saldo, r.id||'', r.diubahPada||''];
       const baris = hash ? nomorBaris[hash] : null;
+      const idSheet = baris ? idPerBaris[baris - 2] : '';
+      if (baris && idSheet && r.id && idSheet !== String(r.id)) { konflik.push(hash); continue; }
       if (baris && !dibuang[baris]) perbarui.push({ baris, nilai: baru });
       else if (!baris) tambah.push(baru);
     }
@@ -3567,6 +3642,7 @@ function doPost(e) {
       updated: perbarui.length,
       dihapus: jumlahTerhapus,
       dipertahankan: dipertahankan,
+      konflik: konflik.length,
     }));
   } catch (err) {
     return json({ok:false, error: String(err && err.message || err)});
@@ -3848,24 +3924,33 @@ function tarikTransaksi(sejak) {
   }
 
   const dihapus = [];
+  // Hash yang terarsip ikut dikirim, sejajar dengan `dihapus`: aplikasi hanya
+  // menghapus transaksi lokal bila hash-nya sama. Baris yang Hash-nya sempat
+  // tergeser (lihat pastikanFilterMencakupHash) terarsip dengan ID transaksi
+  // LAIN -- tanpa pemeriksaan ini, penghapusan yang salah di Sheet ikut
+  // menghapus transaksi yang benar di aplikasi.
+  const dihapusHash = [];
   const arsip = ss.getSheetByName(ARSIP_SHEET_NAME);
   const lastArsip = arsip ? arsip.getLastRow() : 0;
   if (arsip && lastArsip > 1) {
     const headerArsip = arsip.getRange(1, 1, 1, arsip.getLastColumn()).getValues()[0].map(String);
     const idxDihapusPada = headerArsip.indexOf('Dihapus Pada');
     const idxIdArsip = headerArsip.indexOf('ID Transaksi');
+    const idxHashArsip = headerArsip.indexOf('Hash');
     if (idxIdArsip !== -1) {
       const nilaiArsip = arsip.getRange(2, 1, lastArsip - 1, headerArsip.length).getValues();
       nilaiArsip.forEach((r) => {
         const dihapusPada = r[idxDihapusPada] instanceof Date ? r[idxDihapusPada] : new Date(r[idxDihapusPada]);
         if (sejak && !(dihapusPada > sejak)) return;
         const id = String(r[idxIdArsip] || '');
-        if (id) dihapus.push(id);
+        if (!id) return;
+        dihapus.push(id);
+        dihapusHash.push(idxHashArsip === -1 ? '' : String(r[idxHashArsip] || ''));
       });
     }
   }
 
-  return { baris, dihapus };
+  return { baris, dihapus, dihapusHash };
 }
 
 /**

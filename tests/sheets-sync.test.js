@@ -19,6 +19,7 @@ import {
   transaksiDariBarisSheet, barisStatementUntukSheet,
 } from '../src/services/sheets-sync.js';
 import { buatTransaksi, buatAkun, buatKategori, buatFileUpload } from '../src/domain/entities.js';
+import { bolehHapusDariArsip } from '../src/services/transaksi-sync.js';
 
 /* ==========================================================================
    barisUntukSheet
@@ -609,4 +610,24 @@ test('barisStatementUntukSheet memakai jumlah yang BENAR-BENAR tersimpan, bukan 
     id: 'upl1', jumlahTransaksi: 12, berhasil: 10, duplikat: 2,
   }));
   assert.equal(row.jumlahTransaksi, 10);
+});
+
+/* --------------------------------------------------------------------------
+   bolehHapusDariArsip — penghapusan lokal dari _Arsip dicek lewat hash
+   -------------------------------------------------------------------------- */
+
+test('bolehHapusDariArsip: hash arsip sama dengan hash lokal -> hapus', () => {
+  assert.equal(bolehHapusDariArsip({ hash: 'a#1' }, 'a#1'), true);
+});
+
+test('bolehHapusDariArsip: hash arsip beda -> JANGAN hapus (Hash tergeser di Sheet)', () => {
+  // Insiden 06/10/2026: baris provisional dihapus lewat hash-nya, tapi hash
+  // itu sudah menempel ke baris PDF Agustus; arsipnya membawa ID transaksi
+  // PDF itu, dan aplikasi ikut menghapusnya.
+  assert.equal(bolehHapusDariArsip({ hash: 'pdf#1' }, 'prov#etrxe_1'), false);
+});
+
+test('bolehHapusDariArsip: arsip tanpa hash (Apps Script lama) tetap dihapus seperti dulu', () => {
+  assert.equal(bolehHapusDariArsip({ hash: 'a#1' }, ''), true);
+  assert.equal(bolehHapusDariArsip({ hash: 'a#1' }, undefined), true);
 });

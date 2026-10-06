@@ -95,8 +95,25 @@ async function terapkanBarisTransaksi(row) {
   // tidak ikut disinkronkan (catatan, uploadedFileId, urutan, dibuatPada,
   // baseHash, deskripsiRaw) harus tetap seperti semula, bukan tertimpa
   // default kosong dari buatTransaksi().
-  await trxRepo.simpanSatu({ ...lokal, ...mapped, accountId });
+  // Hash TIDAK ikut ditarik: hash dibentuk aplikasi dan menjadi kunci upsert
+  // Sheet. Hash yang berbeda untuk ID yang sama hanya mungkin bila kolom Hash
+  // di Sheet tergeser dari barisnya (diurutkan lewat filter yang tidak
+  // mencakup kolom A) -- mengadopsinya berarti penghapusan berikutnya lewat
+  // hash itu mengenai transaksi ini.
+  await trxRepo.simpanSatu({ ...lokal, ...mapped, hash: lokal.hash || mapped.hash, accountId });
   return { status: 'diperbarui', accountId, accountIdLama };
+}
+
+/**
+ * Boleh-tidaknya transaksi lokal dihapus karena ID-nya muncul di _Arsip.
+ * Hash arsip yang berbeda dari hash lokal berarti yang terhapus di Sheet
+ * adalah baris lain yang kebetulan membawa ID ini (Hash tergeser dari
+ * barisnya) -- transaksi lokalnya tidak boleh ikut hilang. Arsip tanpa hash
+ * (Apps Script lama) tetap diperlakukan seperti dulu.
+ */
+export function bolehHapusDariArsip(lokal, hashArsip) {
+  if (!hashArsip || !lokal?.hash) return true;
+  return lokal.hash === hashArsip;
 }
 
 /**
@@ -113,9 +130,10 @@ export async function tarikDanGabungTransaksi() {
   const tersentuh = new Set();
   const ringkasan = { baru: 0, diperbarui: 0, dihapus: 0, dilewati: 0 };
 
-  for (const id of hasil.dihapus) {
+  for (const [i, id] of hasil.dihapus.entries()) {
     const lokal = await trxRepo.satu(id);
     if (!lokal) continue;
+    if (!bolehHapusDariArsip(lokal, hasil.dihapusHash?.[i])) { ringkasan.dilewati += 1; continue; }
     await trxRepo.hapusTransaksi(id);
     tersentuh.add(lokal.accountId);
     ringkasan.dihapus += 1;

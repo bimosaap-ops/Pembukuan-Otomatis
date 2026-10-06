@@ -620,7 +620,7 @@ function barisPenuh(i) {
  */
 function jalankanDoPost({
   barisAda = 0, payload, kunciMacet = false, gridTambahan = [], arsipGrid = null,
-  statementGrid = null, setelahBacaPertama = null,
+  statementGrid = null, setelahBacaPertama = null, filterMulaiKolom = null,
 }) {
   const grid = [HEADER_UJI.slice()];
   for (let i = 0; i < barisAda; i += 1) {
@@ -643,6 +643,13 @@ function jalankanDoPost({
   // Dipanggil sekali, tepat sesudah bacaan pertama blok data Transaksi — untuk
   // meniru Sheet yang berubah di tengah permintaan (baris bergeser).
   let kaitBaca = setelahBacaPertama;
+  // Filter tiruan di tab Transaksi (null = tanpa filter).
+  const filterDibuat = [];
+  let filterAktif = filterMulaiKolom ? {
+    getRange: () => ({ getColumn: () => filterMulaiKolom, getLastColumn: () => 20 }),
+    getColumnFilterCriteria: (k) => (k === 2 ? { copy: () => ({ build: () => 'kriteriaTanggal' }) } : null),
+    remove: () => { filterAktif = null; },
+  } : null;
   const props = {};
 
   function buatSheet(nama, isi) {
@@ -657,6 +664,7 @@ function jalankanDoPost({
       getMaxRows: () => Math.max(isi.length, 1000),
       getLastRow: () => isi.length,
       getBandings: () => [],
+      getFilter: () => (nama === 'Transaksi' ? filterAktif : null),
       insertColumnsAfter: (_a, n) => { maxKolom += n; },
       appendRow: (baris) => { isi.push(baris.slice()); },
       deleteRow: (n) => { dihapusBaris.push(n); isi.splice(n - 1, 1); },
@@ -674,6 +682,17 @@ function jalankanDoPost({
           }
           if (nama === 'Transaksi' && kaitBaca && baris === 2 && kolom === 1 && tinggi > 1) { const f = kaitBaca; kaitBaca = null; f(isi); }
           return out;
+        },
+        createFilter() {
+          const baru = { baris, kolom, lebar, kriteria: {} };
+          filterDibuat.push(baru);
+          filterAktif = {
+            getRange: () => ({ getColumn: () => kolom, getLastColumn: () => kolom + lebar - 1 }),
+            getColumnFilterCriteria: (k) => baru.kriteria[k] || null,
+            remove: () => { filterAktif = null; },
+            setColumnFilterCriteria: (k, c) => { baru.kriteria[k] = c; },
+          };
+          return filterAktif;
         },
         setValues(nilai) {
           tulisan.push({ sheet: nama, baris, kolom, tinggi, lebar, nilai });
@@ -741,7 +760,7 @@ function jalankanDoPost({
     `${src}\n; return { doPost };`)(...Object.values(sandbox));
   api.doPost({ postData: { contents: JSON.stringify(payload) } });
 
-  return { balasan, bacaan, tulisan, dibuatSheet, dihapusBaris, grid, lembar, kejadian };
+  return { balasan, bacaan, tulisan, dibuatSheet, dihapusBaris, grid, lembar, kejadian, filterDibuat };
 }
 
 /** Identitas saja: bentuk yang dikirim permintaan penyelarasan. */
@@ -972,6 +991,49 @@ test('perubahan Sheet di-flush sebelum kunci dilepas', () => {
   assert.deepEqual(e.kejadian.slice(-2), ['flush', 'lepas']);
 });
 
+test('filter yang tidak mencakup kolom Hash dibuat ulang mulai kolom A', () => {
+  // Insiden 06/10/2026: filter B1:T2248 di atas kolom Hash yang tersembunyi.
+  // Mengurutkan lewat filter itu memindahkan isi baris tapi tidak Hash-nya.
+  const h = jalankanDoPost({ barisAda: 5, filterMulaiKolom: 2, payload: { rows: [barisPenuh(9)] } });
+  assert.equal(h.balasan.ok, true);
+  assert.equal(h.filterDibuat.length, 1, 'filter harus dibuat ulang');
+  assert.equal(h.filterDibuat[0].kolom, 1, 'filter baru mulai di kolom A');
+  assert.ok(h.filterDibuat[0].lebar >= 18, 'filter baru mencakup seluruh kolom data');
+  assert.equal(h.filterDibuat[0].kriteria[2], 'kriteriaTanggal', 'kriteria kolom yang ada dipertahankan');
+});
+
+test('filter yang sudah mulai di kolom A tidak disentuh', () => {
+  const h = jalankanDoPost({ barisAda: 5, filterMulaiKolom: 1, payload: { rows: [barisPenuh(9)] } });
+  assert.equal(h.filterDibuat.length, 0);
+});
+
+test('upsert TIDAK menimpa baris yang Hash-nya menempel ke ID Transaksi lain', () => {
+  // Hash h1 di Sheet berada di baris milik trxLain (Hash tergeser dari
+  // barisnya). Menimpanya berarti menghapus isi transaksi trxLain.
+  const gridTambahan = [barisTransaksiMentah({ hash: 'h1', dikirim: new Date(), id: 'trxLain', diubahPada: '' })];
+  const kiriman = { ...barisPenuh(1), id: 'trxBenar', deskripsi: 'Isi baru' };
+  const h = jalankanDoPost({ gridTambahan, payload: { rows: [kiriman] } });
+
+  assert.equal(h.balasan.konflik, 1);
+  assert.equal(h.balasan.updated, 0);
+  assert.equal(h.balasan.inserted, 0);
+  assert.equal(h.grid[1][2], 'Desc h1', 'isi baris trxLain tetap utuh');
+  assert.equal(h.grid[1][16], 'trxLain');
+});
+
+test('upsert tetap menimpa baris bila ID-nya sama atau kolom ID masih kosong', () => {
+  const gridTambahan = [
+    barisTransaksiMentah({ hash: 'h1', dikirim: new Date(), id: 'trx1', diubahPada: '' }),
+    barisTransaksiMentah({ hash: 'h2', dikirim: new Date(), id: '', diubahPada: '' }),
+  ];
+  const h = jalankanDoPost({
+    gridTambahan,
+    payload: { rows: [{ ...barisPenuh(1), id: 'trx1' }, { ...barisPenuh(2), id: 'trx2' }] },
+  });
+  assert.equal(h.balasan.konflik, 0);
+  assert.equal(h.balasan.updated, 2);
+});
+
 test('ping tetap menjawab walau kunci skrip sedang dipegang proses lain', () => {
   // Aplikasi memakai ping untuk menjawab "berapa yang sudah mendarat?" tepat
   // sesudah pengiriman putus — yaitu saat kemungkinan besar masih ada
@@ -1058,6 +1120,7 @@ test('tarikTransaksi membaca _Arsip untuk baris yang sudah dihapus sejak checkpo
   });
 
   assert.deepEqual(h.balasan.dihapus, ['trxD']);
+  assert.deepEqual(h.balasan.dihapusHash, ['hD'], 'hash arsip dikirim sejajar dengan ID');
 });
 
 test('tarikTransaksi mengabaikan _Arsip lama yang belum bermigrasi (tanpa kolom ID Transaksi)', () => {
@@ -1111,6 +1174,30 @@ test('entity statement: upsert per ID Upload, bukan menambah baris kedua', () =>
   assert.equal(sh.getLastRow(), 2, 'tetap satu baris data');
   assert.equal(sh.getRange(2, 7, 1, 2).getValues()[0][0], 5000, 'Saldo Awal harus terbarui');
   assert.equal(sh.getRange(2, 7, 1, 2).getValues()[0][1], 7000, 'Saldo Akhir harus terbarui');
+});
+
+test('entity statement: angka kosong dari aplikasi tidak mengosongkan angka di Sheet', () => {
+  // Angka statement lama banyak diketik tangan di Sheet; aplikasi tidak
+  // menyimpannya. "Kirim semua sekarang" dulu mengosongkan seluruhnya.
+  const h = jalankanDoPost({
+    statementGrid: [HEADER_STATEMENT_UJI.slice(), barisStatement('upl1', '2025-07', 100, 200)],
+    payload: {
+      entity: 'statement',
+      rows: [{
+        id: 'upl1', bank: 'BCA', nomorRekening: '1234567890', bulan: '2025-07',
+        periodeAwal: '2025-07-01', periodeAkhir: '2025-07-31',
+        saldoAwalStatement: '', saldoAkhirStatement: '',
+        mutasiDebetStatement: '', mutasiKreditStatement: 3000,
+        jumlahTransaksi: 9, namaFile: 'baru.pdf', tanggalUpload: '2025-08-01T00:00:00.000Z',
+      }],
+    },
+  });
+  const baris = h.lembar.Statement.getRange(2, 1, 1, 13).getValues()[0];
+  assert.equal(baris[6], 100, 'Saldo Awal yang sudah ada dipertahankan');
+  assert.equal(baris[7], 200, 'Saldo Akhir yang sudah ada dipertahankan');
+  assert.equal(baris[8], 1000, 'Mutasi Debet yang sudah ada dipertahankan');
+  assert.equal(baris[9], 3000, 'angka yang dikirim tetap menimpa');
+  assert.equal(baris[10], 9, 'kolom lain tetap terbarui');
 });
 
 test('entity statement: hapus membuang barisnya, bukan menandainya tombstone', () => {
