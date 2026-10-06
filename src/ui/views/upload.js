@@ -107,6 +107,12 @@ function tanganiFile(file, daftarProses, areaReview) {
     }),
   })
     .then(async (draft) => {
+      if (draft.kosongSah) {
+        setStatus('Perlu ditinjau', 'warning');
+        ganti(areaReview, await layarStatementKosong(draft, kartu, areaReview));
+        areaReview.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
       if (!draft.baris.length) {
         setStatus('Gagal dibaca', 'keluar');
         kartu.appendChild(kotakGagalBaca(draft));
@@ -260,6 +266,85 @@ async function layarReview(draft, kartuProses, areaReview) {
       bahaya: true,
     });
     if (ya) ganti(areaReview, null);
+  }
+
+  render();
+  return kartu;
+}
+
+/**
+ * Statement sah yang memang tidak berisi transaksi (lihat
+ * statementSahTanpaTransaksi di domain/validate.js). Tidak ada baris untuk
+ * ditinjau -- yang disimpan hanya rekening dan angka saldonya, supaya
+ * rekening itu tercatat dan tab "Kontrol Saldo" punya pembanding bulan ini.
+ */
+async function layarStatementKosong(draft, kartuProses, areaReview) {
+  const akun = await akunRepo.daftar();
+  let accountId = draft.akunCocok?.id || '';
+  const r = draft.hasil.ringkasan;
+
+  const isi = h('.tumpuk');
+  const kartu = h('.kartu', null, [
+    h('.kartu__kepala', null, [
+      h('div', null, [
+        h('.kartu__judul', { text: 'Statement tanpa transaksi' }),
+        h('.kartu__ket', { text: `${draft.file.nama} · ${draft.hasil.namaAdapter}` }),
+      ]),
+      h('span.lencana.lencana--warning', { text: 'Belum tersimpan' }),
+    ]),
+    isi,
+  ]);
+
+  function render() {
+    ganti(isi, [
+      h('.info-kotak', null, [
+        ikon('cek', 18),
+        h('div', null, [
+          h('b', { text: 'Tidak ada transaksi pada periode ini. ' }),
+          `Statement ${tanggalTampil(draft.periodeAwal)} s/d ${tanggalTampil(draft.periodeAkhir)} sah, `
+            + `saldonya tetap ${rupiah(r.saldoAkhir)}. Yang disimpan hanya rekening dan angka saldonya, `
+            + 'tidak ada transaksi yang ditambahkan.',
+        ]),
+      ]),
+      pilihRekening(draft, akun, accountId, (id) => { accountId = id; render(); }),
+      h('.grid-kpi', null, [
+        kpi('Saldo awal', rupiah(r.saldoAwal), 'netral'),
+        kpi('Saldo akhir', rupiah(r.saldoAkhir), 'netral'),
+      ]),
+      panelTeksMentah(draft.teksMentah),
+      h('.baris.bungkus.mt-2', null, [
+        h('button.btn-primary', { type: 'button', onclick: () => simpan() },
+          [ikon('cek', 18), h('span', { text: 'Simpan statement' })]),
+        h('button', { type: 'button', onclick: () => ganti(areaReview, null) }, 'Batalkan berkas ini'),
+      ]),
+    ]);
+  }
+
+  async function simpan() {
+    if (draft.pernahAda) {
+      const lanjut = await konfirmasi({
+        judul: 'Berkas ini pernah di-upload',
+        pesan: `Berkas dengan isi yang sama persis sudah pernah diproses pada ${tanggalTampil(String(draft.pernahAda.tanggalUpload).slice(0, 10))}. Menyimpannya lagi menambah satu baris riwayat dan satu baris di tab Statement. Lanjutkan?`,
+        tombolYa: 'Lanjutkan simpan',
+      });
+      if (!lanjut) return;
+    }
+    try {
+      const hasil = await simpanDraft(draft, { accountId, barisDipilih: [] });
+      toastSukses(`Statement tersimpan ke ${hasil.akun.bank} ${hasil.akun.nomorRekening || ''}`.trim());
+      kartuProses.querySelector('.lencana').className = 'lencana lencana--masuk';
+      kartuProses.querySelector('.lencana').textContent = 'Tersimpan';
+      ganti(areaReview, h('.kartu', null, [
+        h('.baris.bungkus', null, [
+          h('span.lencana.lencana--masuk', { text: 'Selesai' }),
+          h('div.isi-penuh', { text: `Statement tanpa transaksi tersimpan. Saldo ${hasil.akun.bank} ${hasil.akun.nomorRekening || ''}: ${rupiah(r.saldoAkhir)}.` }),
+          h('button.btn-kecil', { type: 'button', onclick: () => pergiKe('rekening') }, 'Lihat Rekening'),
+        ]),
+      ]));
+    } catch (e) {
+      console.error(e);
+      toastGagal(`Gagal menyimpan: ${e.message}`);
+    }
   }
 
   render();

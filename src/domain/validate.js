@@ -299,3 +299,29 @@ export function transaksiKembarAntarUpload(transaksi) {
 
   return { jumlah, nilai, hash };
 }
+
+/**
+ * Apakah hasil parsing ini statement SAH yang memang tidak berisi transaksi
+ * (BCA mencetak "* TIDAK ADA TRANSAKSI PADA BULAN INI *") -- bukan berkas
+ * yang gagal dibaca. Murni, diekspor untuk tes.
+ *
+ * Bedanya penting: statement kosong tetap membawa angka bank (saldo awal &
+ * akhir) yang dibutuhkan tab "Kontrol Saldo", dan untuk rekening yang jarang
+ * dipakai (mis. RDN) bisa jadi satu-satunya statement yang pernah ada --
+ * menolaknya berarti rekening itu dan saldonya tidak pernah tercatat.
+ *
+ * Syaratnya sengaja ketat, supaya berkas yang benar-benar gagal dibaca
+ * (pindaian, format asing) tidak lolos sebagai "kosong": ringkasan bank
+ * terbaca LENGKAP, mutasi debet DAN kredit tercetak nol, saldo awal sama
+ * dengan saldo akhir, dan periode statement diketahui dari kepalanya.
+ */
+export function statementSahTanpaTransaksi(hasil) {
+  if (!hasil || (hasil.transaksi && hasil.transaksi.length)) return false;
+  const r = hasil.ringkasan;
+  if (!r) return false;
+  const angka = (v) => v !== null && v !== undefined && Number.isFinite(Number(v));
+  if (![r.saldoAwal, r.saldoAkhir, r.mutasiDebet, r.mutasiKredit].every(angka)) return false;
+  if (Number(r.mutasiDebet) !== 0 || Number(r.mutasiKredit) !== 0) return false;
+  if (Math.abs(Number(r.saldoAwal) - Number(r.saldoAkhir)) >= 0.005) return false;
+  return Boolean(hasil.periodeAwal && hasil.periodeAkhir);
+}

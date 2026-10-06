@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 import { kunciDasar, bubuhiBaseHash, tandaiDuplikat, paksaSimpan, ringkasDuplikat } from '../src/domain/dedupe.js';
 import { tentukanKategori, saranPola, tambahPola, KATEGORI_BAWAAN } from '../src/domain/categorize.js';
 import { KATEGORI_LAINNYA_KELUAR, KATEGORI_LAINNYA_MASUK } from '../src/domain/entities.js';
-import { uploadTumpangTindih, transaksiKembarAntarUpload } from '../src/domain/validate.js';
+import {
+  uploadTumpangTindih, transaksiKembarAntarUpload, statementSahTanpaTransaksi,
+} from '../src/domain/validate.js';
 import { parseStatement } from '../src/parsers/registry.js';
 import { statementBCA, statementBCAAgustus } from './fixtures/statements.js';
 
@@ -443,4 +445,44 @@ test('baseHash berbeda tidak pernah dianggap kembar', () => {
     { hash: 'c#1', baseHash: 'c', uploadedFileId: 'upl2', nominal: -1000 },
   ]);
   assert.equal(hasil.jumlah, 0);
+});
+
+/* ==========================================================================
+   statementSahTanpaTransaksi — statement kosong bukan "gagal dibaca"
+   ========================================================================== */
+
+
+function hasilKosong(over = {}) {
+  return {
+    transaksi: [],
+    ringkasan: { saldoAwal: 30341.87, saldoAkhir: 30341.87, mutasiDebet: 0, mutasiKredit: 0 },
+    periodeAwal: '2026-06-01',
+    periodeAkhir: '2026-06-30',
+    ...over,
+  };
+}
+
+test('statementSahTanpaTransaksi: BCA RDN "TIDAK ADA TRANSAKSI" dikenali sebagai statement sah', () => {
+  assert.equal(statementSahTanpaTransaksi(hasilKosong()), true);
+});
+
+test('statementSahTanpaTransaksi: berkas yang ringkasannya tidak terbaca tetap dianggap gagal', () => {
+  assert.equal(statementSahTanpaTransaksi(hasilKosong({ ringkasan: null })), false);
+  assert.equal(statementSahTanpaTransaksi(hasilKosong({
+    ringkasan: { saldoAwal: 30341.87, saldoAkhir: 30341.87, mutasiDebet: null, mutasiKredit: null },
+  })), false, 'mutasi wajib tercetak nol, bukan sekadar tidak terbaca');
+});
+
+test('statementSahTanpaTransaksi: ada mutasi tapi barisnya tidak terbaca -> tetap gagal', () => {
+  assert.equal(statementSahTanpaTransaksi(hasilKosong({
+    ringkasan: { saldoAwal: 5168940.19, saldoAkhir: 493646.19, mutasiDebet: 4709294, mutasiKredit: 34000 },
+  })), false);
+  assert.equal(statementSahTanpaTransaksi(hasilKosong({
+    ringkasan: { saldoAwal: 100, saldoAkhir: 90, mutasiDebet: 0, mutasiKredit: 0 },
+  })), false, 'saldo berubah tanpa mutasi berarti ada yang tidak terbaca');
+});
+
+test('statementSahTanpaTransaksi: periode wajib diketahui, dan statement berisi transaksi bukan "kosong"', () => {
+  assert.equal(statementSahTanpaTransaksi(hasilKosong({ periodeAwal: '' })), false);
+  assert.equal(statementSahTanpaTransaksi(hasilKosong({ transaksi: [{ nominal: 1 }] })), false);
 });
