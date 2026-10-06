@@ -26,10 +26,11 @@ import * as emailTrxRepo from '../../data/repo/email-transactions.js';
 import * as trxRepo from '../../data/repo/transactions.js';
 import * as kategoriRepo from '../../data/repo/categories.js';
 import * as kamusRepo from '../../data/repo/merchant-dictionary.js';
-import { STATUS_COCOK_EMAIL, STATUS_RESOLUSI_EMAIL, SUMBER } from '../../domain/entities.js';
+import { STATUS_COCOK_EMAIL, STATUS_RESOLUSI_EMAIL } from '../../domain/entities.js';
 import { tarikTransaksiEmail, rentangTanggalKandidat } from '../../services/email-feed-sync.js';
 import { eksporUntukTinjauan, terapkanHasilTinjauan } from '../../services/email-review.js';
-import { hapusProvisionalManual, tautkanManual } from '../../services/email-ledger-merge.js';
+import { hapusProvisionalManual, tautkanManual, tautanSah } from '../../services/email-ledger-merge.js';
+import * as akunRepo from '../../data/repo/accounts.js';
 import { unduhBlob } from '../../services/export.js';
 import { dataView } from '../components/data-view.js';
 import { bukaModal, konfirmasi } from '../components/modal.js';
@@ -392,8 +393,13 @@ export async function mount(wadah) {
       // Baris provisional bukan transaksi e-statement -- menautkan email ke
       // baris provisionalnya sendiri (atau milik email lain) tidak
       // membuktikan apa pun dan tidak menghapus dobelnya.
+      // Hanya baris yang sah mewakilinya: bukan provisional, arah sama, dan
+      // bank rekening sama (lihat tautanSah) -- sisi penerima sebuah
+      // transfer di rekening lain bukan transaksi yang sama.
+      const akunMap = await akunRepo.peta();
       const kandidat = rentang
-        ? (await trxRepo.rentangTanggal(rentang.dari, rentang.sampai)).filter((k) => k.sumber !== SUMBER.EMAIL_PROVISIONAL)
+        ? (await trxRepo.rentangTanggal(rentang.dari, rentang.sampai))
+          .filter((k) => tautanSah(trx, k, akunMap.get(k.accountId)))
         : [];
       ganti(daftarEl, kandidat.length
         ? [...kandidat].reverse().map((k) => h('.baris-antara', { style: { padding: '8px 0', borderBottom: '1px solid var(--line)' } }, [
@@ -407,7 +413,12 @@ export async function mount(wadah) {
     }
 
     async function pilih(k) {
-      await tautkanManual(trx, k);
+      try {
+        await tautkanManual(trx, k);
+      } catch (e) {
+        toastGagal(e.message);
+        return;
+      }
       m.tutup();
       toastSukses(trx.provisionalTrxId ? 'Transaksi ditautkan, baris provisional dihapus.' : 'Transaksi ditautkan.');
       emit(EVENT.DATA_BERUBAH, { sumber: 'email-tautkan-manual' });
