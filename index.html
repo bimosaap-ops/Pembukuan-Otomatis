@@ -36,7 +36,7 @@
   <div class="app" id="app">
     <main class="utama">
       <div class="halaman">
-        <div class="kartu dv__kosong">
+        <div class="kartu dv__kosong" id="memuat">
           <strong>Memuat aplikasi…</strong>
           <div class="redup-2">Kalau layar ini tidak berganti, aktifkan JavaScript di browser Anda.</div>
         </div>
@@ -51,6 +51,36 @@
     </div>
   </noscript>
 
+  <script>
+    /* Penjaga: bila modul aplikasi gagal dimuat (biasanya cache berisi campuran
+       berkas versi lama dan baru), tawarkan pembersihan cache alih-alih
+       "Memuat aplikasi…" selamanya. Yang dihapus hanya cache berkas aplikasi;
+       data pembukuan (IndexedDB) tidak disentuh. */
+    setTimeout(function () {
+      var el = document.getElementById('memuat');
+      if (!el) return;
+      el.innerHTML = '<strong>Aplikasi gagal dimuat.</strong>'
+        + '<div class="redup-2">Biasanya karena berkas versi lama tersimpan di cache. '
+        + 'Data pembukuan Anda tidak terpengaruh.</div>'
+        + '<button type="button" class="btn-primary" style="margin-top:12px" id="muat-bersih">Bersihkan cache &amp; muat ulang</button>';
+      document.getElementById('muat-bersih').onclick = function () {
+        /* Unduh ulang paksa setiap berkas yang tadi dicoba dimuat: reload biasa
+           tetap memakai cache HTTP browser untuk modul, dan justru itu yang basi. */
+        var tugas = performance.getEntriesByType('resource')
+          .filter(function (r) { return r.name.indexOf(location.origin) === 0; })
+          .map(function (r) { return fetch(r.name, { cache: 'reload' }).catch(function () {}); });
+        if (window.caches) {
+          tugas.push(caches.keys().then(function (k) { return Promise.all(k.map(function (n) { return caches.delete(n); })); }));
+        }
+        if (navigator.serviceWorker) {
+          tugas.push(navigator.serviceWorker.getRegistrations().then(function (r) {
+            return Promise.all(r.map(function (x) { return x.update().catch(function () {}); }));
+          }));
+        }
+        Promise.all(tugas).catch(function () {}).then(function () { location.reload(); });
+      };
+    }, 8000);
+  </script>
   <script type="module" src="src/ui/app.js"></script>
 </body>
 </html>

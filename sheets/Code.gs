@@ -1989,20 +1989,28 @@ function parseTanggalJamGabungan(teks) {
 
 /** Tanggal ("24 Aug 2026") dan jam ("10:13:35") di field terpisah -> Date, atau null. */
 function parseTanggalJamTerpisah(tgl, jam) {
-  const m = String(tgl || '').match(/(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})/);
-  if (!m) return null;
-  const bulan = BULAN_MAP[m[2].toUpperCase().slice(0, 3)];
-  if (bulan === undefined) return null;
+  let hari;
+  let bulan;
+  let tahun;
+  const angka = String(tgl || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/); // "22/07/2026" (QR Pay)
+  if (angka) {
+    hari = Number(angka[1]); bulan = Number(angka[2]) - 1; tahun = Number(angka[3]);
+  } else {
+    const m = String(tgl || '').match(/(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})/);
+    if (!m) return null;
+    hari = Number(m[1]); bulan = BULAN_MAP[m[2].toUpperCase().slice(0, 3)]; tahun = Number(m[3]);
+  }
+  if (bulan === undefined || bulan < 0 || bulan > 11) return null;
   const j = String(jam || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
   const jj = j ? Number(j[1]) : 0;
   const mm = j ? Number(j[2]) : 0;
   const ss = j && j[3] ? Number(j[3]) : 0;
-  return new Date(Number(m[3]), bulan, Number(m[1]), jj, mm, ss);
+  return new Date(tahun, bulan, hari, jj, mm, ss);
 }
 
 /** Versi parser dicatat per hasil parse — lihat HEADER_TRANSAKSI_EMAIL. */
-const PARSER_VERSION_BCA = 'bca-v1';
-const PARSER_VERSION_PERMATA = 'permata-v1';
+const PARSER_VERSION_BCA = 'bca-v2';
+const PARSER_VERSION_PERMATA = 'permata-v2';
 
 /**
  * Parser email BCA ("Internet Transaction Journal"), dari sampel asli. Dua
@@ -2014,17 +2022,21 @@ const PARSER_VERSION_PERMATA = 'permata-v1';
 function parseEmailBCA(bodyText) {
   const body = String(bodyText || '');
   if (ekstrakField(body, 'Jenis Transaksi')) return parseEmailBCAPembayaran(body);
-  if (ekstrakField(body, 'Jenis Transfer')) return parseEmailBCATransferSesamaBCA(body);
-  return { parsedOk: false, error: 'Template email BCA tidak dikenali (bukan notifikasi pembayaran maupun transfer sesama BCA)' };
+  if (ekstrakField(body, 'Jenis Transfer')) return parseEmailBCATransfer(body);
+  return { parsedOk: false, error: 'Template email BCA tidak dikenali (bukan notifikasi pembayaran maupun transfer)' };
 }
 
-/** Sub-template: notifikasi pembayaran myBCA (QRIS/kartu). */
+/**
+ * Sub-template "Jenis Transaksi": pembayaran QRIS/kartu, Virtual Account,
+ * Transfer QRIS, top up Flazz/e-Wallet, pulsa, SIGNAL. Nominal diambil dari
+ * Total Bayar (sudah termasuk biaya admin) bila ada; lawan transaksi dari
+ * field yang tersedia, atau jenis transaksinya sendiri (mis. "Top Up Flazz").
+ */
 function parseEmailBCAPembayaran(body) {
   const tanggalTransaksi = ekstrakField(body, 'Tanggal Transaksi');
   const jenisTransaksi = ekstrakField(body, 'Jenis Transaksi');
-  // Template QRIS/kartu memakai "Pembayaran Ke"; template Virtual Account
-  // (mis. top-up GoPay) memakai "Nama Perusahaan/Produk" untuk hal yang sama.
-  const pembayaranKe = ekstrakField(body, 'Pembayaran Ke') || ekstrakField(body, 'Nama Perusahaan/Produk');
+  const pembayaranKe = ekstrakField(body, 'Pembayaran Ke') || ekstrakField(body, 'Nama Perusahaan/Produk')
+    || ekstrakField(body, 'Nama Penerima') || jenisTransaksi;
   const lokasiMerchant = ekstrakField(body, 'Lokasi Merchant');
   const pengakuisisi = ekstrakField(body, 'Pengakuisisi');
   const totalBayar = ekstrakField(body, 'Total Bayar');
@@ -2032,7 +2044,8 @@ function parseEmailBCAPembayaran(body) {
   const nomorReferensi = ekstrakField(body, 'Nomor Referensi');
 
   const eventTime = parseTanggalJamGabungan(tanggalTransaksi);
-  const amount = parseNominalIDR(totalBayar);
+  const amount = parseNominalIDR(totalBayar) || parseNominalIDR(ekstrakField(body, 'Nominal Top Up'))
+    || parseNominalIDR(ekstrakField(body, 'Nominal'));
 
   // PRD §11.6: jangan hasilkan transaksi "valid" kalau field minimumnya
   // sendiri tidak ketemu -- lebih baik parsedOk:false yang jelas daripada
@@ -2058,19 +2071,22 @@ function parseEmailBCAPembayaran(body) {
   };
 }
 
-/** Sub-template: transfer ke sesama rekening BCA (bukan pembayaran merchant). */
-function parseEmailBCATransferSesamaBCA(body) {
+/**
+ * Sub-template "Jenis Transfer": transfer ke sesama BCA ("Nominal Tujuan"),
+ * ke bank lain ("Nominal"; biaya transfer muncul sebagai baris terpisah di
+ * e-statement), dan tarik tunai tanpa kartu (lawan transaksi = jenisnya).
+ */
+function parseEmailBCATransfer(body) {
   const tanggalTransaksi = ekstrakField(body, 'Tanggal Transaksi');
   const jenisTransfer = ekstrakField(body, 'Jenis Transfer');
-  const namaPenerima = ekstrakField(body, 'Nama Penerima');
-  const nominalTujuan = ekstrakField(body, 'Nominal Tujuan');
+  const namaPenerima = ekstrakField(body, 'Nama Penerima') || jenisTransfer;
   const nomorReferensi = ekstrakField(body, 'Nomor Referensi');
 
   const eventTime = parseTanggalJamGabungan(tanggalTransaksi);
-  const amount = parseNominalIDR(nominalTujuan);
+  const amount = parseNominalIDR(ekstrakField(body, 'Nominal Tujuan')) || parseNominalIDR(ekstrakField(body, 'Nominal'));
 
   if (!eventTime || !amount || !namaPenerima) {
-    return { parsedOk: false, error: 'Field minimum (tanggal transaksi/nominal tujuan/nama penerima) tidak ditemukan di isi email' };
+    return { parsedOk: false, error: 'Field minimum (tanggal transaksi/nominal/penerima) tidak ditemukan di isi email' };
   }
 
   return {
@@ -2078,7 +2094,7 @@ function parseEmailBCATransferSesamaBCA(body) {
     bank: 'BCA',
     eventTime,
     amount,
-    direction: 'debit', // transfer KELUAR ke rekening BCA lain
+    direction: 'debit', // transfer keluar / tarik tunai
     merchantRaw: namaPenerima,
     jenisTransaksi: jenisTransfer || null,
     acquirer: null,
@@ -2091,18 +2107,23 @@ function parseEmailBCATransferSesamaBCA(body) {
 }
 
 /**
- * Parser email Permata, dari sampel asli: "Transfer - Other Bank BI-FAST"
- * (transfer keluar) dan "Incoming Transfer" (transfer masuk). Template
- * Permata lain belum didukung. Fungsi murni.
+ * Parser email Permata, dari sampel asli: transfer keluar (BI-FAST), transfer
+ * masuk, QR Pay ("Total Nominal", tanggal dd/mm/yyyy), top up e-wallet
+ * ("Nominal Isi Ulang"), dan pembayaran Virtual Account ("Total Tagihan").
+ * Fungsi murni.
  */
 function parseEmailPermata(bodyText) {
   const body = String(bodyText || '');
   const tanggal = ekstrakField(body, 'Tanggal');
   const jam = ekstrakField(body, 'Jam');
   const kategori = ekstrakField(body, 'Kategori');
-  const namaPenerima = ekstrakField(body, 'Nama Penerima');
-  const nominal = ekstrakField(body, 'Nominal');
-  const nomorReferensi = ekstrakField(body, 'Nomor referensi transaksi');
+  const namaPenerima = ekstrakField(body, 'Nama Penerima') || ekstrakField(body, 'Nama Merchant')
+    || ekstrakField(body, 'Tipe Pembayaran') || ekstrakField(body, 'Kategori Isi Ulang');
+  // "Nominal" juga cocok dengan "Total Nominal" (QR Pay).
+  const nominal = ekstrakField(body, 'Nominal') || ekstrakField(body, 'Nominal Isi Ulang')
+    || ekstrakField(body, 'Total Tagihan');
+  const nomorReferensi = ekstrakField(body, 'Nomor referensi transaksi')
+    || ekstrakField(body, 'No. Referensi Transaksi');
   // Template "Incoming Transfer" (gaji, kiriman masuk) memakai Tanggal/Jam/
   // Nominal yang sama, tapi uangnya MASUK dan lawan transaksinya pengirim.
   const namaPengirim = ekstrakField(body, 'Nama Pengirim');
