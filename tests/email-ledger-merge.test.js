@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 
 import {
   rencanakanBersihProvisionalTertaut, rencanakanPerbaikiTautanManual, tautanSah,
-  rencanakanHapusProvisionalTakTerjangkau,
+  rencanakanHapusProvisionalTakTerjangkau, rencanakanPulihkanProvisionalHilang,
   kunciSettingAkunBca, rencanakanRekonsiliasi, putuskanAksiBackfill,
   pilihProvisionalTanpaPemilik, rencanakanBersihProvisionalDobel, bentukBarisEmail,
   rencanakanKoreksiTanggalProvisional, rencanakanHapusYatimSheet,
@@ -525,4 +525,17 @@ test('provisional milik email MATCHED (tidak tampil) dengan kembaran -> dihapus,
   const hasil = rencanakanHapusProvisionalTakTerjangkau(transaksi, [email]);
   assert.equal(hasil.length, 1);
   assert.equal(hasil[0].email.id, 'e');
+});
+
+test('rencanakanPulihkanProvisionalHilang: rujukan ke baris yang sudah tidak ada', () => {
+  const ada = new Set(['provAda']);
+  const e = (id, extra) => ({ id, statusResolusi: 'terbuka', statusCocok: STATUS_COCOK_EMAIL.AMBIGUOUS, ...extra });
+  const daftar = [
+    e('hilang', { provisionalTrxId: 'provHilang' }),
+    e('ada', { provisionalTrxId: 'provAda' }),
+    e('tanpa', { provisionalTrxId: '' }),
+    e('matched', { provisionalTrxId: 'provHilang2', statusCocok: STATUS_COCOK_EMAIL.MATCHED }),
+    e('abaikan', { provisionalTrxId: 'provHilang3', statusResolusi: 'diabaikan' }),
+  ];
+  assert.deepEqual(rencanakanPulihkanProvisionalHilang(daftar, ada).map((x) => x.id), ['hilang']);
 });

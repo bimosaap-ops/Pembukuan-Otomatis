@@ -25,6 +25,7 @@ import {
   rencanakanBersihProvisionalDobel, rencanakanKoreksiTanggalProvisional, rencanakanHapusYatimSheet,
   rencanakanBersihProvisionalTertaut, hapusProvisionalManual,
   rencanakanPerbaikiTautanManual, backfillProvisionalEmailLama, rencanakanHapusProvisionalTakTerjangkau,
+  rencanakanPulihkanProvisionalHilang,
 } from '../services/email-ledger-merge.js';
 import { SUMBER, STATUS_COCOK_EMAIL } from '../domain/entities.js';
 
@@ -571,4 +572,25 @@ export async function hapusProvisionalTakTerjangkau() {
     jumlah: rencana.length,
     nominal: rencana.reduce((n, r) => n + Math.abs(Number(r.provisional.nominal) || 0), 0),
   };
+}
+
+/**
+ * Buat ulang baris provisional untuk transaksi email terbuka yang rujukan
+ * provisional-nya menunjuk baris yang sudah hilang (lihat
+ * rencanakanPulihkanProvisionalHilang). Rujukannya dikosongkan dan status
+ * dikembalikan ke MISSING, lalu backfill menilai ulang terhadap e-statement
+ * sekarang: ditautkan bila sudah ada padanannya, dibuatkan provisional bila
+ * belum.
+ */
+export async function pulihkanProvisionalHilang() {
+  const [emailLokal, transaksi] = await Promise.all([emailTrxRepo.semua(), trxRepo.semua()]);
+  const sasaran = rencanakanPulihkanProvisionalHilang(emailLokal, new Set(transaksi.map((t) => t.id)));
+  if (!sasaran.length) return { jumlah: 0, dibuat: 0 };
+  for (const e of sasaran) {
+    await emailTrxRepo.simpanSatu({
+      ...e, provisionalTrxId: '', statusCocok: STATUS_COCOK_EMAIL.MISSING, transaksiCocokId: '',
+    });
+  }
+  const hasil = await backfillProvisionalEmailLama();
+  return { jumlah: sasaran.length, dibuat: hasil.dibuat || 0 };
 }
