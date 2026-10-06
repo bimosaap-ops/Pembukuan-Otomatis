@@ -940,3 +940,19 @@ export function rencanakanHapusProvisionalTakTerjangkau(transaksi, emailLokal) {
   }
   return hasil;
 }
+
+/**
+ * Transaksi email terbuka yang masih merujuk baris provisional yang sudah
+ * tidak ada di ledger. Halaman Transaksi Email tetap menampilkan label
+ * "Provisional di ledger" (labelnya hanya membaca rujukan), dan backfill
+ * melewatinya karena rujukannya terisi -- transaksinya hilang dari saldo
+ * tanpa ada yang menyadari. Kasus nyata 2026-10-06: tiga transfer keluar
+ * Permata Rp 24.670.000. MATCHED tidak disentuh: baris statement-nya yang
+ * mewakili. Murni, diekspor untuk tes.
+ */
+export function rencanakanPulihkanProvisionalHilang(emailLokal, idTransaksi) {
+  return (emailLokal || []).filter((e) => e.statusResolusi === STATUS_RESOLUSI_EMAIL.TERBUKA
+    && e.statusCocok !== STATUS_COCOK_EMAIL.MATCHED
+    && e.provisionalTrxId
+    && !idTransaksi.has(e.provisionalTrxId));
+}

@@ -20,7 +20,7 @@ import {
   jalankanMigrasi, migrasiKataKunciBawaan, migrasiKategoriInvestasi, migrasiKategoriFinalEmail,
   hapusProvisionalYatimDuplikat, hapusProvisionalDobelEmail, migrasiTanggalProvisionalWib,
   hapusProvisionalYatimDiSheet, bersihkanProvisionalTertaut, perbaikiTautanManualSalah,
-  hapusProvisionalTakTerjangkau,
+  hapusProvisionalTakTerjangkau, pulihkanProvisionalHilang,
 } from '../data/migrasi.js';
 
 /**
@@ -178,6 +178,17 @@ async function mulai() {
     if (tertaut?.jumlah) {
       toastSukses(`${tertaut.jumlah} baris provisional yang sudah ditautkan ke e-statement dihapus `
         + `(${rupiah(tertaut.nominal)}).`);
+    }
+
+    // Email yang merujuk baris provisional yang sudah hilang -- transaksinya
+    // lenyap dari saldo padahal label di halaman Email masih menampilkannya.
+    const hilang = await pulihkanProvisionalHilang().catch((e) => {
+      console.error('Pemulihan provisional hilang gagal:', e);
+      return null;
+    });
+    if (hilang?.jumlah) {
+      toastSukses(`${hilang.jumlah} transaksi email yang baris pembukuannya hilang dicatat ulang`
+        + (hilang.dibuat ? ` (${hilang.dibuat} baris provisional dibuat).` : '.'));
     }
 
     // Provisional tanpa pemilik yang tampil di tinjauan, padahal kembarannya
