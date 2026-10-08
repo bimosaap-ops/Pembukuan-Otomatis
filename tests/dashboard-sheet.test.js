@@ -621,6 +621,11 @@ function barisPenuh(i) {
 function jalankanDoPost({
   barisAda = 0, payload, kunciMacet = false, gridTambahan = [], arsipGrid = null,
   statementGrid = null, setelahBacaPertama = null, filterMulaiKolom = null,
+  // Meniru Google Sheets: selama filter biasa aktif, baris yang
+  // disembunyikannya tidak ikut terhapus oleh deleteRow/deleteRows.
+  filterMenahanHapus = false,
+  // Meniru penghapusan yang gagal diam-diam karena sebab lain.
+  hapusSelaluGagal = false,
 }) {
   const grid = [HEADER_UJI.slice()];
   for (let i = 0; i < barisAda; i += 1) {
@@ -646,7 +651,7 @@ function jalankanDoPost({
   // Filter tiruan di tab Transaksi (null = tanpa filter).
   const filterDibuat = [];
   let filterAktif = filterMulaiKolom ? {
-    getRange: () => ({ getColumn: () => filterMulaiKolom, getLastColumn: () => 20 }),
+    getRange: () => ({ getRow: () => 1, getColumn: () => filterMulaiKolom, getLastColumn: () => 20 }),
     getColumnFilterCriteria: (k) => (k === 2 ? { copy: () => ({ build: () => 'kriteriaTanggal' }) } : null),
     remove: () => { filterAktif = null; },
   } : null;
@@ -667,8 +672,15 @@ function jalankanDoPost({
       getFilter: () => (nama === 'Transaksi' ? filterAktif : null),
       insertColumnsAfter: (_a, n) => { maxKolom += n; },
       appendRow: (baris) => { isi.push(baris.slice()); },
-      deleteRow: (n) => { dihapusBaris.push(n); isi.splice(n - 1, 1); },
-      deleteRows: (n, jml) => { for (let i = 0; i < jml; i += 1) dihapusBaris.push(n + i); isi.splice(n - 1, jml); },
+      deleteRow: (n) => {
+        if (hapusSelaluGagal || (filterMenahanHapus && filterAktif)) return;
+        dihapusBaris.push(n); isi.splice(n - 1, 1);
+      },
+      deleteRows: (n, jml) => {
+        if (hapusSelaluGagal || (filterMenahanHapus && filterAktif)) return;
+        for (let i = 0; i < jml; i += 1) dihapusBaris.push(n + i);
+        isi.splice(n - 1, jml);
+      },
       // Range dibungkus Proxy: doPost juga memanggil setNumberFormat,
       // setHorizontalAlignment, merge, dan kawan-kawannya, dan yang sedang
       // diuji di sini bukan itu — cukup jangan sampai melempar.
@@ -687,7 +699,7 @@ function jalankanDoPost({
           const baru = { baris, kolom, lebar, kriteria: {} };
           filterDibuat.push(baru);
           filterAktif = {
-            getRange: () => ({ getColumn: () => kolom, getLastColumn: () => kolom + lebar - 1 }),
+            getRange: () => ({ getRow: () => baris, getColumn: () => kolom, getLastColumn: () => kolom + lebar - 1 }),
             getColumnFilterCriteria: (k) => baru.kriteria[k] || null,
             remove: () => { filterAktif = null; },
             setColumnFilterCriteria: (k, c) => { baru.kriteria[k] = c; },
@@ -1000,6 +1012,41 @@ test('filter yang tidak mencakup kolom Hash dibuat ulang mulai kolom A', () => {
   assert.equal(h.filterDibuat[0].kolom, 1, 'filter baru mulai di kolom A');
   assert.ok(h.filterDibuat[0].lebar >= 18, 'filter baru mencakup seluruh kolom data');
   assert.equal(h.filterDibuat[0].kriteria[2], 'kriteriaTanggal', 'kriteria kolom yang ada dipertahankan');
+});
+
+test('hapus tetap berhasil walau filter aktif, dan filter dipasang lagi dengan kriteria yang sama', () => {
+  // Kasus 06/10/2026: baris disembunyikan filter kategori Laundry, tersalin
+  // ke _Arsip, tetapi tidak terhapus dari tab data.
+  const h = jalankanDoPost({
+    barisAda: 6, filterMulaiKolom: 1, filterMenahanHapus: true, arsipGrid: [[]],
+    payload: { rows: [], hapus: ['h1', 'h4'] },
+  });
+  assert.equal(h.balasan.ok, true);
+  assert.equal(h.balasan.dihapus, 2);
+  assert.ok(!hashTersisa(h).includes('h1') && !hashTersisa(h).includes('h4'), 'baris harus benar-benar hilang');
+  assert.equal(h.filterDibuat.length, 1, 'filter dipasang kembali');
+  assert.equal(h.filterDibuat[0].kolom, 1);
+  assert.equal(h.filterDibuat[0].kriteria[2], 'kriteriaTanggal', 'kriteria filter pengguna dipertahankan');
+});
+
+test('hapus jalur borong (di atas ambang) juga melewati filter', () => {
+  const hapus = Array.from({ length: 40 }, (_, i) => `h${i}`);
+  const h = jalankanDoPost({
+    barisAda: 60, filterMulaiKolom: 1, filterMenahanHapus: true, arsipGrid: [[]],
+    payload: { rows: [], hapus },
+  });
+  assert.equal(h.balasan.ok, true);
+  assert.equal(hashTersisa(h).filter((x) => hapus.includes(x)).length, 0);
+  assert.equal(h.filterDibuat.length, 1);
+});
+
+test('baris yang tetap tidak terhapus -> doPost membalas gagal supaya aplikasi mencoba lagi', () => {
+  const h = jalankanDoPost({
+    barisAda: 6, hapusSelaluGagal: true, arsipGrid: [[]],
+    payload: { rows: [], hapus: ['h1'] },
+  });
+  assert.equal(h.balasan.ok, false);
+  assert.match(String(h.balasan.error), /tidak terhapus/);
 });
 
 test('filter yang sudah mulai di kolom A tidak disentuh', () => {
