@@ -26,7 +26,7 @@
  * Naikkan CACHE_NAME setiap kali aset berubah agar versi lama dibersihkan.
  */
 
-const CACHE_NAME = 'pembukuan-v37';
+const CACHE_NAME = 'pembukuan-v38';
 
 /** Berapa lama menunggu jaringan sebelum memakai salinan cache. */
 const BATAS_JARINGAN_MS = 2500;
@@ -72,7 +72,6 @@ const ASET = [
   './src/core/dates.js',
   './src/core/hash.js',
   './src/core/events.js',
-  './src/core/mode.js',
 
   './src/data/db.js',
   './src/data/repo/accounts.js',

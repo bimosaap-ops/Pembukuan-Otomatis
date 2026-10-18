@@ -208,30 +208,6 @@ export function kategorikanBanyak(transaksi, daftarKategori) {
     : { ...t, kategoriId: tentukanKategori(t.deskripsi, t.nominal, daftarKategori) }));
 }
 
-const KATA_UMUM = new Set([
-  'TRSF', 'TRANSFER', 'TRF', 'PEMBAYARAN', 'PEMBELIAN', 'PAYMENT', 'DARI', 'KE', 'DB', 'CR',
-  'E-BANKING', 'EBANKING', 'MOBILE', 'INTERNET', 'BANKING', 'VIA', 'AN', 'A/N', 'NO', 'REF',
-  'TANGGAL', 'BIAYA', 'ADM', 'SWITCHING', 'SETOR', 'TARIK', 'KARTU', 'DEBIT', 'KREDIT', 'BANK',
-]);
-
-/**
- * Menebak kata kunci yang layak diingat ketika pengguna mengoreksi kategori
- * sebuah transaksi — biasanya nama merchant, bukan kata umum perbankan atau angka.
- * Dipakai fitur "terapkan ke semua transaksi serupa".
- */
-export function saranPola(deskripsi) {
-  const teks = normalisasiDeskripsi(deskripsi);
-  const kandidat = teks
-    .split(/[^A-Z0-9&.'-]+/)
-    .map((w) => w.replace(/^[.'-]+|[.'-]+$/g, ''))
-    .filter((w) => w.length >= 4 && !KATA_UMUM.has(w) && !/^\d+$/.test(w) && !/^\d/.test(w));
-
-  if (!kandidat.length) return teks.slice(0, 24).trim();
-
-  // Kata terpanjang biasanya paling khas (mis. "TOKOPEDIA" pada "PEMBAYARAN TOKOPEDIA 0812").
-  return kandidat.sort((a, b) => b.length - a.length)[0];
-}
-
 /** Tambahkan sebuah kata kunci ke kategori, tanpa duplikat. */
 export function tambahPola(kategori, pola) {
   const kunci = normalisasiDeskripsi(pola);

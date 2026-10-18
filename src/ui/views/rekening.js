@@ -4,17 +4,13 @@
  */
 
 import { h, ikon, ganti } from '../../core/dom.js';
-import { rupiah, toNum } from '../../core/format.js';
-import { MODE_BACA_SAJA_SHEETS } from '../../core/mode.js';
+import { rupiah } from '../../core/format.js';
 import { on, emit, EVENT } from '../../core/events.js';
 import * as akunRepo from '../../data/repo/accounts.js';
-import { hapusDariSheets, syncEntitasKeSheets, hapusEntitasDariSheets } from '../../services/sheets-sync.js';
-import { setelahTransaksiDihapus } from '../../services/email-ledger-merge.js';
-import { BANK_DIKENAL, JENIS_AKUN } from '../../domain/entities.js';
+import { JENIS_AKUN } from '../../domain/entities.js';
 import { totalSaldo } from '../../domain/analytics.js';
 import { dataView } from '../components/data-view.js';
-import { bukaModal, konfirmasi } from '../components/modal.js';
-import { toastSukses, toastGagal } from '../components/toast.js';
+import { toastSukses } from '../components/toast.js';
 
 export async function mount(wadah) {
   const halaman = h('.halaman');
@@ -26,16 +22,9 @@ export async function mount(wadah) {
       h('div', null, [
         h('.halaman__judul', { text: 'Rekening' }),
         h('.halaman__ket', {
-          text: MODE_BACA_SAJA_SHEETS
-            ? 'Rekening bank terbentuk otomatis saat e-statement di-upload. Tambah/ubah rekening lewat tab "Akun" di Google Sheets.'
-            : 'Rekening bank terbentuk otomatis saat e-statement di-upload. Akun kas ditambahkan sendiri.',
+          text: 'Rekening bank terbentuk otomatis saat e-statement di-upload. Tambah/ubah rekening lewat tab "Akun" di Google Sheets.',
         }),
       ]),
-      MODE_BACA_SAJA_SHEETS
-        ? null
-        : h('button.btn-primary.btn-kecil', {
-          type: 'button', onclick: () => bukaForm(null, render),
-        }, [ikon('tambah', 17), h('span', { text: 'Tambah' })]),
     ]),
     isi,
   );
@@ -77,9 +66,6 @@ export async function mount(wadah) {
         kosong: 'Belum ada rekening',
         kosongKet: 'Upload e-statement — rekening akan dibuat otomatis dari kepala berkas.',
         aksi: (a) => [
-          MODE_BACA_SAJA_SHEETS
-            ? null
-            : h('button.btn-kecil', { type: 'button', onclick: () => bukaForm(a, render) }, [ikon('edit', 15), 'Ubah']),
           h('button.btn-kecil', {
             type: 'button',
             title: 'Hitung ulang saldo dari seluruh transaksi',
@@ -89,9 +75,6 @@ export async function mount(wadah) {
               emit(EVENT.DATA_BERUBAH, { sumber: 'rekening' });
             },
           }, 'Hitung ulang'),
-          MODE_BACA_SAJA_SHEETS
-            ? null
-            : h('button.btn-kecil.btn-bahaya', { type: 'button', onclick: () => hapus(a, render) }, [ikon('hapus', 15)]),
         ],
       }),
 
@@ -114,81 +97,4 @@ function kpi(label, nilai, jenis) {
     h('.kpi__label', { text: label }),
     h('.kpi__nilai', { text: nilai }),
   ]);
-}
-
-function bukaForm(akun, selesai) {
-  const ubah = Boolean(akun);
-
-  const fJenis = h('select', null, [
-    h('option', { value: JENIS_AKUN.BANK, selected: !akun || akun.jenis === JENIS_AKUN.BANK, text: 'Rekening bank' }),
-    h('option', { value: JENIS_AKUN.KAS, selected: akun?.jenis === JENIS_AKUN.KAS, text: 'Kas tunai' }),
-  ]);
-  const fBank = h('input', {
-    type: 'text', list: 'daftar-bank', value: akun?.bank || '',
-    placeholder: 'mis. BCA, Permata, Kas Proyek',
-  });
-  const datalist = h('datalist', { id: 'daftar-bank' }, BANK_DIKENAL.map((b) => h('option', { value: b })));
-  const fNomor = h('input', { type: 'text', inputmode: 'numeric', value: akun?.nomorRekening || '' });
-  const fNama = h('input', { type: 'text', value: akun?.namaPemilik || '' });
-  const fMataUang = h('input', { type: 'text', value: akun?.mataUang || 'IDR' });
-  const fSaldoAwal = h('input', {
-    type: 'text', inputmode: 'decimal',
-    value: akun ? String(akun.saldoAwal || 0) : '0',
-  });
-
-  const m = bukaModal({
-    judul: ubah ? 'Ubah rekening' : 'Tambah rekening',
-    isi: h('.form-grid', null, [
-      datalist,
-      h('div', null, [h('label', { text: 'Jenis' }), fJenis]),
-      h('div', null, [h('label', { text: 'Bank / Nama akun' }), fBank]),
-      h('div', null, [h('label', { text: 'Nomor Rekening' }), fNomor]),
-      h('div', null, [h('label', { text: 'Nama Pemilik' }), fNama]),
-      h('div', null, [h('label', { text: 'Mata Uang' }), fMataUang]),
-      h('div', null, [h('label', { text: 'Saldo Awal' }), fSaldoAwal]),
-    ]),
-    aksi: [
-      h('button', { type: 'button', onclick: () => m.tutup() }, 'Batal'),
-      h('button.btn-primary', {
-        type: 'button',
-        onclick: async () => {
-          if (!fBank.value.trim()) { toastGagal('Isi nama bank atau nama akun.'); return; }
-          const tersimpan = await akunRepo.simpanAkun({
-            ...(akun || {}),
-            jenis: fJenis.value,
-            bank: fBank.value.trim(),
-            nomorRekening: fNomor.value.trim(),
-            namaPemilik: fNama.value.trim(),
-            mataUang: fMataUang.value.trim() || 'IDR',
-            saldoAwal: toNum(fSaldoAwal.value),
-          });
-          const final = await akunRepo.hitungUlangSaldo(tersimpan.id);
-          toastSukses(ubah ? 'Rekening diperbarui.' : 'Rekening ditambahkan.');
-          m.tutup();
-          emit(EVENT.DATA_BERUBAH, { sumber: 'rekening' });
-          selesai?.();
-          syncEntitasKeSheets('akun', [final || tersimpan]).catch((e) => console.warn('Sheets sync gagal:', e));
-        },
-      }, ubah ? 'Simpan perubahan' : 'Tambah'),
-    ],
-  });
-}
-
-async function hapus(akun, selesai) {
-  const ya = await konfirmasi({
-    judul: 'Hapus rekening?',
-    pesan: `${akun.bank} ${akun.nomorRekening || ''} akan dihapus beserta ${akun.jumlahTransaksi || 0} transaksinya dan seluruh riwayat upload yang terkait. Tindakan ini tidak bisa dibatalkan.`,
-    tombolYa: 'Hapus rekening',
-    bahaya: true,
-  });
-  if (!ya) return;
-
-  const hasil = await akunRepo.hapusAkun(akun.id);
-  // Tanpa penilaian ulang: rekeningnya sendiri sudah tidak ada.
-  await setelahTransaksiDihapus(hasil.ids, { evaluasiUlang: false }).catch((e) => console.warn('Penyesuaian transaksi email gagal:', e));
-  hapusDariSheets(hasil.hash).catch((e) => console.warn('Hapus di Sheets gagal:', e));
-  hapusEntitasDariSheets('akun', [akun.id]).catch((e) => console.warn('Hapus rekening di Sheets gagal:', e));
-  toastSukses(`Rekening dihapus beserta ${hasil.transaksiTerhapus} transaksi.`);
-  emit(EVENT.DATA_BERUBAH, { sumber: 'rekening' });
-  selesai?.();
 }

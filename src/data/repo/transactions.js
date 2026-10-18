@@ -125,12 +125,6 @@ export async function hapusPerFileUpload(uploadedFileId) {
   return { jumlah: rows.length, ids: rows.map((r) => r.id), hash: rows.map((r) => r.hash).filter(Boolean) };
 }
 
-export async function hapusPerAkun(accountId) {
-  const rows = await perAkun(accountId);
-  await hapusBanyak(STORE.TRANSACTIONS, rows.map((r) => r.id));
-  return { jumlah: rows.length, ids: rows.map((r) => r.id), hash: rows.map((r) => r.hash).filter(Boolean) };
-}
-
 /**
  * Mengambil transaksi dalam rentang tanggal lewat indeks, sehingga laporan
  * bertahun-tahun tidak perlu memuat seluruh tabel ke memori.

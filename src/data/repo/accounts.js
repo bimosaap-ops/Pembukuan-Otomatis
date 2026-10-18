@@ -1,6 +1,6 @@
 /** Repository rekening, termasuk penghitungan ulang saldo dari transaksi. */
 
-import { STORE, ambilSemua, ambil, simpan, hapus, jalankan } from '../db.js';
+import { STORE, ambilSemua, ambil, simpan, hapus } from '../db.js';
 import { buatAkun, JENIS_AKUN } from '../../domain/entities.js';
 import * as trxRepo from './transactions.js';
 
@@ -35,10 +35,8 @@ export async function simpanAkun(data) {
 
 /**
  * Hapus rekening TANPA ikut menghapus transaksi/upload terkait — dipakai saat
- * menerapkan tombstone hasil pull dari Sheets. Beda dari hapusAkun(): hapus
- * lewat UI adalah keputusan sadar pengguna atas SEMUA transaksinya, sedangkan
- * tombstone dari perangkat lain hanya bicara soal rekening itu sendiri.
- * Menghapus transaksi orang lain secara otomatis lewat sync melanggar aturan
+ * menerapkan tombstone hasil pull dari Sheets. Tombstone hanya bicara soal
+ * rekening itu sendiri. Menghapus transaksi orang lain secara otomatis lewat sync melanggar aturan
  * non-destructive (PRD AD-015) — transaksi yang accountId-nya jadi yatim
  * dibiarkan apa adanya, bukan ikut dihapus.
  */
@@ -128,18 +126,4 @@ export async function hitungUlangSemua() {
     hasil.push(await hitungUlangSaldo(a.id));
   }
   return hasil;
-}
-
-/** Menghapus rekening beserta seluruh transaksinya. */
-export async function hapusAkun(id) {
-  const { jumlah, ids, hash } = await trxRepo.hapusPerAkun(id);
-  const upload = await ambilSemua(STORE.UPLOADED_FILES);
-  const milik = upload.filter((u) => u.accountId === id).map((u) => u.id);
-  if (milik.length) {
-    await jalankan(STORE.UPLOADED_FILES, 'readwrite', (store) => {
-      milik.forEach((uid) => store.delete(uid));
-    });
-  }
-  await hapus(STORE.ACCOUNTS, id);
-  return { transaksiTerhapus: jumlah, uploadTerhapus: milik.length, ids, hash };
 }
