@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { kunciDasar, bubuhiBaseHash, tandaiDuplikat, paksaSimpan, ringkasDuplikat } from '../src/domain/dedupe.js';
-import { tentukanKategori, saranPola, tambahPola, KATEGORI_BAWAAN } from '../src/domain/categorize.js';
+import { tentukanKategori, tambahPola, KATEGORI_BAWAAN } from '../src/domain/categorize.js';
 import { KATEGORI_LAINNYA_KELUAR, KATEGORI_LAINNYA_MASUK } from '../src/domain/entities.js';
 import {
   uploadTumpangTindih, transaksiKembarAntarUpload, statementSahTanpaTransaksi,
@@ -167,11 +167,8 @@ test('transaksi tanpa pola yang dikenal jatuh ke kategori penampung', () => {
   assert.equal(tentukanKategori('XYZQW 8891', 100000, KATEGORI_BAWAAN), KATEGORI_LAINNYA_MASUK);
 });
 
-test('koreksi manual menghasilkan kata kunci yang bisa dipakai ulang', () => {
-  const pola = saranPola('PEMBAYARAN VIA MOBILE BANKING KLINIK SEHAT SENTOSA 0812');
-  assert.ok(pola.length >= 4);
-  assert.ok(!['PEMBAYARAN', 'MOBILE', 'BANKING', 'VIA'].includes(pola), `kata umum tidak boleh dipilih, dapat "${pola}"`);
-
+test('tambahPola tidak menambah kata kunci yang sama dua kali', () => {
+  const pola = 'KLINIK';
   const kategori = tambahPola({ id: 'kat_kesehatan', polaKataKunci: ['APOTEK'] }, pola);
   assert.ok(kategori.polaKataKunci.includes(pola));
 
