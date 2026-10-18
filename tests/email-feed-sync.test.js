@@ -8,7 +8,8 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rentangTanggalKandidat, bangunPembaruanEmailTrx } from '../src/services/email-feed-sync.js';
+import { bangunPembaruanEmailTrx } from '../src/services/email-feed-sync.js';
+import { rentangTanggalKandidat } from '../src/core/dates.js';
 import { STATUS_COCOK_EMAIL } from '../src/domain/entities.js';
 import { KEYAKINAN_KATEGORI_EMAIL } from '../src/domain/kategoriEmail.js';
 

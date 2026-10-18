@@ -30,7 +30,7 @@
 import { hashTeks } from '../core/hash.js';
 import { normalisasiDeskripsi } from '../core/format.js';
 
-export const STATUS_BARIS = { BARU: 'baru', DUPLIKAT: 'duplikat' };
+const STATUS_BARIS = { BARU: 'baru', DUPLIKAT: 'duplikat' };
 
 /** Teks kunci dari empat komponen. Nominal dibulatkan ke 2 desimal agar stabil. */
 export function kunciDasar({ accountId, tanggal, deskripsi, nominal }) {

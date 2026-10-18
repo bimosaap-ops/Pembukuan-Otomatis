@@ -25,7 +25,7 @@
 import * as emailTrxRepo from '../data/repo/email-transactions.js';
 import * as trxRepo from '../data/repo/transactions.js';
 import { STATUS_COCOK_EMAIL, STATUS_RESOLUSI_EMAIL } from '../domain/entities.js';
-import { rentangTanggalKandidat } from './email-feed-sync.js';
+import { rentangTanggalKandidat } from '../core/dates.js';
 import { tautkanManual } from './email-ledger-merge.js';
 
 /** Sama dengan HARI_CARI_MANUAL di email-transaksi.js -- disalin, bukan

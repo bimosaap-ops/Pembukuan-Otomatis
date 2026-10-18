@@ -140,9 +140,9 @@ export function cetakHalaman() {
  * adanya ke aplikasi versi ini -- pulihkanBackup() memakai default `[]`
  * untuk kunci yang tidak ada, bukan menolaknya.
  */
-export const VERSI_BACKUP = 2;
+const VERSI_BACKUP = 2;
 
-export async function buatBackup() {
+async function buatBackup() {
   const [accounts, transactions, uploaded, categories, settings, emailTransactions, merchantDictionary] = await Promise.all([
     ambilSemua(STORE.ACCOUNTS),
     ambilSemua(STORE.TRANSACTIONS),

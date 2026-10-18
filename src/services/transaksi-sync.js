@@ -30,11 +30,11 @@ import * as trxRepo from '../data/repo/transactions.js';
 import * as akunRepo from '../data/repo/accounts.js';
 import { setelahTransaksiDihapus } from './email-ledger-merge.js';
 
-export const KUNCI_TARIK_TRANSAKSI = {
+const KUNCI_TARIK_TRANSAKSI = {
   TERAKHIR_DITARIK: 'transaksiTerakhirDitarik',
 };
 
-export async function bacaCheckpointTransaksi() {
+async function bacaCheckpointTransaksi() {
   return pengaturanRepo.baca(KUNCI_TARIK_TRANSAKSI.TERAKHIR_DITARIK, '');
 }
 

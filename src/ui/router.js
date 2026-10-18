@@ -28,7 +28,7 @@ let viewAktif = null;
 let idAktif = null;
 let jalanKe = 0;
 
-export function bacaRute() {
+function bacaRute() {
   const raw = String(location.hash || '').replace(/^#\/?/, '');
   const [id, ...sisa] = raw.split('/');
   return { id: PEMUAT[id] ? id : RUTE_AWAL, param: sisa };

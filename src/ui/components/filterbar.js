@@ -5,7 +5,7 @@
 import { h } from '../../core/dom.js';
 import { periodePreset, hariIni } from '../../core/dates.js';
 
-export const PRESET = [
+const PRESET = [
   { id: 'bulan-ini', label: 'Bulan ini' },
   { id: 'bulan-lalu', label: 'Bulan lalu' },
   { id: '3-bulan', label: '3 bulan' },

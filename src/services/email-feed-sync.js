@@ -29,12 +29,7 @@ import { normalisasiMerchant } from '../domain/merchantNormalisasi.js';
 import { SUMBER, STATUS_COCOK_EMAIL } from '../domain/entities.js';
 import { rentangTanggalKandidat } from '../core/dates.js';
 
-/** Re-export: dipakai email-transaksi.js, email-review.js, dan tes yang sudah
- *  ada — implementasinya pindah ke core/dates.js supaya bisa dipakai ulang
- *  services/email-ledger-merge.js tanpa saling impor dengan berkas ini. */
-export { rentangTanggalKandidat };
-
-export const KUNCI_TARIK_EMAIL = {
+const KUNCI_TARIK_EMAIL = {
   TERAKHIR_DITARIK: 'emailFeedTerakhirDitarik',
 };
 
@@ -42,7 +37,7 @@ export const KUNCI_TARIK_EMAIL = {
  *  seluruh tab "Transaksi Email" tiap dipanggil, bukan sekadar ping. */
 const BATAS_MS = 20000;
 
-export async function bacaCheckpoint() {
+async function bacaCheckpoint() {
   return pengaturanRepo.baca(KUNCI_TARIK_EMAIL.TERAKHIR_DITARIK, '');
 }
 

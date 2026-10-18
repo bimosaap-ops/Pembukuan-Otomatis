@@ -13,7 +13,7 @@ import * as akunRepo from '../data/repo/accounts.js';
 import * as kategoriRepo from '../data/repo/categories.js';
 import { TIPE_KATEGORI } from '../domain/entities.js';
 
-export const KUNCI_SHEETS = {
+const KUNCI_SHEETS = {
   URL: 'sheetsWebhookUrl',
   AKTIF: 'sheetsAktif',
   ANTREAN: 'sheetsAntrean',
@@ -79,7 +79,7 @@ export async function simpanKonfigSheets({ url, aktif }) {
    Antrean retry offline
    ========================================================================== */
 
-export async function bacaAntrean() {
+async function bacaAntrean() {
   const ids = await pengaturanRepo.baca(KUNCI_SHEETS.ANTREAN, []);
   return Array.isArray(ids) ? ids : [];
 }
@@ -93,7 +93,7 @@ async function tulisAntrean(ids) {
  * bisa menyimpan ID karena isinya dibaca ulang dari database saat dikirim —
  * untuk penghapusan itu mustahil, barisnya sudah tidak ada di database.
  */
-export async function bacaAntreanHapus() {
+async function bacaAntreanHapus() {
   const hashes = await pengaturanRepo.baca(KUNCI_SHEETS.ANTREAN_HAPUS, []);
   return Array.isArray(hashes) ? hashes : [];
 }

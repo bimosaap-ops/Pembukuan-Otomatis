@@ -25,7 +25,7 @@ import { KATEGORI_BAWAAN, tambahPola } from '../domain/categorize.js';
  * tidak pernah sampai ke daftar kategori pengguna karena bendera V1 sudah
  * terpakai dari rilis sebelumnya.)
  */
-export const KUNCI_MIGRASI_KATA_KUNCI = 'migrasiKataKunciBawaanV2';
+const KUNCI_MIGRASI_KATA_KUNCI = 'migrasiKataKunciBawaanV2';
 /**
  * Hitung kategori bawaan mana yang perlu ditambah kata kuncinya.
  *

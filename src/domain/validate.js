@@ -11,7 +11,7 @@
 /** Selisih di bawah satu rupiah dianggap pembulatan, bukan kesalahan baca. */
 const TOLERANSI = 0.999;
 
-export const MASALAH = {
+const MASALAH = {
   SALDO_LONCAT: 'saldo-loncat',
   TANGGAL_MUNDUR: 'tanggal-mundur',
   NOMINAL_KOSONG: 'nominal-kosong',

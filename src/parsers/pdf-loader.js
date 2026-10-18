@@ -85,13 +85,12 @@ function salinBuffer(sumber) {
  * Fungsi ini menerima dokumen pdf.js yang sudah terbuka, sehingga bisa dipakai
  * ulang oleh berkas uji di Node yang membuka PDF-nya dengan caranya sendiri.
  */
-export async function ekstrakPotongan(dokumen, { onProgress = null, batasHalaman = 0, ambilWarna = true } = {}) {
+export async function ekstrakPotongan(dokumen, { onProgress = null } = {}) {
   const total = dokumen.numPages;
-  const batas = batasHalaman > 0 ? Math.min(batasHalaman, total) : total;
   const halaman = [];
   const warna = [];
 
-  for (let i = 1; i <= batas; i += 1) {
+  for (let i = 1; i <= total; i += 1) {
     const page = await dokumen.getPage(i);
     const isi = await page.getTextContent({ disableCombineTextItems: false });
 
@@ -107,9 +106,9 @@ export async function ekstrakPotongan(dokumen, { onProgress = null, batasHalaman
       }));
 
     halaman.push(potongan);
-    warna.push(ambilWarna ? await warnaTeks(page) : []);
+    warna.push(await warnaTeks(page));
     page.cleanup?.();
-    onProgress?.(i, batas);
+    onProgress?.(i, total);
   }
 
   return { halaman, warna, jumlahHalaman: total };
@@ -126,7 +125,7 @@ export async function ekstrakPotongan(dokumen, { onProgress = null, batasHalaman
  * Kegagalan di sini tidak fatal: bila warnanya tak terbaca, adapter kembali
  * memakai kata kunci deskripsi.
  */
-export async function warnaTeks(page) {
+async function warnaTeks(page) {
   try {
     const pdfjsLib = await muatPdfJs();
     const { OPS } = pdfjsLib;
