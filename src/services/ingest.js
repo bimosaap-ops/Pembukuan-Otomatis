@@ -47,10 +47,9 @@ export const LANGKAH = [
  * @param {object} opsi
  * @param {(idLangkah:string, status:'jalan'|'selesai'|'gagal', ket?:string) => void} opsi.onLangkah
  * @param {(salah:boolean) => Promise<string|null>} opsi.mintaPassword
- * @param {string} [opsi.paksaAdapter] memaksa adapter bank tertentu
  */
 export async function prosesFile(file, opsi = {}) {
-  const { onLangkah = () => {}, mintaPassword = null, paksaAdapter = '' } = opsi;
+  const { onLangkah = () => {}, mintaPassword = null } = opsi;
   const lapor = (id, status, ket) => onLangkah(id, status, ket);
 
   // --- 1. Upload PDF ------------------------------------------------------
@@ -97,7 +96,7 @@ export async function prosesFile(file, opsi = {}) {
     dokumen.destroy?.();
   }
 
-  const hasil = parseStatement(potongan.halaman, { paksaAdapter, warna: potongan.warna });
+  const hasil = parseStatement(potongan.halaman, { warna: potongan.warna });
   lapor('deteksi', 'selesai', hasil.bank ? `${hasil.bank}${hasil.nomorRekening ? ` · ${hasil.nomorRekening}` : ''}` : 'Bank tidak dikenali, memakai pembaca umum');
 
   if (!hasil.transaksi.length) {

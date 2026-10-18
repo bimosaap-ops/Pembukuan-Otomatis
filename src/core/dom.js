@@ -47,13 +47,8 @@ export function tambah(induk, anak) {
   return induk;
 }
 
-export function kosongkan(el) {
-  while (el.firstChild) el.removeChild(el.firstChild);
-  return el;
-}
-
 export function ganti(el, anak) {
-  kosongkan(el);
+  el.replaceChildren();
   return tambah(el, anak);
 }
 

@@ -43,7 +43,7 @@ export function hariIni() {
   return iso(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-export function validIso(s) {
+function validIso(s) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(s ?? ''))) return false;
   const [y, m, d] = s.split('-').map(Number);
   if (m < 1 || m > 12 || d < 1) return false;
@@ -137,7 +137,7 @@ export function rentangBulan(ymAwal, ymAkhir) {
 }
 
 /** Geser tanggal sejumlah bulan, hari akhir bulan tetap aman (31 Jan -1 bulan -> 31 Des). */
-export function tambahBulan(isoStr, delta) {
+function tambahBulan(isoStr, delta) {
   const [y, m, d] = isoStr.split('-').map(Number);
   const total = (y * 12) + (m - 1) + delta;
   const ny = Math.floor(total / 12);
@@ -145,7 +145,7 @@ export function tambahBulan(isoStr, delta) {
   return iso(ny, nm, Math.min(d, hariDalamBulan(ny, nm)));
 }
 
-export function awalBulan(isoStr) {
+function awalBulan(isoStr) {
   return `${kunciBulan(isoStr)}-01`;
 }
 

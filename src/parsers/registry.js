@@ -18,15 +18,11 @@ const ADAPTERS = {
   [ADAPTER.GENERIK]: generik,
 };
 
-export function adapterUntuk(kode) {
-  return ADAPTERS[kode] || generik;
-}
-
 /**
  * Memproses potongan teks seluruh halaman menjadi daftar transaksi.
  *
  * @param {Array<Array>} halaman daftar per halaman berisi {str,x,y,w,h}
- * @param {{paksaAdapter?: string, warna?: Array}} opsi
+ * @param {{warna?: Array}} opsi
  *        `warna` berisi warna tiap potongan teks per halaman; hanya dipakai oleh
  *        adapter yang mengandalkan warna untuk menentukan arah transaksi.
  */
@@ -41,8 +37,8 @@ export function parseStatement(halaman, opsi = {}) {
   const teksKop = teksPenuh((barisPerHalaman[0] || []).slice(0, 25));
 
   const kepala = bacaKepala(teks, teksKop);
-  const kodeAdapter = opsi.paksaAdapter || kepala.adapter;
-  const adapter = adapterUntuk(kodeAdapter);
+  const kodeAdapter = kepala.adapter;
+  const adapter = ADAPTERS[kodeAdapter] || generik;
 
   const warna = (opsi.warna || []).flat();
   const hasil = adapter.parse({

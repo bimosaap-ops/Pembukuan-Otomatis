@@ -23,11 +23,6 @@ export const STATUS_PROVISIONAL = { AKTIF: 'aktif', DISENGKETAKAN: 'disengketaka
 export const TIPE_KATEGORI = { PEMASUKAN: 'pemasukan', PENGELUARAN: 'pengeluaran' };
 export const STATUS_UPLOAD = { SUKSES: 'sukses', SEBAGIAN: 'sebagian', GAGAL: 'gagal' };
 
-export const BANK_DIKENAL = [
-  'BCA', 'Permata', 'Mandiri', 'BRI', 'BNI', 'CIMB Niaga', 'Danamon',
-  'BTN', 'Panin', 'OCBC', 'Maybank', 'Jago', 'SeaBank', 'Blu', 'Jenius', 'Lainnya',
-];
-
 export function buatAkun(data = {}) {
   return {
     id: data.id || idBaru('acc'),

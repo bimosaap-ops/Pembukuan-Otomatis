@@ -7,8 +7,8 @@
  * berisi puluhan ribu transaksi — jauh di atas batas ~5 MB localStorage.
  */
 
-export const NAMA_DB = 'pembukuan_v1';
-export const VERSI_DB = 3;
+const NAMA_DB = 'pembukuan_v1';
+const VERSI_DB = 3;
 
 export const STORE = {
   ACCOUNTS: 'accounts',

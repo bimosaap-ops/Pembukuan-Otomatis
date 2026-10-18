@@ -153,7 +153,7 @@ const POLA_NOMOR = [
  */
 const POLA_NOMOR_TANPA_LABEL = /\b(\d{4}-\d{4}-\d{4}(?:-\d{4})?)\b/;
 
-export function bacaNomorRekening(teks) {
+function bacaNomorRekening(teks) {
   const isi = String(teks || '');
   for (const pola of POLA_NOMOR) {
     const m = isi.match(pola);
@@ -173,7 +173,7 @@ const POLA_NAMA = [
   /ACCOUNT\s+NAME\s*[:\-]\s*([A-Z][A-Z0-9 .,'&\-]{2,60})/i,
 ];
 
-export function bacaNamaPemilik(teks) {
+function bacaNamaPemilik(teks) {
   const isi = String(teks || '');
   for (const pola of POLA_NAMA) {
     const m = isi.match(pola);
@@ -194,7 +194,7 @@ export function bacaNamaPemilik(teks) {
  * Tahunnya penting: statement BCA hanya mencantumkan tanggal dan bulan pada tiap
  * baris transaksi, jadi tahun harus diambil dari kepala berkas.
  */
-export function bacaPeriode(teks) {
+function bacaPeriode(teks) {
   const isi = String(teks || '');
 
   const rentang = isi.match(

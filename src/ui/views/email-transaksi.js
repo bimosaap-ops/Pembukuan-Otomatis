@@ -20,14 +20,14 @@
 
 import { h, ikon, ganti } from '../../core/dom.js';
 import { rupiah } from '../../core/format.js';
-import { tanggalTampil } from '../../core/dates.js';
+import { tanggalTampil, rentangTanggalKandidat } from '../../core/dates.js';
 import { on, emit, EVENT } from '../../core/events.js';
 import * as emailTrxRepo from '../../data/repo/email-transactions.js';
 import * as trxRepo from '../../data/repo/transactions.js';
 import * as kategoriRepo from '../../data/repo/categories.js';
 import * as kamusRepo from '../../data/repo/merchant-dictionary.js';
 import { STATUS_COCOK_EMAIL, STATUS_RESOLUSI_EMAIL } from '../../domain/entities.js';
-import { tarikTransaksiEmail, rentangTanggalKandidat } from '../../services/email-feed-sync.js';
+import { tarikTransaksiEmail } from '../../services/email-feed-sync.js';
 import { eksporUntukTinjauan, terapkanHasilTinjauan } from '../../services/email-review.js';
 import { hapusProvisionalManual, tautkanManual, tautanSah } from '../../services/email-ledger-merge.js';
 import * as akunRepo from '../../data/repo/accounts.js';

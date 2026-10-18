@@ -68,7 +68,7 @@ export async function perSumber(sumber) {
   return rows;
 }
 
-export async function perFileUpload(uploadedFileId) {
+async function perFileUpload(uploadedFileId) {
   const rows = await ambilLewatIndex(STORE.TRANSACTIONS, 'uploadedFileId', uploadedFileId);
   rows.sort(bandingkan);
   return rows;
@@ -183,21 +183,4 @@ export async function rentangTersedia() {
   await telusuriIndex(STORE.TRANSACTIONS, 'tanggal', null, (row) => { min = row.tanggal; return false; });
   await telusuriIndex(STORE.TRANSACTIONS, 'tanggal', null, (row) => { maks = row.tanggal; return false; }, 'prev');
   return { min, maks };
-}
-
-/** Perubahan massal kategori — dipakai fitur "terapkan ke semua transaksi serupa". */
-export async function ubahKategoriBanyak(ids, kategoriId) {
-  if (!ids.length) return 0;
-  const waktu = new Date().toISOString();
-  await jalankan(STORE.TRANSACTIONS, 'readwrite', (store) => {
-    ids.forEach((id) => {
-      const req = store.get(id);
-      req.onsuccess = () => {
-        const row = req.result;
-        if (!row) return;
-        store.put({ ...row, kategoriId, diubahPada: waktu });
-      };
-    });
-  });
-  return ids.length;
 }
